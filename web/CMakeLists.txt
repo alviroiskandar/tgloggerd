@@ -25,11 +25,18 @@ set(BUILD_CTL      OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING  OFF CACHE BOOL "" FORCE)
 add_subdirectory(../submodules/drogon ${CMAKE_BINARY_DIR}/drogon EXCLUDE_FROM_ALL)
 
+# libsodium provides argon2id password hashing (crypto_pwhash_str); its ISC
+# license is GPL-2.0 compatible.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED libsodium)
+
 add_executable(tgloggerd_web
-	src/main.cpp)
+	src/main.cpp
+	src/auth/Password.cpp
+	src/dao/Accounts.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
 # headers (plain value types) should we want them.
-target_include_directories(tgloggerd_web PRIVATE src ../src)
-target_link_libraries(tgloggerd_web PRIVATE drogon)
+target_include_directories(tgloggerd_web PRIVATE src ../src ${SODIUM_INCLUDE_DIRS})
+target_link_libraries(tgloggerd_web PRIVATE drogon ${SODIUM_LIBRARIES})
 target_compile_options(tgloggerd_web PRIVATE -Wall -Wextra)

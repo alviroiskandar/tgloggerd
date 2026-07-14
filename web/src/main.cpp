@@ -6,10 +6,17 @@
 #include <drogon/drogon.h>
 #include <drogon/orm/DbConfig.h>
 
+#include <termios.h>
+#include <unistd.h>
+
 #include <cstdint>
+#include <cstring>
+#include <iostream>
 #include <string>
 
 #include "Config.hpp"
+#include "auth/Password.hpp"
+#include "dao/Accounts.hpp"
 
 namespace {
 
@@ -37,11 +44,106 @@ void addMysqlClient(const tgweb::DbConfig &db)
 	drogon::app().addDbClient(cfg);
 }
 
+/* Read a line from stdin with terminal echo disabled (for passwords). */
+std::string readSecret(const char *prompt)
+{
+	std::cerr << prompt;
+
+	struct termios oldt;
+	bool tty = tcgetattr(STDIN_FILENO, &oldt) == 0;
+	if (tty) {
+		struct termios noecho = oldt;
+		noecho.c_lflag &= ~(tcflag_t)ECHO;
+		tcsetattr(STDIN_FILENO, TCSAFLUSH, &noecho);
+	}
+
+	std::string line;
+	std::getline(std::cin, line);
+
+	if (tty) {
+		tcsetattr(STDIN_FILENO, TCSAFLUSH, &oldt);
+		std::cerr << "\n";
+	}
+	return line;
+}
+
+/*
+ * Seed (or reset) an admin account. Prompts for the password twice on stdin,
+ * hashes it with argon2id, then upserts the row over the "app" DbClient. The
+ * write is driven by Drogon's own event loop (registerBeginningAdvice +
+ * async_run) rather than a standalone client, then the loop quits. Returns a
+ * process exit code.
+ */
+int seedAdmin(const tgweb::Config &cfg, const std::string &username)
+{
+	if (!tgweb::auth::initCrypto()) {
+		std::cerr << "error: failed to initialize libsodium\n";
+		return 1;
+	}
+
+	std::string p1 = readSecret("New admin password: ");
+	std::string p2 = readSecret("Confirm password: ");
+	if (p1.empty()) {
+		std::cerr << "error: password must not be empty\n";
+		return 1;
+	}
+	if (p1 != p2) {
+		std::cerr << "error: passwords do not match\n";
+		return 1;
+	}
+
+	std::string hash = tgweb::auth::hashPassword(p1);
+	if (hash.empty()) {
+		std::cerr << "error: password hashing failed\n";
+		return 1;
+	}
+
+	addMysqlClient(cfg.app);
+
+	int rc = 0;
+	drogon::app().registerBeginningAdvice([&]() {
+		drogon::async_run([&]() -> drogon::Task<> {
+			try {
+				auto db = drogon::app().getDbClient("app");
+				co_await tgweb::dao::accounts::seedAdmin(db,
+						username, hash);
+				std::cerr << "Seeded admin account '"
+					  << username << "'.\n";
+			} catch (const std::exception &e) {
+				std::cerr << "error: " << e.what() << "\n";
+				rc = 1;
+			}
+			drogon::app().quit();
+			co_return;
+		});
+	});
+	drogon::app().run();
+	return rc;
+}
+
 } /* namespace */
 
-int main(void)
+int main(int argc, char **argv)
 {
 	tgweb::Config cfg = tgweb::Config::fromEnv();
+
+	/* CLI: --seed-admin <username> creates/resets an admin, then exits. */
+	for (int i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--seed-admin")) {
+			if (i + 1 >= argc) {
+				std::cerr << "usage: tgloggerd_web --seed-admin <username>\n";
+				return 1;
+			}
+			return seedAdmin(cfg, argv[i + 1]);
+		}
+		std::cerr << "error: unknown argument '" << argv[i] << "'\n";
+		return 1;
+	}
+
+	if (!tgweb::auth::initCrypto()) {
+		std::cerr << "error: failed to initialize libsodium\n";
+		return 1;
+	}
 
 	addMysqlClient(cfg.ro);
 	addMysqlClient(cfg.app);
