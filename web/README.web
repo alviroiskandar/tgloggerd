@@ -1,0 +1,178 @@
+# tgloggerd web
+
+A server-rendered web interface for browsing the tgloggerd database:
+users, groups, messages, files, admins, and the change history the daemon
+records. It is a separate application from the logger daemon and is
+read-only over the logger's data.
+
+# Architecture
+
+The web app is a standalone binary built from this directory. It does NOT
+reuse the daemon's src/mysql/ layer: that layer is blocking JDBC and would
+stall an event loop. Instead the web app is built on Drogon and talks to
+MySQL through Drogon's asynchronous DbClient (coroutines), so a request
+handler never blocks a loop thread.
+
+Two databases, two users, two clients enforce a read/write split:
+
+  - "ro"  -> user web_ro with GRANT SELECT ON tgloggerd.*, used for all
+            browsing. It cannot modify the logger's data.
+  - "app" -> user web_app with read/write on a separate tgloggerd_web
+            schema that owns the web-only tables (web_users, web_audit).
+
+Keeping the accounts in their own schema makes the read-only boundary a
+database-level invariant, not just application convention.
+
+Output escaping is a data-layer invariant. The template engine (inja) does
+NOT auto-escape, so every attacker-controlled string (message text, names,
+titles, bios, file names, ...) is passed through Render::esc() when the
+data-access layer builds the template context. Templates only ever
+interpolate already-escaped values.
+
+# Layout
+
+    CMakeLists.txt        Standalone project; C++20; builds Drogon.
+    migrations/           golang-migrate SQL for the web-only schema.
+    run.web.example.sh    Env template; copy to run.web.sh (git-ignored).
+    src/
+      main.cpp            Config, sessions, DbClients, listener, --seed-admin.
+      Config.hpp          Environment parsing.
+      auth/               Password hashing, sessions, CSRF, filters, throttle.
+      dao/                Async data access (Browse over "ro"; Accounts,
+                          Audit over "app").
+      views/              Render + esc(); templates/ holds the inja views.
+      controllers/        Auth, Dashboard, Users, Groups, Messages, Media.
+    static/               style.css and other static assets.
+    third_party/          Vendored header-only inja and nlohmann/json.
+
+# Prerequisites
+
+See the top-level README's Prerequisites section for the extra development
+packages the web app needs (libmariadb-dev, libsodium-dev, libjsoncpp-dev,
+uuid-dev, zlib1g-dev, libssl-dev) and why a C++20 compiler is required.
+
+# Database setup
+
+The web app needs its own schema and two restricted MySQL users. Using an
+administrative MySQL account, once:
+
+    CREATE DATABASE tgloggerd_web
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+
+    CREATE USER 'web_ro'@'%'  IDENTIFIED BY 'CHANGE_ME_RO';
+    GRANT SELECT ON tgloggerd.* TO 'web_ro'@'%';
+
+    CREATE USER 'web_app'@'%' IDENTIFIED BY 'CHANGE_ME_APP';
+    GRANT ALL PRIVILEGES ON tgloggerd_web.* TO 'web_app'@'%';
+
+    FLUSH PRIVILEGES;
+
+Apply the web-only migrations (web_app owns tgloggerd_web, so it can run
+them; at runtime it only performs DML):
+
+    migrate -path web/migrations \
+        -database "mysql://web_app:CHANGE_ME_APP@tcp(10.0.88.3:3306)/tgloggerd_web" up
+
+# Build
+
+From this directory:
+
+    cmake -B build
+    cmake --build build -j"$(nproc)"
+
+At configure time Drogon must report MySQL/MariaDB support ("Ok! We find
+mariadb!"). If it does not, install libmariadb-dev and reconfigure.
+
+# Configure and run
+
+Copy the example run script and fill in the two database passwords. It is
+git-ignored because it holds credentials:
+
+    cp run.web.example.sh run.web.sh
+    # edit run.web.sh: set WEB_DB_RO_PASSWORD and WEB_DB_APP_PASSWORD, and
+    # WEB_STORAGE_DIR to the same path as the daemon's TG_STORAGE_DIR.
+
+Create the first administrator (prompts for the password on stdin, twice):
+
+    ./build/tgloggerd_web --seed-admin admin
+
+Re-running --seed-admin for an existing user resets its password and
+re-enables the account. Then start the server:
+
+    ./run.web.sh
+
+# Environment variables
+
+    WEB_LISTEN_ADDR        Bind address (default 127.0.0.1).
+    WEB_LISTEN_PORT        Bind port (default 8080).
+    WEB_THREADS            Event-loop threads (default 4).
+    WEB_DB_HOST/PORT       MySQL server; fall back to TG_DB_HOST/PORT.
+    WEB_DB_RO_NAME         Logger database (default tgloggerd).
+    WEB_DB_RO_USER         Read-only user (default web_ro).
+    WEB_DB_RO_PASSWORD     Read-only user password.
+    WEB_DB_RO_CONNS        Read-only pool size (default 4).
+    WEB_DB_APP_NAME        Web database (default tgloggerd_web).
+    WEB_DB_APP_USER        Read-write user (default web_app).
+    WEB_DB_APP_PASSWORD    Read-write user password.
+    WEB_DB_APP_CONNS       Read-write pool size (default 2).
+    WEB_SESSION_TIMEOUT    Session idle timeout in seconds (default 43200;
+                           0 never expires).
+    WEB_SECURE_COOKIE      1 sets Secure on the session cookie (default 1);
+                           set 0 only for plain-HTTP local testing.
+    WEB_LOGIN_MAX_ATTEMPTS Failed logins per (ip, username) before throttling
+                           (default 5).
+    WEB_LOGIN_WINDOW       Throttle window in seconds (default 900).
+    WEB_TEMPLATE_DIR       inja templates (default views/templates).
+    WEB_STATIC_DIR         Static assets served at / (default static).
+    WEB_STORAGE_DIR        File store; MUST equal the daemon's TG_STORAGE_DIR.
+
+# Deploying behind nginx (TLS)
+
+The app binds to localhost and serves plain HTTP. Terminate TLS in a
+reverse proxy and keep WEB_SECURE_COOKIE=1 so the session cookie is only
+sent over HTTPS. A minimal nginx server block:
+
+    server {
+        listen 443 ssl http2;
+        server_name tgloggerd.example.org;
+
+        ssl_certificate     /etc/letsencrypt/live/example/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/example/privkey.pem;
+        add_header Strict-Transport-Security "max-age=63072000" always;
+
+        location / {
+            proxy_pass         http://127.0.0.1:8080;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+        }
+    }
+
+    server {
+        listen 80;
+        server_name tgloggerd.example.org;
+        return 301 https://$host$request_uri;
+    }
+
+# Security notes
+
+  - Authentication is app-level: argon2id password hashes (libsodium
+    crypto_pwhash_str) and server-side sessions with a Secure, HttpOnly,
+    SameSite=Lax cookie.
+  - Every state-changing POST carries a per-session CSRF token, checked in
+    constant time.
+  - Login failures are throttled per (ip, username); login, logout and
+    media access are written to web_audit.
+  - All SQL uses bound parameters; pagination and cursor values are clamped
+    bound integers.
+  - Media is served from a path derived entirely from the database (the
+    verified SHA-256 hex plus a sanitized extension), never from request
+    input.
+
+# Known limitations
+
+  - No global message text search: the message text column is unindexed
+    MEDIUMTEXT, so only bounded, chat-scoped listing is offered.
+  - Range/seek support in newFileResponse is limited, so seeking within
+    large media files may fall back to a full transfer.

@@ -36,6 +36,9 @@ periodic polling (see TG_ADMIN_POLL_INTERVAL in run.example.sh).
       storage/files/             Downloaded files, named by SHA-256.
     docker-compose.example.yml Example MySQL service definition.
     run.example.sh             Example run script; copy to run.sh.
+    web/                       Optional server-rendered web interface for
+                               browsing the database (a separate Drogon
+                               application; see web/README.web).
 
 # Interaction with TDLib
 
