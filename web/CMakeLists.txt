@@ -44,7 +44,8 @@ add_executable(tgloggerd_web
 	src/controllers/AuthController.cpp
 	src/controllers/DashboardController.cpp
 	src/controllers/UsersController.cpp
-	src/controllers/GroupsController.cpp)
+	src/controllers/GroupsController.cpp
+	src/controllers/MessagesController.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
 # headers (plain value types) should we want them. third_party/ holds the

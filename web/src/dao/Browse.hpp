@@ -64,6 +64,27 @@ drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db,
 						     int64_t id);
 
+/*
+ * One page of messages. scope is "private" or "group". When chatId has a
+ * value the list is scoped to that chat and pages on message_id (covered by
+ * the uq_*_chat_msg index); otherwise it is a global list paging on the PK id.
+ * cursor is the last key seen (0 for the first page). Result:
+ * {messages:[...], next_cursor, scope, chat_id}.
+ */
+drogon::Task<nlohmann::json> listMessages(drogon::orm::DbClientPtr db,
+					  std::string scope,
+					  std::optional<int64_t> chatId,
+					  int64_t cursor, int limit);
+
+/*
+ * A single message (by PK id) with its edit history, forward info and the
+ * message it replies to, or std::nullopt if no such message. scope selects
+ * the private_* or group_* tables.
+ */
+drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr db,
+						       std::string scope,
+						       int64_t id);
+
 } /* namespace tgweb::dao::browse */
 
 #endif /* TGLOGGERD_WEB_DAO_BROWSE_HPP */

@@ -126,3 +126,23 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 .chips li { padding: 0.2rem 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
 
 .pager { margin-top: 1rem; }
+
+/* Messages */
+.subnav { display: flex; gap: 1rem; margin: 0.5rem 0 1rem; }
+tr.deleted td { opacity: 0.55; text-decoration: line-through; }
+tr.deleted td a { text-decoration: line-through; }
+.reply-box {
+	margin: 0.5rem 0 1rem; padding: 0.6rem 0.9rem;
+	border-left: 3px solid var(--accent);
+	background: var(--card); border-radius: 0 6px 6px 0;
+}
+pre.msgtext {
+	white-space: pre-wrap; word-break: break-word;
+	padding: 0.8rem; margin: 0 0 1.5rem;
+	background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+}
+code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	background: var(--card); border: 1px solid var(--border);
+	border-radius: 4px; padding: 0.05rem 0.3rem;
+}

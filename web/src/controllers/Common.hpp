@@ -60,7 +60,7 @@ inline drogon::HttpResponsePtr renderStatus(const drogon::HttpRequestPtr &req,
 	auto resp = drogon::HttpResponse::newHttpResponse();
 	resp->setStatusCode(code);
 	resp->setContentTypeCode(drogon::CT_TEXT_HTML);
-	resp->setBody(views::Render::page("message.html", data));
+	resp->setBody(views::Render::page("status.html", data));
 	return resp;
 }
 

@@ -490,4 +490,284 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	co_return j;
 }
 
+namespace {
+
+/* Escaped display name from two name columns, or the fallback if both empty. */
+std::string nameOf(const drogon::orm::Row &r, const char *fc, const char *lc,
+		   const std::string &fallback)
+{
+	std::string f = r[fc].isNull() ? "" : r[fc].as<std::string>();
+	std::string l = r[lc].isNull() ? "" : r[lc].as<std::string>();
+	std::string n = f;
+	if (!l.empty()) {
+		if (!n.empty())
+			n += " ";
+		n += l;
+	}
+	return Render::esc(n.empty() ? fallback : n);
+}
+
+/* Escaped column value, or the (escaped) fallback if NULL/empty. */
+std::string escOr(const drogon::orm::Row &r, const char *col,
+		  const std::string &fallback)
+{
+	if (r[col].isNull() || r[col].as<std::string>().empty())
+		return Render::esc(fallback);
+	return Render::esc(r[col].as<std::string>());
+}
+
+/* SELECT lists (without WHERE) resolving chat/sender names via joins. The
+ * "text" projection differs between the list snippet and the detail view. */
+std::string privSelect(const char *textProj)
+{
+	return std::string(
+		"SELECT m.id, m.message_id, m.chat_id, m.sender_id, m.is_outgoing, "
+		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
+		"m.edit_date, m.content_type, ") + textProj + ", "
+		"m.file_id, m.is_deleted, m.is_forwarded, "
+		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
+		"cu.first_name AS chat_first, cu.last_name AS chat_last, "
+		"su.first_name AS sender_first, su.last_name AS sender_last "
+		"FROM private_messages m "
+		"LEFT JOIN users cu ON cu.id = m.chat_id "
+		"LEFT JOIN users su ON su.id = m.sender_id ";
+}
+
+std::string groupSelect(const char *textProj)
+{
+	return std::string(
+		"SELECT m.id, m.message_id, m.chat_id, m.sender_user_id, "
+		"m.sender_chat_id, m.is_channel_post, m.author_signature, "
+		"m.is_outgoing, IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
+		"m.edit_date, m.content_type, ") + textProj + ", "
+		"m.file_id, m.is_deleted, m.is_forwarded, "
+		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
+		"g.title AS chat_title, "
+		"su.first_name AS sender_first, su.last_name AS sender_last, "
+		"sg.title AS sender_chat_title "
+		"FROM group_messages m "
+		"LEFT JOIN `groups` g ON g.id = m.chat_id "
+		"LEFT JOIN users su ON su.id = m.sender_user_id "
+		"LEFT JOIN `groups` sg ON sg.id = m.sender_chat_id ";
+}
+
+/* Fields shared by list and detail rendering. */
+void fillCommon(nlohmann::json &m, const drogon::orm::Row &r)
+{
+	m["id"]           = r["id"].as<int64_t>();
+	m["message_id"]   = r["message_id"].as<int64_t>();
+	m["chat_id"]      = r["chat_id"].as<int64_t>();
+	m["date"]         = escCol(r, "date_str");
+	m["content_type"] = r["content_type"].as<std::string>();
+	m["is_deleted"]   = r["is_deleted"].as<int>() != 0;
+	m["is_forwarded"] = r["is_forwarded"].as<int>() != 0;
+	m["is_edited"]    = !r["edit_date"].isNull() &&
+			    r["edit_date"].as<int64_t>() > 0;
+	if (!r["file_id"].isNull())
+		m["file_id"] = r["file_id"].as<int64_t>();
+	if (!r["reply_to_id"].isNull())
+		m["reply_to_id"] = r["reply_to_id"].as<int64_t>();
+}
+
+/* Chat and sender display names, per scope. */
+void fillParties(nlohmann::json &m, const drogon::orm::Row &r,
+		 const std::string &scope)
+{
+	std::string chatId = std::to_string(r["chat_id"].as<int64_t>());
+	if (scope == "group") {
+		m["chat_name"] = escOr(r, "chat_title", "#" + chatId);
+		if (!r["sender_user_id"].isNull()) {
+			m["sender_name"] = nameOf(r, "sender_first", "sender_last",
+				"#" + std::to_string(r["sender_user_id"].as<int64_t>()));
+		} else if (!r["sender_chat_id"].isNull()) {
+			m["sender_name"] = escOr(r, "sender_chat_title",
+				"#" + std::to_string(r["sender_chat_id"].as<int64_t>()));
+		} else if (!r["author_signature"].isNull() &&
+			   !r["author_signature"].as<std::string>().empty()) {
+			m["sender_name"] = Render::esc(
+				r["author_signature"].as<std::string>());
+		} else {
+			m["sender_name"] = "(self)";
+		}
+	} else {
+		m["chat_name"] = nameOf(r, "chat_first", "chat_last", "#" + chatId);
+		if (r["sender_id"].isNull())
+			m["sender_name"] = "(self)";
+		else
+			m["sender_name"] = nameOf(r, "sender_first", "sender_last",
+				"#" + std::to_string(r["sender_id"].as<int64_t>()));
+	}
+}
+
+} /* namespace */
+
+drogon::Task<nlohmann::json> listMessages(drogon::orm::DbClientPtr db,
+					  std::string scope,
+					  std::optional<int64_t> chatId,
+					  int64_t cursor, int limit)
+{
+	/* LEFT(text,200) snippet + a length probe to flag truncation. */
+	const char *snippet =
+		"LEFT(m.text, 200) AS snippet, CHAR_LENGTH(m.text) AS text_len";
+	std::string sel = scope == "group" ? groupSelect(snippet)
+					   : privSelect(snippet);
+
+	/* cursor == 0 sentinel means "first page"; ids and message_ids are all
+	 * positive so 0 never collides with a real key. The SQL goes into a
+	 * named local (see listUsers) to keep it alive across the suspension. */
+	std::optional<drogon::orm::Result> rowsHolder;
+	if (chatId) {
+		std::string q = sel +
+			"WHERE m.chat_id = ? AND (? = 0 OR m.message_id < ?) "
+			"ORDER BY m.message_id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, *chatId, cursor, cursor,
+						      limit + 1);
+	} else {
+		std::string q = sel +
+			"WHERE (? = 0 OR m.id < ?) ORDER BY m.id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, cursor, cursor, limit + 1);
+	}
+	const drogon::orm::Result &rows = *rowsHolder;
+
+	nlohmann::json messages = nlohmann::json::array();
+	int64_t lastKey = 0;
+	bool haveLast = false;
+	int n = 0;
+	for (const auto &r : rows) {
+		if (n++ >= limit)
+			break;
+		lastKey = chatId ? r["message_id"].as<int64_t>()
+				 : r["id"].as<int64_t>();
+		haveLast = true;
+
+		nlohmann::json m;
+		fillCommon(m, r);
+		fillParties(m, r, scope);
+		m["snippet"] = escCol(r, "snippet");
+		long len = r["text_len"].isNull() ? 0 : r["text_len"].as<long>();
+		m["text_truncated"] = len > 200;
+		messages.push_back(std::move(m));
+	}
+
+	nlohmann::json j;
+	j["scope"] = scope;
+	j["messages"] = std::move(messages);
+	if (chatId)
+		j["chat_id"] = *chatId;
+	if ((int)rows.size() > limit && haveLast)
+		j["next_cursor"] = lastKey;
+	else
+		j["next_cursor"] = nullptr;
+	co_return j;
+}
+
+drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr db,
+						       std::string scope,
+						       int64_t id)
+{
+	bool group = scope == "group";
+	std::string sel = group ? groupSelect("m.text AS full_text")
+				: privSelect("m.text AS full_text");
+
+	/*
+	 * Build everything derived from the first result up front and do not
+	 * hold a reference into it across the co_awaits below (subsequent queries
+	 * reuse the connection and can invalidate earlier result state).
+	 */
+	nlohmann::json msg;
+	bool hasReply = false;
+	int64_t replyToId = 0;
+	{
+		std::string q = sel + "WHERE m.id = ?";
+		auto mr = co_await db->execSqlCoro(q, id);
+		if (mr.empty())
+			co_return std::nullopt;
+
+		const auto &r = mr[0];
+		fillCommon(msg, r);
+		fillParties(msg, r, scope);
+		msg["text"] = escCol(r, "full_text");
+		msg["is_outgoing"] = r["is_outgoing"].as<int>() != 0;
+		if (group) {
+			msg["is_channel_post"] = r["is_channel_post"].as<int>() != 0;
+			msg["author_signature"] = escCol(r, "author_signature");
+		}
+		if (!r["reply_to_id"].isNull()) {
+			hasReply = true;
+			replyToId = r["reply_to_id"].as<int64_t>();
+		}
+	}
+
+	nlohmann::json j;
+	j["scope"] = scope;
+	j["message"] = std::move(msg);
+
+	/* Edit history. */
+	std::string editTable = group ? "group_message_edits"
+				      : "private_message_edits";
+	std::string editFk = group ? "group_message_id" : "private_message_id";
+	std::string editQuery =
+		"SELECT content_type, LEFT(text, 500) AS snippet, file_id, "
+		"IF(edit_date>0, FROM_UNIXTIME(edit_date), NULL) AS edit_date_str "
+		"FROM " + editTable + " WHERE " + editFk + " = ? "
+		"ORDER BY id DESC LIMIT 100";
+	auto er = co_await db->execSqlCoro(editQuery, id);
+	nlohmann::json edits = nlohmann::json::array();
+	for (const auto &row : er) {
+		nlohmann::json e;
+		e["content_type"] = row["content_type"].as<std::string>();
+		e["snippet"]      = escCol(row, "snippet");
+		e["edit_date"]    = escCol(row, "edit_date_str");
+		if (!row["file_id"].isNull())
+			e["file_id"] = row["file_id"].as<int64_t>();
+		edits.push_back(std::move(e));
+	}
+	j["edits"] = std::move(edits);
+
+	/* Forward info (at most one row). */
+	std::string fwdTable = group ? "group_message_fwd_info"
+				     : "private_message_fwd_info";
+	std::string fwdFk = group ? "group_message_id" : "private_message_id";
+	std::string fwdQuery =
+		"SELECT origin_type, origin_sender_user_id, origin_sender_name, "
+		"origin_chat_id, origin_message_id, "
+		"IF(origin_date>0, FROM_UNIXTIME(origin_date), NULL) AS origin_date_str "
+		"FROM " + fwdTable + " WHERE " + fwdFk + " = ? LIMIT 1";
+	auto fr = co_await db->execSqlCoro(fwdQuery, id);
+	if (!fr.empty()) {
+		const auto &f = fr[0];
+		nlohmann::json fi;
+		fi["origin_type"] = f["origin_type"].as<std::string>();
+		fi["origin_sender_name"] = escCol(f, "origin_sender_name");
+		fi["origin_date"] = escCol(f, "origin_date_str");
+		if (!f["origin_sender_user_id"].isNull())
+			fi["origin_sender_user_id"] =
+				f["origin_sender_user_id"].as<int64_t>();
+		if (!f["origin_chat_id"].isNull())
+			fi["origin_chat_id"] = f["origin_chat_id"].as<int64_t>();
+		if (!f["origin_message_id"].isNull())
+			fi["origin_message_id"] =
+				f["origin_message_id"].as<int64_t>();
+		j["fwd_info"] = std::move(fi);
+	}
+
+	/* The message this one replies to, resolved via reply_to_id. */
+	if (hasReply) {
+		const char *proj = "LEFT(m.text,200) AS snippet, "
+				   "CHAR_LENGTH(m.text) AS text_len";
+		std::string q = (group ? groupSelect(proj) : privSelect(proj)) +
+			"WHERE m.id = ?";
+		auto pr = co_await db->execSqlCoro(q, replyToId);
+		if (!pr.empty()) {
+			nlohmann::json p;
+			fillCommon(p, pr[0]);
+			fillParties(p, pr[0], scope);
+			p["snippet"] = escCol(pr[0], "snippet");
+			j["reply_to"] = std::move(p);
+		}
+	}
+
+	co_return j;
+}
+
 } /* namespace tgweb::dao::browse */
