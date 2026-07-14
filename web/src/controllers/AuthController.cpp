@@ -12,6 +12,7 @@
 #include "auth/Session.hpp"
 #include "dao/Accounts.hpp"
 #include "dao/Audit.hpp"
+#include "views/Render.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -35,29 +36,16 @@ tgweb::auth::RateLimiter &limiter(void)
 	return inst;
 }
 
-/* Minimal login page. Replaced by the template layout in a later change. The
- * only dynamic values are the CSRF token (hex) and a fixed error string, so no
- * untrusted data is interpolated here. */
+/* Render the login page through the base layout. The only dynamic values are
+ * the per-session CSRF token (hex) and a fixed error string. */
 std::string renderLogin(const std::string &csrf, const char *error)
 {
-	std::string html =
-		"<!doctype html>\n"
-		"<html lang=\"en\"><head><meta charset=\"utf-8\">"
-		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-		"<title>Sign in — tgloggerd</title></head><body>"
-		"<h1>tgloggerd</h1><h2>Sign in</h2>";
+	nlohmann::json data;
+	data["title"] = "Sign in";
+	data["csrf"] = csrf;
 	if (error)
-		html += std::string("<p style=\"color:#b00\">") + error + "</p>";
-	html +=
-		"<form method=\"post\" action=\"/login\">"
-		"<input type=\"hidden\" name=\"csrf\" value=\"" + csrf + "\">"
-		"<p><label>Username <input name=\"username\" autofocus "
-		"autocomplete=\"username\"></label></p>"
-		"<p><label>Password <input name=\"password\" type=\"password\" "
-		"autocomplete=\"current-password\"></label></p>"
-		"<p><button type=\"submit\">Sign in</button></p>"
-		"</form></body></html>\n";
-	return html;
+		data["error"] = error;
+	return tgweb::views::Render::page("login.html", data);
 }
 
 drogon::HttpResponsePtr htmlResponse(const std::string &body,

@@ -17,6 +17,7 @@
 #include "Config.hpp"
 #include "auth/Password.hpp"
 #include "dao/Accounts.hpp"
+#include "views/Render.hpp"
 
 namespace {
 
@@ -144,6 +145,11 @@ int main(int argc, char **argv)
 		std::cerr << "error: failed to initialize libsodium\n";
 		return 1;
 	}
+
+	/* Template rendering and static assets. */
+	tgweb::views::Render::init(tgweb::env("WEB_TEMPLATE_DIR", "views/templates"),
+				   "tgloggerd");
+	drogon::app().setDocumentRoot(tgweb::env("WEB_STATIC_DIR", "static"));
 
 	/*
 	 * Server-side sessions with a SameSite=Lax cookie. Drogon does not set

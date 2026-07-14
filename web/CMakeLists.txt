@@ -39,10 +39,13 @@ add_executable(tgloggerd_web
 	src/auth/RateLimiter.cpp
 	src/dao/Accounts.cpp
 	src/dao/Audit.cpp
+	src/views/Render.cpp
 	src/controllers/AuthController.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
-# headers (plain value types) should we want them.
-target_include_directories(tgloggerd_web PRIVATE src ../src ${SODIUM_INCLUDE_DIRS})
+# headers (plain value types) should we want them. third_party/ holds the
+# vendored header-only inja template engine and its nlohmann/json dependency.
+target_include_directories(tgloggerd_web PRIVATE
+	src ../src third_party ${SODIUM_INCLUDE_DIRS})
 target_link_libraries(tgloggerd_web PRIVATE drogon ${SODIUM_LIBRARIES})
 target_compile_options(tgloggerd_web PRIVATE -Wall -Wextra)
