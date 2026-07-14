@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS web_audit;
+DROP TABLE IF EXISTS web_users;
