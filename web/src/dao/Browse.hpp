@@ -85,6 +85,22 @@ drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr 
 						       std::string scope,
 						       int64_t id);
 
+/* Metadata needed to locate and serve a stored file. */
+struct FileMeta {
+	std::string hex;       /* lower-case hex of the SHA-256 digest.      */
+	std::string ext;       /* file extension without a dot, or empty.    */
+	std::string fileType;  /* "photo", "video", "document", ...          */
+	std::string origName;  /* original Telegram file name, or empty.     */
+	uint64_t    size;      /* file size in bytes.                        */
+};
+
+/*
+ * Look up a file by id (raw values, NOT escaped — this feeds the filesystem
+ * and headers, not a template). Returns std::nullopt if no such file.
+ */
+drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
+					      int64_t id);
+
 } /* namespace tgweb::dao::browse */
 
 #endif /* TGLOGGERD_WEB_DAO_BROWSE_HPP */
