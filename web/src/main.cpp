@@ -194,5 +194,15 @@ int main(int argc, char **argv)
 		.addListener(cfg.addr, cfg.port)
 		.setThreadNum((size_t)(cfg.threads > 0 ? cfg.threads : 1))
 		.run();
-	return 0;
+
+	/*
+	 * run() returns only after a shutdown signal has stopped the event
+	 * loops and joined the worker threads: all connections are closed and
+	 * requests are drained, so nothing of ours remains to flush. Exit
+	 * immediately with _exit() to skip C++ static-destructor teardown, whose
+	 * ordering across the framework's global singletons is not guaranteed
+	 * and otherwise faults during process exit.
+	 */
+	fflush(nullptr);
+	_exit(0);
 }
