@@ -1,0 +1,33 @@
+<section class="groups">
+  <h1>Groups</h1>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Title</th><th>Username</th><th>Type</th><th>Admins</th></tr>
+    </thead>
+    <tbody>
+## for g in groups
+      <tr>
+        <td><a href="/groups/{{ g.id }}">{{ g.id }}</a></td>
+        <td>{{ g.title }}</td>
+        <td>
+## if g.username != ""
+          @{{ g.username }}
+## else
+          <span class="muted">—</span>
+## endif
+        </td>
+        <td>{{ g.type }}</td>
+        <td>{{ g.admins }}</td>
+      </tr>
+## endfor
+## if length(groups) == 0
+      <tr><td colspan="5" class="muted">No groups.</td></tr>
+## endif
+    </tbody>
+  </table>
+## if next_cursor
+  <p class="pager">
+    <a href="/groups?before={{ next_cursor }}&limit={{ limit }}">Next →</a>
+  </p>
+## endif
+</section>

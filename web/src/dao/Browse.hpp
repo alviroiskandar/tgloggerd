@@ -46,6 +46,24 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 						    int64_t id);
 
+/*
+ * One page of groups, newest id first (group ids are negative, so this pages
+ * from the least-negative downward). cursor is the last id seen (0 for the
+ * first page). Result: {groups:[{id, type, title, username, admins}],
+ * next_cursor}.
+ */
+drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
+					int64_t cursor, int limit);
+
+/*
+ * A single group with its current admins and change history, or std::nullopt
+ * if no such group. Result: {group:{...}, usernames:[...], admins:[...],
+ * title_hist:[...], desc_hist:[...], username_events:[...], photo_hist:[...],
+ * admin_hist:[...]}.
+ */
+drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db,
+						     int64_t id);
+
 } /* namespace tgweb::dao::browse */
 
 #endif /* TGLOGGERD_WEB_DAO_BROWSE_HPP */

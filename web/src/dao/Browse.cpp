@@ -243,4 +243,238 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	co_return j;
 }
 
+namespace {
+
+/* Admin permission columns and their display labels. */
+struct Perm { const char *col; const char *label; };
+const Perm kPerms[] = {
+	{"can_manage_chat",           "manage chat"},
+	{"can_change_info",           "change info"},
+	{"can_post_messages",         "post messages"},
+	{"can_edit_messages",         "edit messages"},
+	{"can_delete_messages",       "delete messages"},
+	{"can_invite_users",          "invite users"},
+	{"can_restrict_members",      "restrict members"},
+	{"can_pin_messages",          "pin messages"},
+	{"can_manage_topics",         "manage topics"},
+	{"can_promote_members",       "promote members"},
+	{"can_manage_video_chats",    "manage video chats"},
+	{"can_post_stories",          "post stories"},
+	{"can_edit_stories",          "edit stories"},
+	{"can_delete_stories",        "delete stories"},
+	{"can_manage_direct_messages","manage direct messages"},
+	{"can_manage_tags",           "manage tags"},
+};
+
+/* Names of the permissions granted (value 1) in a group_admins row. */
+nlohmann::json grantedPerms(const drogon::orm::Row &r)
+{
+	nlohmann::json perms = nlohmann::json::array();
+	for (const auto &p : kPerms) {
+		if (!r[p.col].isNull() && r[p.col].as<int>() != 0)
+			perms.push_back(p.label);
+	}
+	return perms;
+}
+
+} /* namespace */
+
+drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
+					int64_t cursor, int limit)
+{
+	static const char *kSelect =
+		"SELECT g.id, g.type, g.title, "
+		"(SELECT gu.username FROM group_usernames gu "
+		" WHERE gu.group_id = g.id AND gu.kind = 'active' "
+		" ORDER BY gu.position LIMIT 1) AS username, "
+		"(SELECT COUNT(*) FROM group_admins ga "
+		" WHERE ga.group_id = g.id) AS admins "
+		"FROM `groups` g ";
+
+	drogon::orm::Result rows = cursor != 0
+		? co_await db->execSqlCoro(std::string(kSelect) +
+			"WHERE g.id < ? ORDER BY g.id DESC LIMIT ?",
+			cursor, limit + 1)
+		: co_await db->execSqlCoro(std::string(kSelect) +
+			"ORDER BY g.id DESC LIMIT ?",
+			limit + 1);
+
+	nlohmann::json groups = nlohmann::json::array();
+	int64_t lastId = 0;
+	bool haveLast = false;
+	int n = 0;
+	for (const auto &r : rows) {
+		if (n++ >= limit)
+			break;
+		lastId = r["id"].as<int64_t>();
+		haveLast = true;
+		nlohmann::json g;
+		g["id"]       = lastId;
+		g["type"]     = r["type"].as<std::string>();
+		g["title"]    = r["title"].isNull()
+					? std::string("(no title)")
+					: Render::esc(r["title"].as<std::string>());
+		if (g["title"].get<std::string>().empty())
+			g["title"] = "(no title)";
+		g["username"] = escCol(r, "username");
+		g["admins"]   = r["admins"].as<int64_t>();
+		groups.push_back(std::move(g));
+	}
+
+	nlohmann::json j;
+	j["groups"] = std::move(groups);
+	if ((int)rows.size() > limit && haveLast)
+		j["next_cursor"] = lastId;
+	else
+		j["next_cursor"] = nullptr;
+	co_return j;
+}
+
+drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db,
+						     int64_t id)
+{
+	auto gr = co_await db->execSqlCoro(
+		"SELECT id, type, title, description, photo_file_id, "
+		"created_at, updated_at FROM `groups` WHERE id = ?",
+		id);
+
+	if (gr.empty())
+		co_return std::nullopt;
+
+	const auto &r = gr[0];
+	std::string title = r["title"].isNull() ? "" : r["title"].as<std::string>();
+	nlohmann::json group;
+	group["id"]          = r["id"].as<int64_t>();
+	group["type"]        = r["type"].as<std::string>();
+	group["title"]       = Render::esc(title.empty() ? "(no title)" : title);
+	group["description"] = escCol(r, "description");
+	group["created_at"]  = r["created_at"].as<std::string>();
+	group["updated_at"]  = r["updated_at"].as<std::string>();
+	if (!r["photo_file_id"].isNull())
+		group["photo_file_id"] = r["photo_file_id"].as<int64_t>();
+
+	nlohmann::json j;
+	j["group"] = std::move(group);
+
+	/* Current usernames. */
+	auto un = co_await db->execSqlCoro(
+		"SELECT username, kind, position FROM group_usernames "
+		"WHERE group_id = ? ORDER BY kind, position",
+		id);
+	nlohmann::json usernames = nlohmann::json::array();
+	for (const auto &row : un) {
+		nlohmann::json e;
+		e["username"] = escCol(row, "username");
+		e["kind"]     = row["kind"].as<std::string>();
+		usernames.push_back(std::move(e));
+	}
+	j["usernames"] = std::move(usernames);
+
+	/* Current admins, joined to the user for a display name. */
+	auto ad = co_await db->execSqlCoro(
+		"SELECT ga.*, u.first_name, u.last_name, "
+		"(SELECT un.username FROM user_usernames un "
+		" WHERE un.user_id = ga.user_id AND un.kind = 'active' "
+		" ORDER BY un.position LIMIT 1) AS username "
+		"FROM group_admins ga LEFT JOIN users u ON u.id = ga.user_id "
+		"WHERE ga.group_id = ? ORDER BY ga.status, ga.user_id",
+		id);
+	nlohmann::json admins = nlohmann::json::array();
+	for (const auto &row : ad) {
+		nlohmann::json a;
+		a["user_id"]      = row["user_id"].as<int64_t>();
+		a["name"]         = displayName(row);
+		a["username"]     = escCol(row, "username");
+		a["status"]       = row["status"].as<std::string>();
+		a["custom_title"] = escCol(row, "custom_title");
+		a["is_anonymous"] = row["is_anonymous"].as<int>() != 0;
+		a["perms"]        = grantedPerms(row);
+		admins.push_back(std::move(a));
+	}
+	j["admins"] = std::move(admins);
+
+	/* Title history. */
+	auto th = co_await db->execSqlCoro(
+		"SELECT title, created_at FROM group_hist_title "
+		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
+		id);
+	nlohmann::json titleHist = nlohmann::json::array();
+	for (const auto &row : th) {
+		nlohmann::json e;
+		e["title"]      = escCol(row, "title");
+		e["created_at"] = row["created_at"].as<std::string>();
+		titleHist.push_back(std::move(e));
+	}
+	j["title_hist"] = std::move(titleHist);
+
+	/* Description history. */
+	auto dh = co_await db->execSqlCoro(
+		"SELECT description, created_at FROM group_hist_description "
+		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
+		id);
+	nlohmann::json descHist = nlohmann::json::array();
+	for (const auto &row : dh) {
+		nlohmann::json e;
+		e["description"] = escCol(row, "description");
+		e["created_at"]  = row["created_at"].as<std::string>();
+		descHist.push_back(std::move(e));
+	}
+	j["desc_hist"] = std::move(descHist);
+
+	/* Username events. */
+	auto ue = co_await db->execSqlCoro(
+		"SELECT username, action, kind, created_at "
+		"FROM group_hist_usernames_events "
+		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
+		id);
+	nlohmann::json unEvents = nlohmann::json::array();
+	for (const auto &row : ue) {
+		nlohmann::json e;
+		e["username"]   = escCol(row, "username");
+		e["action"]     = row["action"].as<std::string>();
+		e["kind"]       = row["kind"].isNull()
+					  ? "" : row["kind"].as<std::string>();
+		e["created_at"] = row["created_at"].as<std::string>();
+		unEvents.push_back(std::move(e));
+	}
+	j["username_events"] = std::move(unEvents);
+
+	/* Photo history. */
+	auto ph = co_await db->execSqlCoro(
+		"SELECT file_id, created_at FROM group_hist_photo "
+		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
+		id);
+	nlohmann::json photoHist = nlohmann::json::array();
+	for (const auto &row : ph) {
+		nlohmann::json e;
+		if (!row["file_id"].isNull())
+			e["file_id"] = row["file_id"].as<int64_t>();
+		e["created_at"] = row["created_at"].as<std::string>();
+		photoHist.push_back(std::move(e));
+	}
+	j["photo_hist"] = std::move(photoHist);
+
+	/* Admin change history, joined to the user for a display name. */
+	auto ah = co_await db->execSqlCoro(
+		"SELECT ah.user_id, ah.action, ah.status, ah.custom_title, "
+		"ah.created_at, u.first_name, u.last_name "
+		"FROM group_admin_hist ah LEFT JOIN users u ON u.id = ah.user_id "
+		"WHERE ah.group_id = ? ORDER BY ah.id DESC LIMIT 100",
+		id);
+	nlohmann::json adminHist = nlohmann::json::array();
+	for (const auto &row : ah) {
+		nlohmann::json e;
+		e["user_id"]      = row["user_id"].as<int64_t>();
+		e["name"]         = displayName(row);
+		e["action"]       = row["action"].as<std::string>();
+		e["status"]       = row["status"].as<std::string>();
+		e["custom_title"] = escCol(row, "custom_title");
+		e["created_at"]   = row["created_at"].as<std::string>();
+		adminHist.push_back(std::move(e));
+	}
+	j["admin_hist"] = std::move(adminHist);
+
+	co_return j;
+}
+
 } /* namespace tgweb::dao::browse */
