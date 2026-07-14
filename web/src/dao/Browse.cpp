@@ -72,14 +72,23 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 		" ORDER BY un.position LIMIT 1) AS username "
 		"FROM users u ";
 
-	/* Fetch one extra row to know whether a further page exists. */
-	drogon::orm::Result rows = cursor > 0
-		? co_await db->execSqlCoro(std::string(kSelect) +
-			"WHERE u.id < ? ORDER BY u.id DESC LIMIT ?",
-			cursor, limit + 1)
-		: co_await db->execSqlCoro(std::string(kSelect) +
-			"ORDER BY u.id DESC LIMIT ?",
-			limit + 1);
+	/*
+	 * Fetch one extra row to know whether a further page exists. The SQL is
+	 * built into a named local (never a temporary in the co_await operand)
+	 * so its lifetime spans the suspension; a temporary there is mishandled
+	 * by the coroutine lowering and double-freed across thread migration.
+	 */
+	std::optional<drogon::orm::Result> rowsHolder;
+	if (cursor > 0) {
+		std::string q = std::string(kSelect) +
+			"WHERE u.id < ? ORDER BY u.id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, cursor, limit + 1);
+	} else {
+		std::string q = std::string(kSelect) +
+			"ORDER BY u.id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, limit + 1);
+	}
+	const drogon::orm::Result &rows = *rowsHolder;
 
 	nlohmann::json users = nlohmann::json::array();
 	int64_t lastId = 0;
@@ -291,13 +300,17 @@ drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 		" WHERE ga.group_id = g.id) AS admins "
 		"FROM `groups` g ";
 
-	drogon::orm::Result rows = cursor != 0
-		? co_await db->execSqlCoro(std::string(kSelect) +
-			"WHERE g.id < ? ORDER BY g.id DESC LIMIT ?",
-			cursor, limit + 1)
-		: co_await db->execSqlCoro(std::string(kSelect) +
-			"ORDER BY g.id DESC LIMIT ?",
-			limit + 1);
+	std::optional<drogon::orm::Result> rowsHolder;
+	if (cursor != 0) {
+		std::string q = std::string(kSelect) +
+			"WHERE g.id < ? ORDER BY g.id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, cursor, limit + 1);
+	} else {
+		std::string q = std::string(kSelect) +
+			"ORDER BY g.id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, limit + 1);
+	}
+	const drogon::orm::Result &rows = *rowsHolder;
 
 	nlohmann::json groups = nlohmann::json::array();
 	int64_t lastId = 0;
