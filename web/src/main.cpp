@@ -4,27 +4,47 @@
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
 #include <drogon/drogon.h>
+#include <drogon/orm/DbConfig.h>
 
 #include <cstdint>
-#include <cstdlib>
 #include <string>
+
+#include "Config.hpp"
 
 namespace {
 
-/* getenv with a default; empty value counts as unset (mirrors the daemon). */
-std::string env(const char *key, const char *def)
+/*
+ * Register one Drogon async MySQL client from a DbConfig. Drogon's MySQL
+ * backend is the non-blocking MariaDB Connector/C API, so these clients are
+ * safe to co_await from event-loop handlers (unlike the daemon's blocking
+ * JDBC layer, which the web app deliberately does not use).
+ */
+void addMysqlClient(const tgweb::DbConfig &db)
 {
-	const char *v = getenv(key);
-	return (v && *v) ? std::string(v) : std::string(def);
+	drogon::orm::MysqlConfig cfg;
+
+	cfg.host             = db.host;
+	cfg.port             = db.port;
+	cfg.databaseName     = db.dbName;
+	cfg.username         = db.user;
+	cfg.password         = db.password;
+	cfg.connectionNumber = db.connNum;
+	cfg.name             = db.name;
+	cfg.isFast           = false;
+	cfg.characterSet     = "utf8mb4";
+	cfg.timeout          = -1.0;
+
+	drogon::app().addDbClient(cfg);
 }
 
 } /* namespace */
 
 int main(void)
 {
-	std::string addr = env("WEB_LISTEN_ADDR", "127.0.0.1");
-	uint16_t port = (uint16_t)atoi(env("WEB_LISTEN_PORT", "8080").c_str());
-	int threads = atoi(env("WEB_THREADS", "4").c_str());
+	tgweb::Config cfg = tgweb::Config::fromEnv();
+
+	addMysqlClient(cfg.ro);
+	addMysqlClient(cfg.app);
 
 	/* Minimal liveness endpoint; real controllers are added incrementally. */
 	drogon::app().registerHandler("/healthz",
@@ -36,10 +56,10 @@ int main(void)
 			cb(resp);
 		});
 
-	LOG_INFO << "tgloggerd_web listening on " << addr << ":" << port;
+	LOG_INFO << "tgloggerd_web listening on " << cfg.addr << ":" << cfg.port;
 	drogon::app()
-		.addListener(addr, port)
-		.setThreadNum((size_t)(threads > 0 ? threads : 1))
+		.addListener(cfg.addr, cfg.port)
+		.setThreadNum((size_t)(cfg.threads > 0 ? cfg.threads : 1))
 		.run();
 	return 0;
 }
