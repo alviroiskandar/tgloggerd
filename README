@@ -68,6 +68,18 @@ enables the MySQL driver):
 Prebuilt golang-migrate binaries are also available at
 https://github.com/golang-migrate/migrate/releases.
 
+The optional web interface under web/ (a separate Drogon application that
+browses the database) needs additional development packages. On
+Debian/Ubuntu:
+
+    sudo apt install libmariadb-dev libsodium-dev libjsoncpp-dev \
+                     uuid-dev zlib1g-dev libssl-dev
+
+libmariadb-dev is required specifically because Drogon's asynchronous
+MySQL client is built on MariaDB Connector/C's non-blocking API, which
+the Oracle libmysqlclient does not provide. It also needs a C++20
+compiler (gcc 11+ or clang 14+) for Drogon's coroutine database API.
+
 # Building
 
 Fetch the submodules (TDLib and MySQL Connector/C++), then configure and

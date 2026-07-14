@@ -4,3 +4,6 @@
 [submodule "submodules/mysql-connector-cpp"]
 	path = submodules/mysql-connector-cpp
 	url = https://github.com/mysql/mysql-connector-cpp.git
+[submodule "submodules/drogon"]
+	path = submodules/drogon
+	url = https://github.com/drogonframework/drogon
