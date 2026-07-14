@@ -1,0 +1,123 @@
+<section class="detail user-detail">
+  <p class="crumb"><a href="/users">← Users</a></p>
+  <h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
+
+  <div class="badges">
+## if user.is_premium
+    <span class="badge">premium</span>
+## endif
+## if user.is_verified
+    <span class="badge">verified</span>
+## endif
+## if user.is_support
+    <span class="badge">support</span>
+## endif
+## if user.is_contact
+    <span class="badge">contact</span>
+## endif
+## if user.is_scam
+    <span class="badge warn">scam</span>
+## endif
+## if user.is_fake
+    <span class="badge warn">fake</span>
+## endif
+  </div>
+
+  <table class="kv">
+    <tr><th>Type</th><td>{{ user.type }}</td></tr>
+    <tr><th>First name</th><td>{{ user.first_name }}</td></tr>
+    <tr><th>Last name</th><td>{{ user.last_name }}</td></tr>
+    <tr><th>Phone</th><td>{% if user.phone_number != "" %}{{ user.phone_number }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+    <tr><th>Bio</th><td>{% if user.bio != "" %}{{ user.bio }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+    <tr><th>Language</th><td>{% if user.language_code != "" %}{{ user.language_code }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+## if user.restriction_reason != ""
+    <tr><th>Restriction</th><td>{{ user.restriction_reason }}</td></tr>
+## endif
+## if existsIn(user, "profile_photo_file_id")
+    <tr><th>Profile photo</th><td><a href="/media/{{ user.profile_photo_file_id }}">file #{{ user.profile_photo_file_id }}</a></td></tr>
+## endif
+    <tr><th>First seen</th><td>{{ user.created_at }}</td></tr>
+    <tr><th>Last updated</th><td>{{ user.updated_at }}</td></tr>
+  </table>
+
+  <h2>Usernames</h2>
+## if length(usernames) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <ul class="chips">
+## for un in usernames
+    <li>@{{ un.username }} <span class="muted">({{ un.kind }})</span></li>
+## endfor
+  </ul>
+## endif
+
+  <h2>Name history</h2>
+## if length(name_hist) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <table>
+    <thead><tr><th>When</th><th>Name</th></tr></thead>
+    <tbody>
+## for h in name_hist
+      <tr><td>{{ h.created_at }}</td><td>{{ h.name }}</td></tr>
+## endfor
+    </tbody>
+  </table>
+## endif
+
+  <h2>Username events</h2>
+## if length(username_events) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <table>
+    <thead><tr><th>When</th><th>Username</th><th>Action</th><th>Kind</th></tr></thead>
+    <tbody>
+## for e in username_events
+      <tr><td>{{ e.created_at }}</td><td>@{{ e.username }}</td><td>{{ e.action }}</td><td>{% if e.kind != "" %}{{ e.kind }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+## endfor
+    </tbody>
+  </table>
+## endif
+
+  <h2>Bio history</h2>
+## if length(bio_hist) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <table>
+    <thead><tr><th>When</th><th>Bio</th></tr></thead>
+    <tbody>
+## for h in bio_hist
+      <tr><td>{{ h.created_at }}</td><td>{% if h.bio != "" %}{{ h.bio }}{% else %}<span class="muted">(empty)</span>{% endif %}</td></tr>
+## endfor
+    </tbody>
+  </table>
+## endif
+
+  <h2>Phone history</h2>
+## if length(phone_hist) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <table>
+    <thead><tr><th>When</th><th>Phone</th></tr></thead>
+    <tbody>
+## for h in phone_hist
+      <tr><td>{{ h.created_at }}</td><td>{{ h.phone_number }}</td></tr>
+## endfor
+    </tbody>
+  </table>
+## endif
+
+  <h2>Profile photo history</h2>
+## if length(photo_hist) == 0
+  <p class="muted">None recorded.</p>
+## else
+  <table>
+    <thead><tr><th>When</th><th>Photo</th></tr></thead>
+    <tbody>
+## for h in photo_hist
+      <tr><td>{{ h.created_at }}</td><td>{% if existsIn(h, "file_id") %}<a href="/media/{{ h.file_id }}">file #{{ h.file_id }}</a>{% else %}<span class="muted">removed</span>{% endif %}</td></tr>
+## endfor
+    </tbody>
+  </table>
+## endif
+</section>

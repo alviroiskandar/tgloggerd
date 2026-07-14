@@ -87,8 +87,42 @@ input {
 .login .error { color: var(--error); margin: 0 0 0.5rem; }
 
 /* Tables */
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
+table.kv th { width: 12rem; }
 
 .muted { color: var(--muted); }
+
+/* Dashboard cards */
+.cards { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+.card {
+	display: flex; flex-direction: column; gap: 0.2rem;
+	min-width: 9rem; padding: 1rem 1.2rem;
+	background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+	color: var(--fg);
+}
+a.card:hover { border-color: var(--accent); text-decoration: none; }
+.card .num { font-size: 1.8rem; font-weight: 700; }
+.card .lbl { color: var(--muted); }
+
+/* Badges */
+.badge {
+	display: inline-block; padding: 0.05rem 0.45rem; margin: 0 0.15rem 0.15rem 0;
+	font-size: 0.8rem; border-radius: 999px;
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.badge.warn {
+	background: color-mix(in srgb, var(--error) 15%, transparent);
+	color: var(--error); border-color: color-mix(in srgb, var(--error) 45%, transparent);
+}
+.badges { margin: 0.4rem 0 1rem; }
+
+/* Detail pages */
+.detail .crumb { margin-top: 0; }
+.detail h2 { font-size: 1.05rem; margin-top: 1.6rem; }
+.chips { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chips li { padding: 0.2rem 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
+
+.pager { margin-top: 1rem; }

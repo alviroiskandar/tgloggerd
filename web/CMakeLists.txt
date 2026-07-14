@@ -39,8 +39,11 @@ add_executable(tgloggerd_web
 	src/auth/RateLimiter.cpp
 	src/dao/Accounts.cpp
 	src/dao/Audit.cpp
+	src/dao/Browse.cpp
 	src/views/Render.cpp
-	src/controllers/AuthController.cpp)
+	src/controllers/AuthController.cpp
+	src/controllers/DashboardController.cpp
+	src/controllers/UsersController.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
 # headers (plain value types) should we want them. third_party/ holds the

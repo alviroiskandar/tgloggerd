@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 Ammar Faizi <ammarfaizi2@gnuweeb.org>
+ * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
+ */
+#ifndef TGLOGGERD_WEB_DAO_BROWSE_HPP
+#define TGLOGGERD_WEB_DAO_BROWSE_HPP
+
+#include <drogon/orm/DbClient.h>
+#include <drogon/utils/coroutine.h>
+
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <optional>
+
+namespace tgweb::dao::browse {
+
+/*
+ * Read-only browsing over the logger's tgloggerd schema (the "ro" client).
+ *
+ * Every function returns a nlohmann::json context that is ready to hand to a
+ * template: all attacker-controlled strings (names, usernames, bios, phone
+ * numbers, ...) are ALREADY escaped with Render::esc(). Numeric ids, enum
+ * values and timestamps are emitted verbatim. Keeping the escaping here makes
+ * it a data-layer invariant that no template author can forget.
+ */
+
+/* Dashboard totals: {users, groups, private_messages, group_messages, files}. */
+drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db);
+
+/*
+ * One page of users, newest id first. cursor is the last id seen (0 for the
+ * first page); at most `limit` rows are returned. Result:
+ * {users:[{id, name, username, type, is_premium, is_verified, is_scam,
+ * is_fake}], next_cursor} where next_cursor is null when there are no more.
+ */
+drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
+				       int64_t cursor, int limit);
+
+/*
+ * A single user's profile and change history, or std::nullopt if no such user.
+ * Result: {user:{...}, usernames:[...], name_hist:[...], username_events:[...],
+ * bio_hist:[...], phone_hist:[...], photo_hist:[...]}.
+ */
+drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
+						    int64_t id);
+
+} /* namespace tgweb::dao::browse */
+
+#endif /* TGLOGGERD_WEB_DAO_BROWSE_HPP */
