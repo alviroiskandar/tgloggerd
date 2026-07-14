@@ -9,9 +9,20 @@
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace tgweb::dao {
+
+/* A web login account (web_users row). */
+struct WebUser {
+	uint64_t    id;
+	std::string username;
+	std::string passwordHash;
+	std::string role;      /* "admin" or "viewer". */
+	bool        isActive;
+};
 
 /*
  * Account data access over the "app" database (tgloggerd_web). Callers pass in
@@ -27,6 +38,13 @@ namespace accounts {
 drogon::Task<void> seedAdmin(drogon::orm::DbClientPtr db,
 			     std::string username,
 			     std::string passwordHash);
+
+/*
+ * Look up an account by username. Returns std::nullopt if no such row exists.
+ * The caller checks isActive and verifies the password.
+ */
+drogon::Task<std::optional<WebUser>> findByUsername(drogon::orm::DbClientPtr db,
+						    std::string username);
 
 } /* namespace accounts */
 

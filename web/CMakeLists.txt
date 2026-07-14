@@ -33,7 +33,13 @@ pkg_check_modules(SODIUM REQUIRED libsodium)
 add_executable(tgloggerd_web
 	src/main.cpp
 	src/auth/Password.cpp
-	src/dao/Accounts.cpp)
+	src/auth/Csrf.cpp
+	src/auth/AuthFilter.cpp
+	src/auth/AdminFilter.cpp
+	src/auth/RateLimiter.cpp
+	src/dao/Accounts.cpp
+	src/dao/Audit.cpp
+	src/controllers/AuthController.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
 # headers (plain value types) should we want them.

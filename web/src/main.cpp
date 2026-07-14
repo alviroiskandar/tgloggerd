@@ -145,6 +145,31 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	/*
+	 * Server-side sessions with a SameSite=Lax cookie. Drogon does not set
+	 * HttpOnly/Secure on its session cookie, so a pre-sending advice (which
+	 * runs after the framework attaches it) stamps those flags. Secure is on
+	 * by default; set WEB_SECURE_COOKIE=0 for plain-HTTP local testing.
+	 */
+	static const std::string sessionCookie = "tgw_sid";
+	int sessionTimeout = atoi(tgweb::env("WEB_SESSION_TIMEOUT", "43200").c_str());
+	bool secureCookie = tgweb::env("WEB_SECURE_COOKIE", "1") != "0";
+
+	drogon::app().enableSession((size_t)(sessionTimeout > 0 ? sessionTimeout : 0),
+				    drogon::Cookie::SameSite::kLax, sessionCookie);
+
+	drogon::app().registerPreSendingAdvice(
+		[secureCookie](const drogon::HttpRequestPtr &,
+			       const drogon::HttpResponsePtr &resp) {
+			auto it = resp->cookies().find(sessionCookie);
+			if (it == resp->cookies().end())
+				return;
+			drogon::Cookie c = it->second;
+			c.setHttpOnly(true);
+			c.setSecure(secureCookie);
+			resp->addCookie(std::move(c));
+		});
+
 	addMysqlClient(cfg.ro);
 	addMysqlClient(cfg.app);
 
