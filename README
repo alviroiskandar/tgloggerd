@@ -61,7 +61,14 @@ Install the following before building:
 
 On Debian/Ubuntu the build dependencies can be installed with:
 
-    sudo apt install git build-essential cmake gperf libssl-dev zlib1g-dev
+    sudo apt install git build-essential cmake gperf libssl-dev zlib1g-dev \
+                     libmysqlclient-dev
+
+libmysqlclient-dev (the Oracle MySQL client) is what the vendored MySQL
+Connector/C++ builds its JDBC layer against. IMPORTANT: do NOT install
+libmariadb-dev alongside it — the two packages conflict, and libmariadb-dev
+replaces the Oracle headers with MariaDB's, which breaks the connector
+build. The web interface below does not need libmariadb-dev.
 
 Install golang-migrate with the Go toolchain (the "mysql" build tag
 enables the MySQL driver):
@@ -72,15 +79,17 @@ Prebuilt golang-migrate binaries are also available at
 https://github.com/golang-migrate/migrate/releases.
 
 The optional web interface under web/ (a separate Drogon application that
-browses the database) needs additional development packages. On
+browses the database) needs a few more development packages. On
 Debian/Ubuntu:
 
-    sudo apt install libmariadb-dev libsodium-dev libjsoncpp-dev \
-                     uuid-dev zlib1g-dev libssl-dev
+    sudo apt install libsodium-dev libjsoncpp-dev uuid-dev \
+                     zlib1g-dev libssl-dev
 
-libmariadb-dev is required specifically because Drogon's asynchronous
-MySQL client is built on MariaDB Connector/C's non-blocking API, which
-the Oracle libmysqlclient does not provide. It also needs a C++20
+Drogon's asynchronous MySQL client requires MariaDB Connector/C (the
+Oracle libmysqlclient lacks its non-blocking API). Rather than the system
+libmariadb-dev — which conflicts with the daemon's libmysqlclient-dev — the
+web app vendors MariaDB Connector/C as a submodule and builds it in-tree,
+so both can be built on one machine. The web app also needs a C++20
 compiler (gcc 11+ or clang 14+) for Drogon's coroutine database API.
 
 # Building

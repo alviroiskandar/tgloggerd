@@ -7,3 +7,6 @@
 [submodule "submodules/drogon"]
 	path = submodules/drogon
 	url = https://github.com/drogonframework/drogon
+[submodule "submodules/mariadb-connector-c"]
+	path = submodules/mariadb-connector-c
+	url = https://github.com/mariadb-corporation/mariadb-connector-c.git

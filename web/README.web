@@ -48,8 +48,14 @@ interpolate already-escaped values.
 # Prerequisites
 
 See the top-level README's Prerequisites section for the extra development
-packages the web app needs (libmariadb-dev, libsodium-dev, libjsoncpp-dev,
-uuid-dev, zlib1g-dev, libssl-dev) and why a C++20 compiler is required.
+packages the web app needs (libsodium-dev, libjsoncpp-dev, uuid-dev,
+zlib1g-dev, libssl-dev) and why a C++20 compiler is required.
+
+MariaDB Connector/C — which Drogon's async MySQL client is built on — is
+vendored as the submodule submodules/mariadb-connector-c and built in-tree
+(cmake/FindMySQL.cmake points Drogon at it). This avoids the system
+libmariadb-dev, which conflicts with the libmysqlclient-dev the daemon
+needs, so both projects build on one machine. Do not install libmariadb-dev.
 
 # Database setup
 

@@ -17,9 +17,55 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
 endif()
 
+# Vendored MariaDB Connector/C.
+#
+# Drogon's async MySQL client needs MariaDB Connector/C, whose system package
+# (libmariadb-dev) conflicts on Debian/Ubuntu with the Oracle libmysqlclient-dev
+# the daemon's vendored mysql-connector-cpp requires. To let both build on one
+# machine we vendor the connector here instead of using the system package, and
+# point Drogon at it (see cmake/FindMySQL.cmake). Static libraries linked into
+# the PIE executable need position-independent code.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Trim the connector to just the client library.
+set(WITH_UNIT_TESTS    OFF CACHE BOOL "" FORCE)
+set(WITH_CURL          OFF CACHE BOOL "" FORCE)  # avoids a libcurl dependency
+set(WITH_EXTERNAL_ZLIB ON  CACHE BOOL "" FORCE)  # use the system zlib
+set(WITH_SSL           ON  CACHE BOOL "" FORCE)  # OpenSSL
+# Do not verify the server certificate by default. Connector/C 3.4 verifies by
+# default and so rejects a self-signed server cert; the system libmariadb and
+# the daemon's Oracle client do not verify, and a deployment terminates TLS at
+# the proxy anyway. (A future WEB_DB_TLS option could re-enable verification.)
+set(DEFAULT_SSL_VERIFY_SERVER_CERT OFF CACHE BOOL "" FORCE)
+# Embed the authentication plugins into the client so no plugin .so is needed at
+# runtime. caching_sha2_password is the MySQL 8/9 default and defaults to a
+# dynamic module; sha256_password backs it over a non-TLS connection.
+set(CLIENT_PLUGIN_CACHING_SHA2_PASSWORD STATIC CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_SHA256_PASSWORD       STATIC CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_MYSQL_NATIVE_PASSWORD STATIC CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_MYSQL_CLEAR_PASSWORD  STATIC CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_DIALOG                OFF    CACHE STRING "" FORCE)
+# Turn off the remaining dynamic plugins (MariaDB-only auth and zstd
+# compression); unused here and their install rules break the subproject build.
+set(CLIENT_PLUGIN_CLIENT_ED25519        OFF    CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_PARSEC                OFF    CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_ZSTD                  OFF    CACHE STRING "" FORCE)
+set(CLIENT_PLUGIN_AUTH_GSSAPI_CLIENT    OFF    CACHE STRING "" FORCE)
+add_subdirectory(../submodules/mariadb-connector-c
+	${CMAKE_BINARY_DIR}/mariadb-connector-c EXCLUDE_FROM_ALL)
+
+# Make Drogon's find_package(MySQL) resolve to the vendored client above.
+set(TGWEB_MARIADB_INCLUDE_DIRS
+	${CMAKE_CURRENT_SOURCE_DIR}/../submodules/mariadb-connector-c/include
+	${CMAKE_BINARY_DIR}/mariadb-connector-c/include)
+list(PREPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+# mysql_optionsv exists in the vendored connector; skip the configure-time probe
+# (the library is not built yet when Drogon runs it).
+set(HAS_MYSQL_OPTIONSV TRUE CACHE INTERNAL "vendored mariadb has mysql_optionsv")
+
 # Vendored Drogon (carries trantor as its own submodule). Trim its extras to
-# keep the build lean; its MySQL DbClient is enabled automatically because
-# libmariadb-dev is installed (see README).
+# keep the build lean; its MySQL DbClient is enabled against the vendored
+# MariaDB Connector/C above.
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_CTL      OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING  OFF CACHE BOOL "" FORCE)
