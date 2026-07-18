@@ -107,6 +107,46 @@ re-enables the account. Then start the server:
 
     ./run.web.sh
 
+# Running in Docker
+
+web/Dockerfile builds the binary and a small runtime image, and the "web"
+service in docker-compose.example.yml runs it next to MySQL on the same
+network. The build context is the repository root (the image compiles the
+vendored Drogon and MariaDB Connector/C from submodules/).
+
+Build the image:
+
+    docker compose -f docker-compose.example.yml build web
+    # or: docker build -f web/Dockerfile -t tgloggerd-web:latest .
+
+Create the web database, users and grants once (edit the passwords in the
+SQL and in the compose "web" service so they match), then apply the web
+migrations:
+
+    docker exec -i tgloggerd-mysql mysql -uroot -proot \
+        < web/docker/web-db-init.sql
+
+    migrate -path web/migrations \
+        -database "mysql://web_app:web_app@tcp(10.0.88.3:3306)/tgloggerd_web" up
+
+Seed the first admin (interactive — prompts for the password twice):
+
+    docker compose -f docker-compose.example.yml run --rm -it web --seed-admin admin
+
+Start it:
+
+    docker compose -f docker-compose.example.yml up -d web
+
+The web interface is then on http://localhost:8080. The container mounts
+./data/storage/files read-only for /media, so WEB_STORAGE_DIR must be the
+same files the daemon writes (its TG_STORAGE_DIR). The example serves plain
+HTTP with WEB_SECURE_COOKIE=0; in production put a TLS-terminating reverse
+proxy in front (see below) and set WEB_SECURE_COOKIE=1.
+
+The container runs as root so it can read the daemon's storage files (mode
+0640) on the read-only mount; to harden, set a compose `user:` that can read
+that mount.
+
 # Environment variables
 
     WEB_LISTEN_ADDR        Bind address (default 127.0.0.1).

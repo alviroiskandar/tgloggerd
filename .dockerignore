@@ -1,0 +1,24 @@
+# Keep the Docker build context small and reproducible. The web image only
+# needs web/ plus the vendored Drogon and MariaDB Connector/C submodules.
+
+.git
+.gitmodules
+
+# Build outputs and local run state.
+**/build/
+/build/
+data/
+web/run.web.sh
+web/run.web.sh.*
+
+# Daemon-only submodules (huge; not used by the web image).
+submodules/td/
+submodules/mysql-connector-cpp/
+
+# The connector's docs wiki sub-submodule is not needed to build.
+submodules/mariadb-connector-c/docs/
+
+# Editor/OS noise.
+**/*.o
+**/*.swp
+.DS_Store
