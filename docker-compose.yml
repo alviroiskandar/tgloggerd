@@ -1,0 +1,70 @@
+# tgloggerd -- the Telegram logger daemon, its MySQL store, and the web UI.
+#
+# All credentials and tunables live in .env (copy .env.example to .env and edit
+# it). The daemon and the web app share one toolchain image, built from
+# ./Dockerfile, and compile the bind-mounted source on start via run.sh -- so
+# editing the source never rebuilds the image.
+#
+# Quick start (see README):
+#   1. cp .env.example .env            # then edit it
+#   2. docker compose up -d mysql      # start the database
+#   3. docker compose run --rm tgloggerd   # first-time interactive login
+#   4. docker compose up -d            # build + start everything
+
+x-build: &build
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: tgloggerd:latest
+
+services:
+  mysql:
+    image: mysql:9.7.0
+    container_name: tgloggerd-mysql
+    restart: unless-stopped
+    env_file: .env
+    mem_reservation: 1024m
+    mem_limit: 4096m
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      # On first initialization this creates the web-only database and the
+      # restricted web_ro / web_app users from the .env credentials. It runs
+      # only while the data directory is empty; later starts keep whatever the
+      # accounts were first initialized with.
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    networks: [tgnet]
+
+  tgloggerd:
+    <<: *build
+    container_name: tgloggerd
+    restart: unless-stopped
+    depends_on: [mysql]
+    command: [daemon]
+    env_file: .env
+    # The repository is both the build context and the runtime tree: source,
+    # the persisted build/ output, the TDLib session under data/users, and the
+    # files downloaded under data/storage.
+    volumes:
+      - .:/workspace
+    # Keep stdin/tty so the first-time `docker compose run --rm tgloggerd`
+    # login can prompt for the phone number, code and 2FA password.
+    stdin_open: true
+    tty: true
+    networks: [tgnet]
+
+  web:
+    <<: *build
+    container_name: tgloggerd-web
+    restart: unless-stopped
+    depends_on: [mysql]
+    command: [web]
+    env_file: .env
+    volumes:
+      - .:/workspace
+    ports:
+      - "8080:8080"
+    networks: [tgnet]
+
+networks:
+  tgnet:
+    driver: bridge

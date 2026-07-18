@@ -33,7 +33,6 @@ interpolate already-escaped values.
 
     CMakeLists.txt        Standalone project; C++20; builds Drogon.
     migrations/           golang-migrate SQL for the web-only schema.
-    run.web.example.sh    Env template; copy to run.web.sh (git-ignored).
     src/
       main.cpp            Config, sessions, DbClients, listener, --seed-admin.
       Config.hpp          Environment parsing.
@@ -45,111 +44,49 @@ interpolate already-escaped values.
     static/               style.css and other static assets.
     third_party/          Vendored header-only inja and nlohmann/json.
 
-# Prerequisites
+# Build and run
 
-See the top-level README's Prerequisites section for the extra development
-packages the web app needs (libsodium-dev, libjsoncpp-dev, uuid-dev,
-zlib1g-dev, libssl-dev) and why a C++20 compiler is required.
+The web app is built and run by Docker together with the daemon; see the
+top-level README ("Quick start"). It is the "web" service in
+docker-compose.yml and shares the toolchain image with the daemon. On
+`docker compose up` the container compiles this directory (via `run.sh
+web`, into web/build/), applies the web migrations, and starts the
+server on http://localhost:8080.
 
 MariaDB Connector/C — which Drogon's async MySQL client is built on — is
 vendored as the submodule submodules/mariadb-connector-c and built in-tree
 (cmake/FindMySQL.cmake points Drogon at it). This avoids the system
 libmariadb-dev, which conflicts with the libmysqlclient-dev the daemon
-needs, so both projects build on one machine. Do not install libmariadb-dev.
+needs, so both build in one image. `run.sh` initializes this submodule
+(and Drogon) on first start.
 
-# Database setup
+# Database and accounts
 
-The web app needs its own schema and two restricted MySQL users. Using an
-administrative MySQL account, once:
+The web schema (tgloggerd_web) and its two restricted users (web_ro,
+web_app) are created automatically on MySQL's first start, from the .env
+credentials, by docker/mysql/init/10-web-users.sh. There is no manual SQL
+step. The web migrations, which create the web-only tables, are applied by
+the container on every start (web_app owns tgloggerd_web, so it can run
+them; at run time it performs only DML).
 
-    CREATE DATABASE tgloggerd_web
-      CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+Change the WEB_DB_RO_PASSWORD / WEB_DB_APP_PASSWORD values in .env before
+the first `docker compose up -d mysql`; they are baked in when the data
+directory is initialized and are not re-applied on later starts.
 
-    CREATE USER 'web_ro'@'%'  IDENTIFIED BY 'CHANGE_ME_RO';
-    GRANT SELECT ON tgloggerd.* TO 'web_ro'@'%';
+# First administrator
 
-    CREATE USER 'web_app'@'%' IDENTIFIED BY 'CHANGE_ME_APP';
-    GRANT ALL PRIVILEGES ON tgloggerd_web.* TO 'web_app'@'%';
+Create (or reset) the first admin — it prompts for the password twice:
 
-    FLUSH PRIVILEGES;
-
-Apply the web-only migrations (web_app owns tgloggerd_web, so it can run
-them; at runtime it only performs DML):
-
-    migrate -path web/migrations \
-        -database "mysql://web_app:CHANGE_ME_APP@tcp(10.0.88.3:3306)/tgloggerd_web" up
-
-# Build
-
-From this directory:
-
-    cmake -B build
-    cmake --build build -j"$(nproc)"
-
-At configure time Drogon must report MySQL/MariaDB support ("Ok! We find
-mariadb!"). If it does not, install libmariadb-dev and reconfigure.
-
-# Configure and run
-
-Copy the example run script and fill in the two database passwords. It is
-git-ignored because it holds credentials:
-
-    cp run.web.example.sh run.web.sh
-    # edit run.web.sh: set WEB_DB_RO_PASSWORD and WEB_DB_APP_PASSWORD, and
-    # WEB_STORAGE_DIR to the same path as the daemon's TG_STORAGE_DIR.
-
-Create the first administrator (prompts for the password on stdin, twice):
-
-    ./build/tgloggerd_web --seed-admin admin
+    docker compose exec web web/build/tgloggerd_web --seed-admin admin
 
 Re-running --seed-admin for an existing user resets its password and
-re-enables the account. Then start the server:
-
-    ./run.web.sh
-
-# Running in Docker
-
-web/Dockerfile builds the binary and a small runtime image, and the "web"
-service in docker-compose.example.yml runs it next to MySQL on the same
-network. The build context is the repository root (the image compiles the
-vendored Drogon and MariaDB Connector/C from submodules/).
-
-Build the image:
-
-    docker compose -f docker-compose.example.yml build web
-    # or: docker build -f web/Dockerfile -t tgloggerd-web:latest .
-
-Create the web database, users and grants once (edit the passwords in the
-SQL and in the compose "web" service so they match), then apply the web
-migrations:
-
-    docker exec -i tgloggerd-mysql mysql -uroot -proot \
-        < web/docker/web-db-init.sql
-
-    migrate -path web/migrations \
-        -database "mysql://web_app:web_app@tcp(10.0.88.3:3306)/tgloggerd_web" up
-
-Seed the first admin (interactive — prompts for the password twice):
-
-    docker compose -f docker-compose.example.yml run --rm -it web --seed-admin admin
-
-Start it:
-
-    docker compose -f docker-compose.example.yml up -d web
-
-The web interface is then on http://localhost:8080. The container mounts
-./data/storage/files read-only for /media, so WEB_STORAGE_DIR must be the
-same files the daemon writes (its TG_STORAGE_DIR). The example serves plain
-HTTP with WEB_SECURE_COOKIE=0; in production put a TLS-terminating reverse
-proxy in front (see below) and set WEB_SECURE_COOKIE=1.
-
-The container runs as root so it can read the daemon's storage files (mode
-0640) on the read-only mount; to harden, set a compose `user:` that can read
-that mount.
+re-enables the account.
 
 # Environment variables
 
-    WEB_LISTEN_ADDR        Bind address (default 127.0.0.1).
+All configuration is in .env (see .env.example). The web variables:
+
+    WEB_LISTEN_ADDR        Bind address (0.0.0.0 in the container).
     WEB_LISTEN_PORT        Bind port (default 8080).
     WEB_THREADS            Event-loop threads (default 4).
     WEB_DB_HOST/PORT       MySQL server; fall back to TG_DB_HOST/PORT.
@@ -168,15 +105,21 @@ that mount.
     WEB_LOGIN_MAX_ATTEMPTS Failed logins per (ip, username) before throttling
                            (default 5).
     WEB_LOGIN_WINDOW       Throttle window in seconds (default 900).
-    WEB_TEMPLATE_DIR       inja templates (default views/templates).
-    WEB_STATIC_DIR         Static assets served at / (default static).
+    WEB_TEMPLATE_DIR       inja templates (default web/views/templates).
+    WEB_STATIC_DIR         Static assets served at / (default web/static).
     WEB_STORAGE_DIR        File store; MUST equal the daemon's TG_STORAGE_DIR.
+
+The container serves /media from the daemon's downloaded files (the shared
+data/storage/files tree), so WEB_STORAGE_DIR must equal TG_STORAGE_DIR. The
+example serves plain HTTP with WEB_SECURE_COOKIE=0; in production put a
+TLS-terminating reverse proxy in front (see below) and set
+WEB_SECURE_COOKIE=1.
 
 # Deploying behind nginx (TLS)
 
-The app binds to localhost and serves plain HTTP. Terminate TLS in a
-reverse proxy and keep WEB_SECURE_COOKIE=1 so the session cookie is only
-sent over HTTPS. A minimal nginx server block:
+The app serves plain HTTP. Terminate TLS in a reverse proxy and keep
+WEB_SECURE_COOKIE=1 so the session cookie is only sent over HTTPS. A
+minimal nginx server block:
 
     server {
         listen 443 ssl http2;

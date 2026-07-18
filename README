@@ -7,7 +7,69 @@ as usernames, names, and photos. For groups it also tracks the
 administrator list and each admin's privileges, keeping a history of
 admin changes. Since a regular user account is not pushed admin changes,
 the admin list is fetched when a group is first seen and refreshed by
-periodic polling (see TG_ADMIN_POLL_INTERVAL in run.example.sh).
+periodic polling (see TG_ADMIN_POLL_INTERVAL in .env.example).
+
+# Quick start
+
+Everything runs in Docker. You need only Docker with the Compose plugin;
+the image carries the toolchain and the containers compile the source on
+first start. The full setup is:
+
+1. Install Docker (with the Compose plugin).
+
+2. Provide credentials and configuration:
+
+       cp .env.example .env
+       # edit .env: set TG_API_ID and TG_API_HASH (from
+       # https://my.telegram.org), and change every *_PASSWORD.
+
+3. Start MySQL. On its first start it creates the databases and users
+   from .env (the daemon's tgloggerd database and user, plus the web
+   app's tgloggerd_web database and its web_ro / web_app users):
+
+       docker compose up -d mysql
+
+4. Log in to Telegram once, interactively. This builds the daemon (the
+   first build compiles TDLib and takes a while), applies the daemon
+   migrations, and prompts on stdin for your phone number, the login
+   code, and your password (if two-step verification is enabled). The
+   session is saved under data/users, so later starts do not prompt:
+
+       docker compose run --rm tgloggerd
+
+   Once it is logged in and running, stop it with Ctrl-C.
+
+5. Build and start everything (the daemon and the web interface):
+
+       docker compose up -d
+
+The web interface is then on http://localhost:8080. Create its first
+administrator (prompts for the password twice):
+
+       docker compose exec web web/build/tgloggerd_web --seed-admin admin
+
+# How the build works
+
+The daemon and the web app share one toolchain image, built from
+`Dockerfile` (Ubuntu with the compiler, the MySQL client the daemon's
+connector needs, and golang-migrate). The image contains no project
+source: docker-compose.yml bind-mounts the repository into each
+container, and `run.sh` initializes the vendored git submodules, runs
+`cmake`, applies the pending migrations, and execs the binary. Because
+the source and the `build/` output are bind-mounted, editing the source
+and re-running `docker compose up` recompiles incrementally without
+rebuilding the image.
+
+`run.sh <daemon|web>` is the entrypoint for both services; the compose
+file selects the mode per service. Migrations run on every start and are
+idempotent (`migrate ... up` is a no-op once applied).
+
+# Configuration
+
+All configuration is environment-based; `.env.example` documents every
+variable and its default. `.env` is git-ignored because it holds
+secrets. The daemon variables are prefixed `TG_`, the web variables
+`WEB_`, and the MySQL image is configured through `MYSQL_`.
 
 # Project structure
 
@@ -28,14 +90,18 @@ periodic polling (see TG_ADMIN_POLL_INTERVAL in run.example.sh).
                                   implementations (.cpp) (User, File, ...).
     migrations/                golang-migrate SQL migrations for the schema.
     submodules/                Third-party dependencies vendored as git
-                               submodules: TDLib (td) and MySQL
-                               Connector/C++ (mysql-connector-cpp).
+                               submodules: TDLib (td), MySQL Connector/C++
+                               (mysql-connector-cpp), Drogon, and MariaDB
+                               Connector/C (the last two for the web app).
     data/                      Runtime data (git-ignored contents):
       users/                     Per-account TDLib data directories.
       mysql/                     MySQL server data (docker volume).
       storage/files/             Downloaded files, named by SHA-256.
-    docker-compose.example.yml Example MySQL service definition.
-    run.example.sh             Example run script; copy to run.sh.
+    Dockerfile                 Toolchain image for both components.
+    docker-compose.yml         mysql, tgloggerd and web services.
+    docker/mysql/init/         MySQL first-init hook (web database/users).
+    run.sh                     Container entrypoint: build, migrate, run.
+    .env.example               Configuration template; copy to .env.
     web/                       Optional server-rendered web interface for
                                browsing the database (a separate Drogon
                                application; see web/README.web).
@@ -46,103 +112,3 @@ TDLib ships very large headers that noticeably slow tgloggerd's
 compilation, so the code that touches TDLib is kept to a minimum. All
 direct TDLib usage lives in src/tgloggerd/TDLib.cpp, which exposes a
 small wrapper (tgloggerd::TDLib) through TDLib.hpp.
-
-# Prerequisites
-
-Install the following before building:
-
-  - git (with submodule support).
-  - A C/C++ toolchain (gcc/g++ or clang) with C11 and C++17 support.
-  - CMake 3.16 or newer.
-  - TDLib build dependencies: OpenSSL, zlib, and gperf.
-  - Docker with the Docker Compose plugin to run MySQL 9, or an
-    existing MySQL 9 server.
-  - golang-migrate to apply the database migrations.
-
-On Debian/Ubuntu the build dependencies can be installed with:
-
-    sudo apt install git build-essential cmake gperf libssl-dev zlib1g-dev \
-                     libmysqlclient-dev
-
-libmysqlclient-dev (the Oracle MySQL client) is what the vendored MySQL
-Connector/C++ builds its JDBC layer against. IMPORTANT: do NOT install
-libmariadb-dev alongside it — the two packages conflict, and libmariadb-dev
-replaces the Oracle headers with MariaDB's, which breaks the connector
-build. The web interface below does not need libmariadb-dev.
-
-Install golang-migrate with the Go toolchain (the "mysql" build tag
-enables the MySQL driver):
-
-    go install -tags 'mysql' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-
-Prebuilt golang-migrate binaries are also available at
-https://github.com/golang-migrate/migrate/releases.
-
-The optional web interface under web/ (a separate Drogon application that
-browses the database) needs a few more development packages. On
-Debian/Ubuntu:
-
-    sudo apt install libsodium-dev libjsoncpp-dev uuid-dev \
-                     zlib1g-dev libssl-dev
-
-Drogon's asynchronous MySQL client requires MariaDB Connector/C (the
-Oracle libmysqlclient lacks its non-blocking API). Rather than the system
-libmariadb-dev — which conflicts with the daemon's libmysqlclient-dev — the
-web app vendors MariaDB Connector/C as a submodule and builds it in-tree,
-so both can be built on one machine. The web app also needs a C++20
-compiler (gcc 11+ or clang 14+) for Drogon's coroutine database API.
-
-# Building
-
-Fetch the submodules (TDLib and MySQL Connector/C++), then configure and
-build:
-
-    git submodule update --init --recursive
-    cmake -B build
-    cmake --build build -j"$(nproc)"
-
-The first build compiles TDLib from source and may take a while.
-
-The vendored MySQL Connector/C++ builds its own copy of protobuf, whose
-CMakeLists still declares a cmake_minimum_required below 3.5. CMake 4.0
-and newer reject this and the configure step fails with:
-
-    Compatibility with CMake < 3.5 has been removed from CMake.
-
-If you are on CMake 4 or newer, set CMAKE_POLICY_VERSION_MINIMUM to 3.5.
-Export it (not just -D) so it also reaches protobuf's separate external
-build:
-
-    export CMAKE_POLICY_VERSION_MINIMUM=3.5
-    cmake -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-    cmake --build build -j"$(nproc)"
-
-# Running
-
-1. Start MySQL. Copy the example Compose file, adjust the credentials if
-   needed, and bring the service up:
-
-       cp docker-compose.example.yml docker-compose.yml
-       docker compose up -d mysql
-
-2. Apply the database migrations. Point golang-migrate at the running
-   MySQL instance, matching the host, port, and credentials in your
-   docker-compose.yml:
-
-       migrate -path migrations \
-           -database "mysql://tgloggerd:tgloggerd@tcp(10.0.88.3:3306)/tgloggerd" up
-
-3. Copy the example run script to run.sh and edit it with your own
-   credentials. run.sh is intentionally not committed because it holds
-   your API credentials:
-
-       cp run.example.sh run.sh
-       # edit run.sh: set TG_API_ID and TG_API_HASH (from
-       # https://my.telegram.org) and adjust TG_DATA_DIR as needed
-
-   Then run it:
-
-       ./run.sh
-
-On the first run, tgloggerd prompts on stdin for your phone number, the
-login code, and your password (if two-step verification is enabled).

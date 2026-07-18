@@ -1,5 +1,6 @@
 /build/
-/run.sh
+/web/build/
+/.env
 /task.md
 /Td/
 *.so
@@ -7,4 +8,3 @@
 *.swp
 *.tmp
 *.log
-/docker-compose.yml
