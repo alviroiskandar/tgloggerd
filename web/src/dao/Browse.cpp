@@ -7,6 +7,8 @@
 
 #include "views/Render.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -65,6 +67,156 @@ std::string displayName(const drogon::orm::Row &r)
 	if (name.empty())
 		name = "(no name)";
 	return Render::esc(name);
+}
+
+/*
+ * Render message text together with its TDLib formatting entities into safe
+ * HTML. `text` is UTF-8; `entitiesJson` is the JSON array the daemon stores,
+ * whose offset/length are UTF-16 code-unit spans (TDLib's convention). With
+ * no valid entities it degrades to plain escaped, <br>-joined text (same as
+ * escMultiline).
+ *
+ * Tags nest with a stack: outer/earlier entities open first and the most
+ * recently opened closes first. That is exact for the properly-nested or
+ * disjoint entity sets Telegram clients emit; a rare genuine overlap may
+ * nest imperfectly but every character is still escaped, so it stays safe.
+ */
+std::string renderFormatted(const std::string &text,
+			    const std::string &entitiesJson)
+{
+	if (text.empty() || entitiesJson.empty())
+		return Render::escMultiline(text);
+
+	nlohmann::json ents;
+	try {
+		ents = nlohmann::json::parse(entitiesJson);
+	} catch (...) {
+		return Render::escMultiline(text);
+	}
+	if (!ents.is_array() || ents.empty())
+		return Render::escMultiline(text);
+
+	/*
+	 * Map each UTF-16 unit boundary to a byte offset in `text`. A code
+	 * point outside the BMP is two UTF-16 units, so it contributes a second
+	 * (never a boundary target on its own) entry pointing at its start.
+	 */
+	std::vector<size_t> byteAt;
+	byteAt.reserve(text.size() + 1);
+	for (size_t i = 0; i < text.size();) {
+		unsigned char c = (unsigned char)text[i];
+		int len;
+		if ((c & 0x80) == 0)		len = 1;
+		else if ((c & 0xE0) == 0xC0)	len = 2;
+		else if ((c & 0xF0) == 0xE0)	len = 3;
+		else if ((c & 0xF8) == 0xF0)	len = 4;
+		else				len = 1; /* invalid lead; skip one */
+		byteAt.push_back(i);
+		if (len == 4)
+			byteAt.push_back(i);	/* surrogate pair: second unit */
+		i += (size_t)len;
+	}
+	byteAt.push_back(text.size());		/* sentinel: end of text */
+	size_t totalUnits = byteAt.size() - 1;
+
+	struct Ev { size_t start, end; std::string open, close; };
+	std::vector<Ev> evs;
+	for (const auto &e : ents) {
+		if (!e.is_object() || !e.contains("offset") || !e.contains("length"))
+			continue;
+		long off = e["offset"].is_number() ? e["offset"].get<long>() : -1;
+		long ln  = e["length"].is_number() ? e["length"].get<long>() : -1;
+		if (off < 0 || ln <= 0 || (size_t)(off + ln) > totalUnits)
+			continue;
+
+		size_t bs = byteAt[(size_t)off];
+		size_t be = byteAt[(size_t)(off + ln)];
+		std::string type = e.value("type", std::string());
+		Ev ev{ bs, be, "", "" };
+
+		if (type == "bold")		{ ev.open = "<b>"; ev.close = "</b>"; }
+		else if (type == "italic")	{ ev.open = "<i>"; ev.close = "</i>"; }
+		else if (type == "underline")	{ ev.open = "<u>"; ev.close = "</u>"; }
+		else if (type == "strikethrough") { ev.open = "<s>"; ev.close = "</s>"; }
+		else if (type == "spoiler")	{ ev.open = "<span class=\"spoiler\">"; ev.close = "</span>"; }
+		else if (type == "code")	{ ev.open = "<code>"; ev.close = "</code>"; }
+		else if (type == "pre" || type == "pre_code")
+						{ ev.open = "<pre>"; ev.close = "</pre>"; }
+		else if (type == "block_quote" || type == "expandable_block_quote")
+						{ ev.open = "<blockquote>"; ev.close = "</blockquote>"; }
+		else if (type == "text_url") {
+			ev.open = "<a href=\"" + Render::esc(e.value("url", std::string())) +
+				  "\" target=\"_blank\" rel=\"noopener nofollow\">";
+			ev.close = "</a>";
+		} else if (type == "url") {
+			ev.open = "<a href=\"" + Render::esc(text.substr(bs, be - bs)) +
+				  "\" target=\"_blank\" rel=\"noopener nofollow\">";
+			ev.close = "</a>";
+		} else if (type == "mention_name") {
+			long uid = e.value("user_id", (long)0);
+			ev.open = "<a href=\"/users/" + std::to_string(uid) + "\">";
+			ev.close = "</a>";
+		} else {
+			/* mention / hashtag / email / phone / custom_emoji / ...:
+			 * meaningful but with no distinct visual wrapper here. */
+			continue;
+		}
+		evs.push_back(std::move(ev));
+	}
+	if (evs.empty())
+		return Render::escMultiline(text);
+
+	/* Entities opening at a byte offset, outermost (largest end) first, so
+	 * pushing them left-to-right leaves the innermost on top of the stack. */
+	std::unordered_map<size_t, std::vector<size_t>> opensAt;
+	for (size_t k = 0; k < evs.size(); k++)
+		opensAt[evs[k].start].push_back(k);
+	for (auto &kv : opensAt)
+		std::sort(kv.second.begin(), kv.second.end(),
+			  [&](size_t a, size_t b) { return evs[a].end > evs[b].end; });
+
+	std::string out;
+	out.reserve(text.size() + evs.size() * 8);
+	std::vector<size_t> stack;
+	for (size_t i = 0; i <= text.size(); i++) {
+		/* Close entities ending here (innermost, i.e. stack top, first). */
+		while (!stack.empty() && evs[stack.back()].end == i) {
+			out += evs[stack.back()].close;
+			stack.pop_back();
+		}
+		auto it = opensAt.find(i);
+		if (it != opensAt.end()) {
+			for (size_t k : it->second) {
+				out += evs[k].open;
+				stack.push_back(k);
+			}
+		}
+		if (i == text.size())
+			break;
+
+		switch ((unsigned char)text[i]) {
+		case '&':  out += "&amp;";  break;
+		case '<':  out += "&lt;";   break;
+		case '>':  out += "&gt;";   break;
+		case '"':  out += "&quot;"; break;
+		case '\'': out += "&#39;";  break;
+		case '\n': out += "<br>";   break;
+		case '\r':                  break;
+		default:   out += text[i];  break;
+		}
+	}
+	return out;
+}
+
+/* renderFormatted from a (text, entities) column pair; "" if text is NULL. */
+std::string renderFormattedCols(const drogon::orm::Row &r, const char *textCol,
+				const char *entCol)
+{
+	if (r[textCol].isNull())
+		return std::string();
+	std::string ent = r[entCol].isNull() ? std::string()
+					     : r[entCol].as<std::string>();
+	return renderFormatted(r[textCol].as<std::string>(), ent);
 }
 
 } /* namespace */
@@ -980,8 +1132,15 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 	m["is_edited"]       = !r["edit_date"].isNull() && r["edit_date"].as<int64_t>() > 0;
 	m["is_channel_post"] = !r["is_channel_post"].isNull() &&
 			       r["is_channel_post"].as<int>() != 0;
-	m["text"]            = escColMulti(r, "text");
+	m["text"]            = renderFormattedCols(r, "text", "entities");
 	m["edits"]           = nlohmann::json::array();
+
+	/* A system/service message (member joined, title changed, ...) renders
+	 * as a centered notice rather than a chat bubble. Its `text` already
+	 * holds the human-readable description. */
+	m["is_service"]      = r["content_type"].as<std::string>() == "service";
+	if (!r["service_type"].isNull())
+		m["service_type"] = r["service_type"].as<std::string>();
 
 	/* Sender: a chat/channel, a user, the logged-in account, or unknown. */
 	nlohmann::json s;
@@ -1110,7 +1269,8 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"SELECT m.id, m.message_id, m.sender_user_id, m.sender_chat_id, "
 		"m.is_outgoing, m.is_channel_post, m.author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
-		"m.edit_date, m.content_type, m.text, m.file_id, m.deleted_at, "
+		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
+		"m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
@@ -1138,7 +1298,8 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"NULL AS sender_chat_id, m.is_outgoing, 0 AS is_channel_post, "
 		"NULL AS author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
-		"m.edit_date, m.content_type, m.text, m.file_id, m.deleted_at, "
+		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
+		"m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
@@ -1188,7 +1349,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		std::string tbl = group ? "group_message_edits" : "private_message_edits";
 		std::string eq =
 			"SELECT " + fk + " AS mid, content_type, "
-			"LEFT(text, 4000) AS snippet, file_id, "
+			"LEFT(text, 4000) AS snippet, entities, file_id, "
 			"IF(edit_date>0, FROM_UNIXTIME(edit_date), NULL) AS edit_date_str "
 			"FROM " + tbl + " WHERE " + fk + " IN (" + idlist + ") ORDER BY id";
 		auto er = co_await db->execSqlCoro(eq);
@@ -1197,7 +1358,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		for (const auto &row : er) {
 			nlohmann::json e;
 			e["content_type"] = row["content_type"].as<std::string>();
-			e["text"]         = escColMulti(row, "snippet");
+			e["text"]         = renderFormattedCols(row, "snippet", "entities");
 			e["edit_date"]    = escCol(row, "edit_date_str");
 			if (!row["file_id"].isNull())
 				e["file_id"] = row["file_id"].as<int64_t>();

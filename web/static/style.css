@@ -232,6 +232,44 @@ html { scroll-behavior: smooth; }
 .msg-text { white-space: pre-wrap; word-break: break-word; }
 .msg-sig { font-size: 0.8rem; margin-top: 0.2rem; }
 
+/* Rich-text formatting inside message/edit text (from TDLib entities). */
+.msg-text code, .edit-text code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.92em; background: var(--bg);
+	border: 1px solid var(--border); border-radius: 4px; padding: 0 0.2em;
+}
+.msg-text pre, .edit-text pre {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+	padding: 0.4rem 0.6rem; margin: 0.2rem 0; overflow-x: auto; white-space: pre;
+}
+.msg-text blockquote, .edit-text blockquote {
+	margin: 0.2rem 0; padding-left: 0.6rem;
+	border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+	color: var(--muted);
+}
+.msg-text a, .edit-text a { color: var(--accent); }
+/* Spoiler: hidden until hovered/tapped. */
+.msg-text .spoiler, .edit-text .spoiler {
+	background: var(--muted); color: transparent; border-radius: 3px;
+	cursor: pointer; transition: color 0.1s;
+}
+.msg-text .spoiler:hover, .edit-text .spoiler:hover { color: var(--fg); background: var(--bg); }
+
+/* Service/system message: a centered notice, not a chat bubble. */
+.msg-service { display: flex; justify-content: center; margin: 0.15rem 0; }
+.service-bubble {
+	max-width: 85%; text-align: center;
+	padding: 0.2rem 0.7rem; border-radius: 12px;
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+	color: var(--muted); font-size: 0.82rem; word-break: break-word;
+}
+.service-who { font-weight: 600; color: var(--fg); }
+.msg-service:target .service-bubble {
+	outline: 2px solid var(--accent);
+	animation: msg-flash 2s ease-out 1;
+}
+
 /* Forward header. */
 .fwd {
 	font-size: 0.82rem; margin-bottom: 0.25rem;
