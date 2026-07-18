@@ -162,6 +162,16 @@ int main(int argc, char **argv)
 	/* Template rendering and static assets. */
 	tgweb::views::Render::init(tgweb::env("WEB_TEMPLATE_DIR", "views/templates"),
 				   "tgloggerd");
+
+	/*
+	 * Keep Drogon's upload cache out of the (bind-mounted) repository root.
+	 * On startup Drogon creates <uploadPath>/tmp/00..FF shard directories for
+	 * buffering multipart uploads; the app accepts none, so they stay empty,
+	 * but we still relocate them under data/storage/web. A relative upload
+	 * path is resolved against the document root, so this MUST come before
+	 * setDocumentRoot() while the root is still the working directory (./).
+	 */
+	drogon::app().setUploadPath("data/storage/web/uploads");
 	drogon::app().setDocumentRoot(tgweb::env("WEB_STATIC_DIR", "static"));
 
 	addMysqlClient(cfg.ro);
