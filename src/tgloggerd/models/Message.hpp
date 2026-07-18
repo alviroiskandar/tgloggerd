@@ -25,6 +25,7 @@ enum class MessageContentType {
 	Voice,
 	Sticker,
 	Animation,
+	Service,	/* a system message (member joined, title changed, ...) */
 	Unknown,
 };
 
@@ -65,14 +66,30 @@ struct ForwardInfo {
 
 /*
  * The mutable content of a message: everything an edit can change. It is
- * snapshotted verbatim into the *_message_edits tables before each edit,
- * so private and group messages share this layout exactly.
+ * snapshotted into the *_message_edits tables before each edit, so private
+ * and group messages share this layout exactly.
+ *
+ * Exception: service_type is not part of the edit snapshot (service
+ * messages are not edited); the edits tables have no such column.
  */
 struct MessageContent {
 	MessageContentType	content_type = MessageContentType::Unknown;
 
-	/* Message text; nullopt for non-text messages. */
+	/* Message text or media caption; nullopt when there is none. */
 	std::optional<std::string>	text;
+
+	/*
+	 * Rich-text formatting of `text`, serialized as a JSON array of TDLib
+	 * text entities (see extract_message_content). nullopt when the text
+	 * carries no formatting. Snapshotted alongside `text` on edits.
+	 */
+	std::optional<std::string>	entities;
+
+	/*
+	 * For a Service message, the precise action id (e.g.
+	 * "chat_add_members"); nullopt otherwise. Not snapshotted on edits.
+	 */
+	std::optional<std::string>	service_type;
 
 	/* files.id for media attachments; nullopt if none. */
 	std::optional<uint64_t>		file_id;

@@ -22,6 +22,7 @@ const char *to_string(MessageContentType t)
 	case MessageContentType::Voice:		return "voice";
 	case MessageContentType::Sticker:	return "sticker";
 	case MessageContentType::Animation:	return "animation";
+	case MessageContentType::Service:	return "service";
 	case MessageContentType::Unknown:	return "unknown";
 	}
 	return "unknown";
@@ -48,6 +49,7 @@ MessageContentType message_content_type_from_string(const std::string &s)
 	if (s == "voice")	return MessageContentType::Voice;
 	if (s == "sticker")	return MessageContentType::Sticker;
 	if (s == "animation")	return MessageContentType::Animation;
+	if (s == "service")	return MessageContentType::Service;
 	return MessageContentType::Unknown;
 }
 
@@ -83,20 +85,25 @@ bool DB::snapshotMessageEditIfChanged(mysql::Transaction &tx,
 	 * media message as edited. The old file_id is still snapshotted.
 	 */
 	if (old_content.content_type == new_content.content_type &&
-	    old_content.text == new_content.text)
+	    old_content.text == new_content.text &&
+	    old_content.entities == new_content.entities)
 		return false;
 
 	mysql::Param text_param = std::monostate{};
 	if (old_content.text.has_value())
 		text_param = *old_content.text;
 
+	mysql::Param entities_param = std::monostate{};
+	if (old_content.entities.has_value())
+		entities_param = *old_content.entities;
+
 	mysql::Param file_param = std::monostate{};
 	if (old_content.file_id.has_value())
 		file_param = (int64_t)*old_content.file_id;
 
 	std::string sql = std::string("INSERT INTO ") + edits_table + " (" +
-		fk_column + ", content_type, text, file_id, edit_date)"
-		" VALUES (?, ?, ?, ?, ?)";
+		fk_column + ", content_type, text, entities, file_id, edit_date)"
+		" VALUES (?, ?, ?, ?, ?, ?)";
 
 	/* The snapshot records the content *before* the edit, keyed by the
 	 * edit_date that triggered it (the new edit_date of the live row). */
@@ -104,6 +111,7 @@ bool DB::snapshotMessageEditIfChanged(mysql::Transaction &tx,
 		(int64_t)message_row_id,
 		std::string(models::to_string(old_content.content_type)),
 		text_param,
+		entities_param,
 		file_param,
 		(int64_t)new_edit_date,
 	});

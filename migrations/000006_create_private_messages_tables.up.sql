@@ -25,13 +25,27 @@ CREATE TABLE private_messages (
 	-- Unix timestamp of the last edit; 0 if never edited.
 	edit_date    BIGINT          NOT NULL DEFAULT 0 COMMENT 'Unix timestamp of the last edit; 0 = never edited.',
 
-	-- Coarse content type for routing and filtering.
+	-- Coarse content type for routing and filtering. 'service' is a system
+	-- message (e.g. a member joined); its human-readable text is in `text`
+	-- and the precise action in `service_type`.
 	content_type ENUM('text', 'photo', 'video', 'document', 'audio',
-	                  'voice', 'sticker', 'animation', 'unknown')
+	                  'voice', 'sticker', 'animation', 'service', 'unknown')
 	                             NOT NULL DEFAULT 'unknown' COMMENT 'Coarse message content category.',
 
-	-- Message text; NULL for non-text messages. MEDIUMTEXT for long messages.
-	text         MEDIUMTEXT      NULL COMMENT 'Message text; NULL for non-text messages.',
+	-- Message text (or media caption). NULL for messages with no text.
+	-- MEDIUMTEXT for long messages.
+	text         MEDIUMTEXT      NULL COMMENT 'Message text or media caption; NULL if none.',
+
+	-- Rich-text formatting of `text` as a JSON array of TDLib text entities
+	-- (bold, italic, code, links, ...). Each element is
+	-- {offset, length, type, ...type-specific fields}; offset/length are in
+	-- UTF-16 code units, per TDLib. NULL when the text carries no formatting.
+	entities     JSON            NULL COMMENT 'td_api::formattedText.entities_ as JSON; UTF-16 offsets.',
+
+	-- For content_type='service': the specific system action, e.g.
+	-- 'chat_add_members', 'chat_delete_member', 'pin_message'. NULL for
+	-- ordinary (non-service) messages.
+	service_type VARCHAR(64)     NULL COMMENT 'System-message action id; NULL for normal messages.',
 
 	-- For media messages: FK to files.id for the attached file.
 	file_id      BIGINT UNSIGNED NULL COMMENT 'FK to files.id for media attachments.',
@@ -95,9 +109,10 @@ CREATE TABLE private_message_edits (
 
 	-- Content captured before the edit was applied.
 	content_type      ENUM('text', 'photo', 'video', 'document', 'audio',
-	                       'voice', 'sticker', 'animation', 'unknown')
+	                       'voice', 'sticker', 'animation', 'service', 'unknown')
 	                                  NOT NULL DEFAULT 'unknown' COMMENT 'Content type before the edit.',
 	text              MEDIUMTEXT      NULL COMMENT 'Text before the edit; NULL for non-text.',
+	entities          JSON            NULL COMMENT 'Formatting entities before the edit (see private_messages.entities).',
 	file_id           BIGINT UNSIGNED NULL COMMENT 'FK to files.id before the edit.',
 
 	-- The edit_date value that triggered this snapshot (equals the

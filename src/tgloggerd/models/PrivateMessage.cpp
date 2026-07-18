@@ -41,10 +41,10 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 	static const char *upsert_sql =
 		"INSERT INTO private_messages ("
 		" chat_id, message_id, sender_id, is_outgoing, date,"
-		" edit_date, content_type, text,"
+		" edit_date, content_type, text, entities, service_type,"
 		" is_forwarded"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_id = new.sender_id,"
 		" is_outgoing = new.is_outgoing,"
@@ -52,6 +52,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		" edit_date = new.edit_date,"
 		" content_type = new.content_type,"
 		" text = new.text,"
+		" entities = new.entities,"
+		" service_type = new.service_type,"
 		" is_forwarded = new.is_forwarded";
 		/* deleted_at is intentionally not upserted; a re-ingested
 		 * message must not clear an existing deletion time. It is set
@@ -63,7 +65,7 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		 */
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
-			"       deleted_at"
+			"       deleted_at, entities"
 			" FROM private_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
@@ -75,6 +77,14 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		mysql::Param text_param = std::monostate{};
 		if (msg.content.text.has_value())
 			text_param = *msg.content.text;
+
+		mysql::Param entities_param = std::monostate{};
+		if (msg.content.entities.has_value())
+			entities_param = *msg.content.entities;
+
+		mysql::Param service_param = std::monostate{};
+		if (msg.content.service_type.has_value())
+			service_param = *msg.content.service_type;
 
 		std::string new_ct = models::to_string(msg.content.content_type);
 
@@ -99,6 +109,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 				(int64_t)msg.edit_date,
 				new_ct,
 				text_param,
+				entities_param,
+				service_param,
 				b(msg.forward_info.has_value()),
 			});
 
@@ -153,6 +165,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 				old[2].value_or("unknown"));
 		if (old[3].has_value())
 			old_content.text = *old[3];
+		if (old[6].has_value())
+			old_content.entities = *old[6];
 		if (old[4].has_value())
 			old_content.file_id = std::stoull(*old[4]);
 
@@ -173,6 +187,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 			(int64_t)msg.edit_date,
 			new_ct,
 			text_param,
+			entities_param,
+			service_param,
 			b(msg.forward_info.has_value()),
 		});
 

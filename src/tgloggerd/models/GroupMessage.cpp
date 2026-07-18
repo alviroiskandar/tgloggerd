@@ -38,10 +38,10 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		"INSERT INTO group_messages ("
 		" chat_id, message_id, sender_user_id, sender_chat_id,"
 		" is_outgoing, is_channel_post, author_signature, date,"
-		" edit_date, content_type, text,"
+		" edit_date, content_type, text, entities, service_type,"
 		" is_forwarded"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_user_id = new.sender_user_id,"
 		" sender_chat_id = new.sender_chat_id,"
@@ -52,6 +52,8 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		" edit_date = new.edit_date,"
 		" content_type = new.content_type,"
 		" text = new.text,"
+		" entities = new.entities,"
+		" service_type = new.service_type,"
 		" is_forwarded = new.is_forwarded";
 		/* deleted_at is deliberately not upserted here: a re-ingested
 		 * message (e.g. fetched to resolve a reply) must not clear an
@@ -60,7 +62,7 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 	db_.transaction([&](mysql::Transaction &tx) {
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
-			"       deleted_at"
+			"       deleted_at, entities"
 			" FROM group_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
@@ -81,6 +83,14 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		if (msg.content.text.has_value())
 			text_param = *msg.content.text;
 
+		mysql::Param entities_param = std::monostate{};
+		if (msg.content.entities.has_value())
+			entities_param = *msg.content.entities;
+
+		mysql::Param service_param = std::monostate{};
+		if (msg.content.service_type.has_value())
+			service_param = *msg.content.service_type;
+
 		std::string new_ct = models::to_string(msg.content.content_type);
 
 		auto bind_all = [&]() -> std::vector<mysql::Param> {
@@ -96,6 +106,8 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 				(int64_t)msg.edit_date,
 				new_ct,
 				text_param,
+				entities_param,
+				service_param,
 				b(msg.forward_info.has_value()),
 			};
 		};
@@ -151,6 +163,8 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 				old[2].value_or("unknown"));
 		if (old[3].has_value())
 			old_content.text = *old[3];
+		if (old[6].has_value())
+			old_content.entities = *old[6];
 		if (old[4].has_value())
 			old_content.file_id = std::stoull(*old[4]);
 
