@@ -3,7 +3,7 @@
 {% include "search.html" %}
   <table>
     <thead>
-      <tr><th class="col-photo"></th><th>ID</th><th>Title</th><th>Username</th><th>Type</th><th>Admins</th></tr>
+      <tr><th class="col-photo"></th><th>ID</th><th>Title</th><th>Username</th><th>Type</th><th>Admins</th><th>First seen</th><th>Last updated</th></tr>
     </thead>
     <tbody>
 ## for g in groups
@@ -20,10 +20,12 @@
         </td>
         <td>{{ g.type }}</td>
         <td>{{ g.admins }}</td>
+        <td class="nowrap">{{ g.created_at }}</td>
+        <td class="nowrap">{{ g.updated_at }}</td>
       </tr>
 ## endfor
 ## if length(groups) == 0
-      <tr><td colspan="6" class="muted">No groups{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
+      <tr><td colspan="8" class="muted">No groups{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
 ## endif
     </tbody>
   </table>

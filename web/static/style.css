@@ -93,6 +93,7 @@ th { color: var(--muted); font-weight: 600; }
 table.kv th { width: 12rem; }
 
 .muted { color: var(--muted); }
+.nowrap { white-space: nowrap; }
 
 /* Search box (shared by the listing pages) */
 .search { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1.2rem; }

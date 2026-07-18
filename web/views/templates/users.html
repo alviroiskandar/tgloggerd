@@ -3,7 +3,7 @@
 {% include "search.html" %}
   <table>
     <thead>
-      <tr><th class="col-photo"></th><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th></tr>
+      <tr><th class="col-photo"></th><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th><th>First seen</th><th>Last updated</th></tr>
     </thead>
     <tbody>
 ## for u in users
@@ -33,10 +33,12 @@
           <span class="badge warn">fake</span>
 ## endif
         </td>
+        <td class="nowrap">{{ u.created_at }}</td>
+        <td class="nowrap">{{ u.updated_at }}</td>
       </tr>
 ## endfor
 ## if length(users) == 0
-      <tr><td colspan="6" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
+      <tr><td colspan="8" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
 ## endif
     </tbody>
   </table>
