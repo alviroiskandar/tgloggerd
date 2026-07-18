@@ -36,6 +36,9 @@
     <tr><th>Sender</th><td>{{ message.sender_name }}</td></tr>
     <tr><th>Type</th><td>{{ message.content_type }}</td></tr>
     <tr><th>Date</th><td>{% if message.date != "" %}{{ message.date }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+## if message.is_deleted
+    <tr><th>Deleted</th><td>{% if existsIn(message, "deleted_at") %}{{ message.deleted_at }}{% else %}<span class="muted">(time unknown)</span>{% endif %}</td></tr>
+## endif
 ## if existsIn(message, "file_id")
     <tr><th>File</th><td><a href="/media/{{ message.file_id }}">file #{{ message.file_id }}</a></td></tr>
 ## endif

@@ -1136,8 +1136,18 @@ void TDLib::Impl::handle_update_message_content(int64_t chat_id,
 
 void TDLib::Impl::handle_delete_messages(int64_t chat_id,
 					 const td_api::array<td_api::int53> &message_ids,
-					 bool /* is_permanent */)
+					 bool is_permanent)
 {
+	/*
+	 * Only permanent, user-initiated deletions are logged. TDLib also fires
+	 * updateDeleteMessages when messages merely leave its local cache
+	 * (is_permanent = false / from_cache = true, e.g. on chat close, cache
+	 * trimming or restart); those messages still exist on the server, so
+	 * treating them as deletions wrongly tombstones live messages.
+	 */
+	if (!is_permanent)
+		return;
+
 	/* Route deletions to the same table the messages were stored in. */
 	bool priv = is_private_chat(chat_id);
 	if (priv && !private_msg_handler_)

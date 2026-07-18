@@ -76,7 +76,7 @@ public:
 	 *  - First-seen messages (insert).
 	 *  - Edits (copies old row into private_message_edits, then
 	 *    updates private_messages).
-	 *  - Deletions (sets is_deleted = 1, keeps the row).
+	 *  - Deletions (stamps deleted_at, keeps the row).
 	 *  - Forward info (inserts into private_message_fwd_info if
 	 *    present and not already recorded).
 	 */

@@ -38,10 +38,10 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		"INSERT INTO group_messages ("
 		" chat_id, message_id, sender_user_id, sender_chat_id,"
 		" is_outgoing, is_channel_post, author_signature, date,"
-		" edit_date, content_type, text, is_deleted,"
+		" edit_date, content_type, text,"
 		" is_forwarded"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_user_id = new.sender_user_id,"
 		" sender_chat_id = new.sender_chat_id,"
@@ -52,13 +52,15 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		" edit_date = new.edit_date,"
 		" content_type = new.content_type,"
 		" text = new.text,"
-		" is_deleted = new.is_deleted,"
 		" is_forwarded = new.is_forwarded";
+		/* deleted_at is deliberately not upserted here: a re-ingested
+		 * message (e.g. fetched to resolve a reply) must not clear an
+		 * existing deletion time. It is set only on the deletion path. */
 
 	db_.transaction([&](mysql::Transaction &tx) {
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
-			"       is_deleted"
+			"       deleted_at"
 			" FROM group_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
@@ -94,7 +96,6 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 				(int64_t)msg.edit_date,
 				new_ct,
 				text_param,
-				b(msg.is_deleted),
 				b(msg.forward_info.has_value()),
 			};
 		};
@@ -129,16 +130,17 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		uint64_t gm_id = std::stoull(*old[0]);
 		int64_t old_edit_date = old[1].has_value() ?
 			std::stoll(*old[1]) : 0;
-		bool old_deleted = old[5].has_value() && *old[5] == "1";
+		bool old_deleted = old[5].has_value();
 
 		/*
-		 * Deletion: only flag is_deleted, keeping edit_date as the last
-		 * real content edit time.
+		 * Deletion: stamp deleted_at with the time we observed it,
+		 * keeping edit_date as the last real content edit time. The
+		 * deleted_at IS NULL guard preserves the first deletion time.
 		 */
 		if (msg.is_deleted && !old_deleted) {
 			tx.execute(
-				"UPDATE group_messages SET is_deleted = 1"
-				" WHERE id = ?",
+				"UPDATE group_messages SET deleted_at = NOW()"
+				" WHERE id = ? AND deleted_at IS NULL",
 				{ (int64_t)gm_id });
 			return;
 		}

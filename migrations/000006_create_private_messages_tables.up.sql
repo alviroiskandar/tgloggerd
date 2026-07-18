@@ -36,8 +36,9 @@ CREATE TABLE private_messages (
 	-- For media messages: FK to files.id for the attached file.
 	file_id      BIGINT UNSIGNED NULL COMMENT 'FK to files.id for media attachments.',
 
-	-- Soft-delete flag. Deleted messages keep their row.
-	is_deleted   TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Soft-delete flag for message deletion.',
+	-- Soft-delete timestamp: when the deletion was observed, NULL if the
+	-- message is not deleted. Deleted messages keep their row.
+	deleted_at   DATETIME        NULL DEFAULT NULL COMMENT 'When the message was observed deleted; NULL if live.',
 
 	-- Whether the message is forwarded. Denormalized from the presence
 	-- of forward info (a private_message_fwd_info row) for quick filtering.
@@ -61,7 +62,7 @@ CREATE TABLE private_messages (
 	UNIQUE KEY uq_private_messages_chat_msg (chat_id, message_id),
 	KEY idx_private_messages_sender_id (sender_id),
 	KEY idx_private_messages_date (date),
-	KEY idx_private_messages_is_deleted (is_deleted),
+	KEY idx_private_messages_deleted_at (deleted_at),
 	KEY idx_private_messages_reply (reply_to_id),
 	KEY idx_private_messages_reply_target (reply_to_chat_id, reply_to_msg_id),
 	CONSTRAINT fk_private_messages_chat_user

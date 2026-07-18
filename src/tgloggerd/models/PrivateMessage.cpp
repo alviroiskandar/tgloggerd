@@ -27,7 +27,7 @@ mysql::Param b(bool v)
  * On update (same chat_id + message_id):
  *   - If edit_date increased and content differs, copy the old content
  *     into private_message_edits before updating private_messages.
- *   - If is_deleted changed to true, only set is_deleted = 1.
+ *   - If the message became deleted, only stamp deleted_at.
  *   - If forward_info is present and not already recorded, insert it.
  */
 void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
@@ -41,10 +41,10 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 	static const char *upsert_sql =
 		"INSERT INTO private_messages ("
 		" chat_id, message_id, sender_id, is_outgoing, date,"
-		" edit_date, content_type, text, is_deleted,"
+		" edit_date, content_type, text,"
 		" is_forwarded"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_id = new.sender_id,"
 		" is_outgoing = new.is_outgoing,"
@@ -52,8 +52,10 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		" edit_date = new.edit_date,"
 		" content_type = new.content_type,"
 		" text = new.text,"
-		" is_deleted = new.is_deleted,"
 		" is_forwarded = new.is_forwarded";
+		/* deleted_at is intentionally not upserted; a re-ingested
+		 * message must not clear an existing deletion time. It is set
+		 * only on the deletion path below. */
 
 	db_.transaction([&](mysql::Transaction &tx) {
 		/*
@@ -61,7 +63,7 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		 */
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
-			"       is_deleted"
+			"       deleted_at"
 			" FROM private_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
@@ -97,7 +99,6 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 				(int64_t)msg.edit_date,
 				new_ct,
 				text_param,
-				b(msg.is_deleted),
 				b(msg.forward_info.has_value()),
 			});
 
@@ -126,17 +127,18 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		uint64_t pm_id = std::stoull(*old[0]);
 		int64_t old_edit_date = old[1].has_value() ?
 			std::stoll(*old[1]) : 0;
-		bool old_deleted = old[5].has_value() && *old[5] == "1";
+		bool old_deleted = old[5].has_value();
 
 		/*
-		 * If the message is now deleted and wasn't before, only update
-		 * is_deleted. edit_date is left untouched so it keeps
-		 * reflecting the last real content edit.
+		 * If the message is now deleted and wasn't before, stamp
+		 * deleted_at with the observation time. edit_date is left
+		 * untouched so it keeps reflecting the last real content edit;
+		 * the IS NULL guard preserves the first deletion time.
 		 */
 		if (msg.is_deleted && !old_deleted) {
 			tx.execute(
-				"UPDATE private_messages SET is_deleted = 1"
-				" WHERE id = ?",
+				"UPDATE private_messages SET deleted_at = NOW()"
+				" WHERE id = ? AND deleted_at IS NULL",
 				{ (int64_t)pm_id });
 			return;
 		}
@@ -171,7 +173,6 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 			(int64_t)msg.edit_date,
 			new_ct,
 			text_param,
-			b(msg.is_deleted),
 			b(msg.forward_info.has_value()),
 		});
 

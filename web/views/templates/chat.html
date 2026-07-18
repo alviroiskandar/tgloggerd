@@ -115,7 +115,7 @@
           </details>
 ## endif
 ## if m.is_deleted
-          <span class="badge warn">deleted</span>
+          <span class="badge warn">deleted{% if existsIn(m, "deleted_at") %} · {{ m.deleted_at }}{% endif %}</span>
 ## endif
         </div>
       </div>

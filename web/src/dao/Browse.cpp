@@ -669,7 +669,7 @@ std::string privSelect(const char *textProj)
 		"SELECT m.id, m.message_id, m.chat_id, m.sender_id, m.is_outgoing, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, ") + textProj + ", "
-		"m.file_id, m.is_deleted, m.is_forwarded, "
+		"m.file_id, m.deleted_at, m.is_forwarded, "
 		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"cu.first_name AS chat_first, cu.last_name AS chat_last, "
 		"su.first_name AS sender_first, su.last_name AS sender_last "
@@ -685,7 +685,7 @@ std::string groupSelect(const char *textProj)
 		"m.sender_chat_id, m.is_channel_post, m.author_signature, "
 		"m.is_outgoing, IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, ") + textProj + ", "
-		"m.file_id, m.is_deleted, m.is_forwarded, "
+		"m.file_id, m.deleted_at, m.is_forwarded, "
 		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"g.title AS chat_title, "
 		"su.first_name AS sender_first, su.last_name AS sender_last, "
@@ -704,7 +704,9 @@ void fillCommon(nlohmann::json &m, const drogon::orm::Row &r)
 	m["chat_id"]      = r["chat_id"].as<int64_t>();
 	m["date"]         = escCol(r, "date_str");
 	m["content_type"] = r["content_type"].as<std::string>();
-	m["is_deleted"]   = r["is_deleted"].as<int>() != 0;
+	m["is_deleted"]   = !r["deleted_at"].isNull();
+	if (!r["deleted_at"].isNull())
+		m["deleted_at"] = escCol(r, "deleted_at");
 	m["is_forwarded"] = r["is_forwarded"].as<int>() != 0;
 	m["is_edited"]    = !r["edit_date"].isNull() &&
 			    r["edit_date"].as<int64_t>() > 0;
@@ -968,7 +970,9 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 	m["msg_id"]          = r["message_id"].as<int64_t>(); /* server id / anchor */
 	m["date"]            = escCol(r, "date_str");
 	m["content_type"]    = r["content_type"].as<std::string>();
-	m["is_deleted"]      = r["is_deleted"].as<int>() != 0;
+	m["is_deleted"]      = !r["deleted_at"].isNull();
+	if (!r["deleted_at"].isNull())
+		m["deleted_at"] = escCol(r, "deleted_at");
 	m["is_outgoing"]     = outgoing;
 	/* Attribute incoming group messages to their sender; a 1:1 chat or one's
 	 * own messages need no per-bubble name. */
@@ -1030,7 +1034,7 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 			? escCol(r, "r_sg_title")
 			: nameOf(r, "r_su_first", "r_su_last", "");
 		rep["snippet"]      = escCol(r, "r_snippet");
-		rep["deleted"]      = !r["r_deleted"].isNull() && r["r_deleted"].as<int>() != 0;
+		rep["deleted"]      = !r["r_deleted_at"].isNull();
 		rep["content_type"] = r["r_ctype"].isNull() ? "" : r["r_ctype"].as<std::string>();
 		m["reply"] = std::move(rep);
 	} else if (!r["reply_to_msg_id"].isNull()) {
@@ -1106,7 +1110,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"SELECT m.id, m.message_id, m.sender_user_id, m.sender_chat_id, "
 		"m.is_outgoing, m.is_channel_post, m.author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
-		"m.edit_date, m.content_type, m.text, m.file_id, m.is_deleted, "
+		"m.edit_date, m.content_type, m.text, m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
@@ -1116,7 +1120,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"f.file_type AS f_type, f.orig_file_name AS f_name, f.file_size AS f_size, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
-		"rm.message_id AS r_msg_id, rm.is_deleted AS r_deleted, "
+		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
 		"rm.content_type AS r_ctype, LEFT(rm.text,120) AS r_snippet, "
 		"rsu.first_name AS r_su_first, rsu.last_name AS r_su_last, "
 		"rsg.title AS r_sg_title "
@@ -1134,7 +1138,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"NULL AS sender_chat_id, m.is_outgoing, 0 AS is_channel_post, "
 		"NULL AS author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
-		"m.edit_date, m.content_type, m.text, m.file_id, m.is_deleted, "
+		"m.edit_date, m.content_type, m.text, m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
@@ -1144,7 +1148,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"f.file_type AS f_type, f.orig_file_name AS f_name, f.file_size AS f_size, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
-		"rm.message_id AS r_msg_id, rm.is_deleted AS r_deleted, "
+		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
 		"rm.content_type AS r_ctype, LEFT(rm.text,120) AS r_snippet, "
 		"rsu.first_name AS r_su_first, rsu.last_name AS r_su_last, "
 		"NULL AS r_sg_title "
