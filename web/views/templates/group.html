@@ -1,6 +1,11 @@
 <section class="detail group-detail">
   <p class="crumb"><a href="/groups">← Groups</a></p>
-  <h1>{{ group.title }} <span class="muted">#{{ group.id }}</span></h1>
+  <div class="detail-head">
+## if existsIn(group, "photo_file_id")
+    <img class="avatar" src="/media/{{ group.photo_file_id }}" alt="Group photo">
+## endif
+    <h1>{{ group.title }} <span class="muted">#{{ group.id }}</span></h1>
+  </div>
 
   <table class="kv">
     <tr><th>Type</th><td>{{ group.type }}</td></tr>

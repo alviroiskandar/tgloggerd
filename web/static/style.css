@@ -121,6 +121,16 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 
 /* Detail pages */
 .detail .crumb { margin-top: 0; }
+.detail-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+.detail-head h1 { margin: 0; }
+.avatar {
+	flex: none;
+	width: 72px; height: 72px;
+	border-radius: 50%;
+	object-fit: cover;
+	border: 1px solid var(--border);
+	background: var(--card);
+}
 .detail h2 { font-size: 1.05rem; margin-top: 1.6rem; }
 .chips { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .chips li { padding: 0.2rem 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }

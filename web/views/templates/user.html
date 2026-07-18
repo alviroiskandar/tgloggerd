@@ -1,6 +1,11 @@
 <section class="detail user-detail">
   <p class="crumb"><a href="/users">← Users</a></p>
-  <h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
+  <div class="detail-head">
+## if existsIn(user, "profile_photo_file_id")
+    <img class="avatar" src="/media/{{ user.profile_photo_file_id }}" alt="Profile photo">
+## endif
+    <h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
+  </div>
 
   <div class="badges">
 ## if user.is_premium
