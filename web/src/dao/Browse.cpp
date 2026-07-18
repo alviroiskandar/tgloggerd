@@ -147,8 +147,17 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 		"SELECT id, first_name, last_name, phone_number, type, "
 		"profile_photo_file_id, is_verified, is_scam, is_fake, "
 		"is_premium, is_support, is_contact, is_mutual_contact, "
-		"is_close_friend, language_code, bio, restriction_reason, "
-		"created_at, updated_at "
+		"is_close_friend, have_access, has_sensitive_content, "
+		"restricts_new_chats, paid_message_star_count, "
+		"language_code, bio, personal_chat_id, "
+		"accent_color_id, profile_accent_color_id, "
+		"background_custom_emoji_id, profile_background_custom_emoji_id, "
+		"emoji_status_custom_emoji_id, "
+		"IF(emoji_status_expiration_date > 0, "
+		"   FROM_UNIXTIME(emoji_status_expiration_date), NULL) "
+		"   AS emoji_status_expires, "
+		"birthday_day, birthday_month, birthday_year, "
+		"restriction_reason, created_at, updated_at "
 		"FROM users WHERE id = ?",
 		id);
 
@@ -172,6 +181,38 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	user["is_premium"]        = r["is_premium"].as<int>() != 0;
 	user["is_support"]        = r["is_support"].as<int>() != 0;
 	user["is_contact"]        = r["is_contact"].as<int>() != 0;
+	user["is_mutual_contact"] = r["is_mutual_contact"].as<int>() != 0;
+	user["is_close_friend"]   = r["is_close_friend"].as<int>() != 0;
+	user["have_access"]       = r["have_access"].as<int>() != 0;
+	user["has_sensitive_content"] = r["has_sensitive_content"].as<int>() != 0;
+	user["restricts_new_chats"]   = r["restricts_new_chats"].as<int>() != 0;
+	user["paid_message_star_count"] = r["paid_message_star_count"].as<int64_t>();
+	user["personal_chat_id"]  = r["personal_chat_id"].as<int64_t>();
+	user["accent_color_id"]   = r["accent_color_id"].as<int>();
+	user["profile_accent_color_id"] = r["profile_accent_color_id"].as<int>();
+	user["background_custom_emoji_id"] =
+		r["background_custom_emoji_id"].as<int64_t>();
+	user["profile_background_custom_emoji_id"] =
+		r["profile_background_custom_emoji_id"].as<int64_t>();
+	if (!r["emoji_status_custom_emoji_id"].isNull())
+		user["emoji_status_custom_emoji_id"] =
+			r["emoji_status_custom_emoji_id"].as<int64_t>();
+	user["emoji_status_expires"] = escCol(r, "emoji_status_expires");
+	/* Birthday: day + month name (+ year), built from digits and static month
+	 * names, so it needs no escaping. Omitted entirely when unset. */
+	if (!r["birthday_day"].isNull() && !r["birthday_month"].isNull()) {
+		static const char *kMonths[] = {
+			"January", "February", "March", "April", "May", "June",
+			"July", "August", "September", "October", "November",
+			"December"};
+		int d = r["birthday_day"].as<int>();
+		int m = r["birthday_month"].as<int>();
+		std::string bday = std::to_string(d) + " " +
+			(m >= 1 && m <= 12 ? kMonths[m - 1] : "?");
+		if (!r["birthday_year"].isNull())
+			bday += " " + std::to_string(r["birthday_year"].as<int>());
+		user["birthday"] = bday;
+	}
 	user["created_at"]        = r["created_at"].as<std::string>();
 	user["updated_at"]        = r["updated_at"].as<std::string>();
 	if (!r["profile_photo_file_id"].isNull())
