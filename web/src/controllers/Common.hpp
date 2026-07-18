@@ -8,6 +8,7 @@
 
 #include <drogon/HttpRequest.h>
 #include <drogon/HttpResponse.h>
+#include <drogon/utils/Utilities.h>
 
 #include <nlohmann/json.hpp>
 
@@ -73,6 +74,28 @@ inline int clampedIntParam(const drogon::HttpRequestPtr &req, const char *name,
 		return def;
 	int n = atoi(v.c_str());
 	return std::clamp(n, lo, hi);
+}
+
+/*
+ * Wire up the shared search box for a listing page. Reads the "q" parameter,
+ * populates data["search"] = {action, q, placeholder} for the search.html
+ * component (q is HTML-escaped for the input value) and data["q_url"] with the
+ * URL-encoded query for carrying it through pager links. Returns the raw query
+ * to hand to the DAO.
+ */
+inline std::string applySearch(nlohmann::json &data,
+			       const drogon::HttpRequestPtr &req,
+			       const std::string &action,
+			       const std::string &placeholder)
+{
+	std::string q = req->getParameter("q");
+	nlohmann::json s;
+	s["action"]      = action;
+	s["q"]           = views::Render::esc(q);
+	s["placeholder"] = placeholder;
+	data["search"]   = std::move(s);
+	data["q_url"]    = drogon::utils::urlEncodeComponent(q);
+	return q;
 }
 
 } /* namespace tgweb::controllers */

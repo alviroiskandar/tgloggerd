@@ -1,5 +1,6 @@
 <section class="users">
   <h1>Users</h1>
+{% include "search.html" %}
   <table>
     <thead>
       <tr><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th></tr>
@@ -34,13 +35,13 @@
       </tr>
 ## endfor
 ## if length(users) == 0
-      <tr><td colspan="5" class="muted">No users.</td></tr>
+      <tr><td colspan="5" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
 ## endif
     </tbody>
   </table>
 ## if next_cursor
   <p class="pager">
-    <a href="/users?before={{ next_cursor }}&limit={{ limit }}">Next →</a>
+    <a href="/users?before={{ next_cursor }}&limit={{ limit }}&q={{ q_url }}">Next →</a>
   </p>
 ## endif
 </section>

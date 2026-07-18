@@ -21,6 +21,22 @@ std::string escCol(const drogon::orm::Row &r, const char *col)
 	return Render::esc(r[col].as<std::string>());
 }
 
+/*
+ * A LIKE pattern "%q%" with the LIKE metacharacters in q escaped, so a user's
+ * literal % or _ matches itself (backslash is LIKE's default escape char). The
+ * value is a bound parameter, so this is about match semantics, not injection.
+ */
+std::string likePattern(const std::string &q)
+{
+	std::string e;
+	for (char c : q) {
+		if (c == '\\' || c == '%' || c == '_')
+			e += '\\';
+		e += c;
+	}
+	return "%" + e + "%";
+}
+
 /* A display name from first/last name, escaped, never empty. */
 std::string displayName(const drogon::orm::Row &r)
 {
@@ -62,33 +78,39 @@ drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db)
 }
 
 drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
-				       int64_t cursor, int limit)
+				       int64_t cursor, int limit,
+				       std::string query)
 {
-	static const char *kSelect =
+	/*
+	 * A single parameterized statement covers every case: the leading
+	 * "? = ''" disables the search filter when no query is given, and
+	 * "? = 0 OR u.id < ?" makes the cursor optional (cursor 0 = first page).
+	 * Fetch one extra row to know whether a further page exists. The SQL is a
+	 * named local (never a temporary in the co_await operand) so it outlives
+	 * the suspension; a temporary there is mishandled by the coroutine
+	 * lowering and double-freed across thread migration.
+	 */
+	std::string like = likePattern(query);
+	std::string q =
 		"SELECT u.id, u.first_name, u.last_name, u.type, "
 		"u.is_premium, u.is_verified, u.is_scam, u.is_fake, "
 		"(SELECT un.username FROM user_usernames un "
 		" WHERE un.user_id = u.id AND un.kind = 'active' "
 		" ORDER BY un.position LIMIT 1) AS username "
-		"FROM users u ";
-
-	/*
-	 * Fetch one extra row to know whether a further page exists. The SQL is
-	 * built into a named local (never a temporary in the co_await operand)
-	 * so its lifetime spans the suspension; a temporary there is mishandled
-	 * by the coroutine lowering and double-freed across thread migration.
-	 */
-	std::optional<drogon::orm::Result> rowsHolder;
-	if (cursor > 0) {
-		std::string q = std::string(kSelect) +
-			"WHERE u.id < ? ORDER BY u.id DESC LIMIT ?";
-		rowsHolder = co_await db->execSqlCoro(q, cursor, limit + 1);
-	} else {
-		std::string q = std::string(kSelect) +
-			"ORDER BY u.id DESC LIMIT ?";
-		rowsHolder = co_await db->execSqlCoro(q, limit + 1);
-	}
-	const drogon::orm::Result &rows = *rowsHolder;
+		"FROM users u "
+		"WHERE (? = '' "
+		"       OR CAST(u.id AS CHAR) LIKE ? "
+		"       OR u.first_name LIKE ? "
+		"       OR u.last_name LIKE ? "
+		"       OR CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? "
+		"       OR EXISTS (SELECT 1 FROM user_usernames un "
+		"                  WHERE un.user_id = u.id AND un.username LIKE ?)) "
+		"AND (? = 0 OR u.id < ?) "
+		"ORDER BY u.id DESC LIMIT ?";
+	auto rowsHolder = co_await db->execSqlCoro(q, query, like, like, like,
+						   like, like, cursor, cursor,
+						   limit + 1);
+	const drogon::orm::Result &rows = rowsHolder;
 
 	nlohmann::json users = nlohmann::json::array();
 	int64_t lastId = 0;
@@ -289,28 +311,30 @@ nlohmann::json grantedPerms(const drogon::orm::Row &r)
 } /* namespace */
 
 drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
-					int64_t cursor, int limit)
+					int64_t cursor, int limit,
+					std::string query)
 {
-	static const char *kSelect =
+	/* See listUsers for the "? = ''" (search) and "? = 0 OR ..." (cursor)
+	 * toggles and the named-local requirement for the SQL string. */
+	std::string like = likePattern(query);
+	std::string q =
 		"SELECT g.id, g.type, g.title, "
 		"(SELECT gu.username FROM group_usernames gu "
 		" WHERE gu.group_id = g.id AND gu.kind = 'active' "
 		" ORDER BY gu.position LIMIT 1) AS username, "
 		"(SELECT COUNT(*) FROM group_admins ga "
 		" WHERE ga.group_id = g.id) AS admins "
-		"FROM `groups` g ";
-
-	std::optional<drogon::orm::Result> rowsHolder;
-	if (cursor != 0) {
-		std::string q = std::string(kSelect) +
-			"WHERE g.id < ? ORDER BY g.id DESC LIMIT ?";
-		rowsHolder = co_await db->execSqlCoro(q, cursor, limit + 1);
-	} else {
-		std::string q = std::string(kSelect) +
-			"ORDER BY g.id DESC LIMIT ?";
-		rowsHolder = co_await db->execSqlCoro(q, limit + 1);
-	}
-	const drogon::orm::Result &rows = *rowsHolder;
+		"FROM `groups` g "
+		"WHERE (? = '' "
+		"       OR CAST(g.id AS CHAR) LIKE ? "
+		"       OR g.title LIKE ? "
+		"       OR EXISTS (SELECT 1 FROM group_usernames gu "
+		"                  WHERE gu.group_id = g.id AND gu.username LIKE ?)) "
+		"AND (? = 0 OR g.id < ?) "
+		"ORDER BY g.id DESC LIMIT ?";
+	auto rowsHolder = co_await db->execSqlCoro(q, query, like, like, like,
+						   cursor, cursor, limit + 1);
+	const drogon::orm::Result &rows = rowsHolder;
 
 	nlohmann::json groups = nlohmann::json::array();
 	int64_t lastId = 0;

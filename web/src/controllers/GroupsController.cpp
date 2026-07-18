@@ -29,7 +29,11 @@ GroupsController::list(drogon::HttpRequestPtr req)
 	data["title"] = "Groups";
 	data["limit"] = limit;
 
-	nlohmann::json page = co_await dao::browse::listGroups(db, cursor, limit);
+	std::string query = applySearch(data, req, "/groups",
+					"Search by id, title, or username…");
+
+	nlohmann::json page = co_await dao::browse::listGroups(db, cursor, limit,
+							       query);
 	data["groups"] = page["groups"];
 	data["next_cursor"] = page["next_cursor"];
 

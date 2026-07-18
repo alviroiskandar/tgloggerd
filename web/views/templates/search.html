@@ -1,0 +1,8 @@
+<form class="search" method="get" action="{{ search.action }}" role="search">
+  <input type="search" name="q" value="{{ search.q }}"
+         placeholder="{{ search.placeholder }}" aria-label="Search">
+  <button type="submit">Search</button>
+## if search.q != ""
+  <a class="clear muted" href="{{ search.action }}">Clear</a>
+## endif
+</form>

@@ -29,7 +29,11 @@ UsersController::list(drogon::HttpRequestPtr req)
 	data["title"] = "Users";
 	data["limit"] = limit;
 
-	nlohmann::json page = co_await dao::browse::listUsers(db, cursor, limit);
+	std::string query = applySearch(data, req, "/users",
+					"Search by id, name, or username…");
+
+	nlohmann::json page = co_await dao::browse::listUsers(db, cursor, limit,
+							      query);
 	data["users"] = page["users"];
 	data["next_cursor"] = page["next_cursor"];
 

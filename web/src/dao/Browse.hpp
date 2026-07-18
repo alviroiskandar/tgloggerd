@@ -31,12 +31,15 @@ drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db);
 
 /*
  * One page of users, newest id first. cursor is the last id seen (0 for the
- * first page); at most `limit` rows are returned. Result:
+ * first page); at most `limit` rows are returned. When `query` is non-empty the
+ * page is filtered to users whose id, first/last name (or the two joined) or an
+ * active username contains it (case-insensitive substring). Result:
  * {users:[{id, name, username, type, is_premium, is_verified, is_scam,
  * is_fake}], next_cursor} where next_cursor is null when there are no more.
  */
 drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
-				       int64_t cursor, int limit);
+				       int64_t cursor, int limit,
+				       std::string query);
 
 /*
  * A single user's profile and change history, or std::nullopt if no such user.
@@ -49,11 +52,13 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 /*
  * One page of groups, newest id first (group ids are negative, so this pages
  * from the least-negative downward). cursor is the last id seen (0 for the
- * first page). Result: {groups:[{id, type, title, username, admins}],
- * next_cursor}.
+ * first page). When `query` is non-empty the page is filtered to groups whose
+ * id, title or an active username contains it (case-insensitive substring).
+ * Result: {groups:[{id, type, title, username, admins}], next_cursor}.
  */
 drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
-					int64_t cursor, int limit);
+					int64_t cursor, int limit,
+					std::string query);
 
 /*
  * A single group with its current admins and change history, or std::nullopt
