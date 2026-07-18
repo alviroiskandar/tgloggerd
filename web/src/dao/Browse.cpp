@@ -1093,9 +1093,20 @@ drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 namespace {
 
 /* How a message's media is rendered in the chat view, from its content type. */
-const char *mediaRender(const std::string &ctype)
+const char *mediaRender(const std::string &ctype, const std::string &ext)
 {
-	if (ctype == "photo" || ctype == "sticker")
+	if (ctype == "sticker") {
+		/* Stickers come in three formats: a static .webp image, a video
+		 * .webm (renders like an animation: loops, muted, no controls),
+		 * or a .tgs Lottie animation that cannot be played inline, so it
+		 * falls back to a download link. */
+		if (ext == "webm")
+			return "animation";
+		if (ext == "tgs")
+			return "file";
+		return "image";
+	}
+	if (ctype == "photo")
 		return "image";
 	if (ctype == "video")
 		return "video";
@@ -1176,7 +1187,9 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 	if (!r["file_id"].isNull()) {
 		nlohmann::json med;
 		med["file_id"] = r["file_id"].as<int64_t>();
-		med["render"]  = mediaRender(m["content_type"].get<std::string>());
+		std::string ext = r["f_ext"].isNull() ? std::string()
+						      : r["f_ext"].as<std::string>();
+		med["render"]  = mediaRender(m["content_type"].get<std::string>(), ext);
 		med["name"]    = escCol(r, "f_name");
 		if (!r["f_size"].isNull())
 			med["size"] = r["f_size"].as<uint64_t>();
@@ -1277,7 +1290,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_user_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"sg.title AS sg_title, sg.photo_file_id AS sg_photo, "
-		"f.file_type AS f_type, f.orig_file_name AS f_name, f.file_size AS f_size, "
+		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
 		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
@@ -1306,7 +1319,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"NULL AS sg_title, NULL AS sg_photo, "
-		"f.file_type AS f_type, f.orig_file_name AS f_name, f.file_size AS f_size, "
+		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
 		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
