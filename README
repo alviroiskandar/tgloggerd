@@ -43,7 +43,9 @@ first start. The full setup is:
 
        docker compose up -d
 
-The web interface is then on http://localhost:8080. Create its first
+The web interface is then reachable at its private address on the tgnet
+network, http://10.0.88.4:8080 (it is not published to the host; put a
+reverse proxy in front of it, see web/README.web). Create its first
 administrator (prompts for the password twice):
 
        docker compose exec web web/build/tgloggerd_web --seed-admin admin

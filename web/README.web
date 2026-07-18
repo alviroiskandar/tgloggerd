@@ -51,7 +51,9 @@ top-level README ("Quick start"). It is the "web" service in
 docker-compose.yml and shares the toolchain image with the daemon. On
 `docker compose up` the container compiles this directory (via `run.sh
 web`, into web/build/), applies the web migrations, and starts the
-server on http://localhost:8080.
+server. The port is not published to the host; reach it on the
+container's private tgnet address, http://10.0.88.4:8080, from behind a
+reverse proxy (see below).
 
 MariaDB Connector/C — which Drogon's async MySQL client is built on — is
 vendored as the submodule submodules/mariadb-connector-c and built in-tree
@@ -117,9 +119,10 @@ WEB_SECURE_COOKIE=1.
 
 # Deploying behind nginx (TLS)
 
-The app serves plain HTTP. Terminate TLS in a reverse proxy and keep
-WEB_SECURE_COOKIE=1 so the session cookie is only sent over HTTPS. A
-minimal nginx server block:
+The app serves plain HTTP and is not published to the host, so the proxy
+reaches it on the container's private tgnet address (10.0.88.4:8080).
+Terminate TLS in the proxy and keep WEB_SECURE_COOKIE=1 so the session
+cookie is only sent over HTTPS. A minimal nginx server block:
 
     server {
         listen 443 ssl http2;
@@ -130,7 +133,7 @@ minimal nginx server block:
         add_header Strict-Transport-Security "max-age=63072000" always;
 
         location / {
-            proxy_pass         http://127.0.0.1:8080;
+            proxy_pass         http://10.0.88.4:8080;
             proxy_set_header   Host              $host;
             proxy_set_header   X-Real-IP         $remote_addr;
             proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;

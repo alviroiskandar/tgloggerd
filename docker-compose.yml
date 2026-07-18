@@ -70,8 +70,9 @@ services:
     env_file: .env
     volumes:
       - .:/workspace
-    ports:
-      - "8080:8080"
+    # No host port publishing: reach the web UI on its private address
+    # (http://10.0.88.4:8080) over the tgnet network, behind your own
+    # reverse proxy / firewall.
     networks:
       tgnet:
         ipv4_address: 10.0.88.4
