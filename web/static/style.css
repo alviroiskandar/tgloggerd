@@ -146,7 +146,7 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 .btn:hover { filter: brightness(1.05); text-decoration: none; }
 .avatar {
 	flex: none;
-	width: 72px; height: 72px;
+	width: 216px; height: 216px;
 	border-radius: 50%;
 	object-fit: cover;
 	border: 1px solid var(--border);
@@ -164,6 +164,11 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 }
 .avatar-sm.placeholder { background: var(--border); }
 td.col-photo, th.col-photo { width: 28px; padding-right: 0; }
+
+/* Chat pages: double the header and per-message avatars (28px -> 56px). The
+ * base .avatar-sm is shared with the listing tables, so scope the bump to
+ * the chat header and the message avatars only. */
+.chat-head .avatar-sm, .avatar-sm.msg-avatar { width: 56px; height: 56px; }
 .detail h2 { font-size: 1.05rem; margin-top: 1.6rem; }
 .chips { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .chips li { padding: 0.2rem 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
