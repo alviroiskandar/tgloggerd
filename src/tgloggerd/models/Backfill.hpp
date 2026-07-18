@@ -24,6 +24,10 @@ struct BackfillState {
 	 * walk has not started (fetch from the newest message). */
 	std::optional<int64_t>	cursor_msg_id;
 	bool			done = false; /* history start reached. */
+	/* High priority: the chat is in the user's Main/Archive chat list (a
+	 * private chat with history, or a group/channel the user joined), so it
+	 * is backfilled ahead of chats seen only incidentally. */
+	bool			priority = false;
 };
 
 } /* namespace models */

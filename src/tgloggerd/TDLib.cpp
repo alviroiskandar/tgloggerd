@@ -252,6 +252,34 @@ bool is_private_chat(int64_t chat_id)
 	return chat_id > 0;
 }
 
+/*
+ * Whether the user actually keeps this chat in their Main or Archive chat
+ * list: a private chat they have a history with, or a group/channel they
+ * joined. Chats seen only incidentally -- the origin of a forward, the
+ * target of a cross-chat reply -- are known to TDLib but are in no list, so
+ * this returns false for them. The backfiller uses it to fetch the user's
+ * own chats before the incidental ones.
+ */
+bool chat_in_user_list(const td_api::chat &c)
+{
+	auto is_user_list = [](const td_api::ChatList *l) {
+		return l && (l->get_id() == td_api::chatListMain::ID ||
+			     l->get_id() == td_api::chatListArchive::ID);
+	};
+
+	/* A non-zero order in a user list means it is actually placed there. */
+	for (const auto &p : c.positions_) {
+		if (p && p->order_ != 0 && is_user_list(p->list_.get()))
+			return true;
+	}
+	/* Fallback: membership without an ordered position. */
+	for (const auto &l : c.chat_lists_) {
+		if (is_user_list(l.get()))
+			return true;
+	}
+	return false;
+}
+
 /* Append @s to @out as a JSON string literal (quotes included), escaping
  * per RFC 8259. Control characters below 0x20 become \u00XX. */
 void json_append_string(std::string &out, const std::string &s)
@@ -866,11 +894,15 @@ struct TDLib::Impl {
 		bool	done = false;
 		bool	in_flight = false;
 		int	empty_retries = 0;
+		/* In the user's Main/Archive chat list: fetched ahead of chats
+		 * seen only incidentally (forward origins, reply targets). */
+		bool	priority = false;
 	};
 	std::function<void(const models::BackfillState &)> backfill_state_handler_;
 	std::unordered_map<int64_t, BackfillEntry>	backfill_;
 	std::vector<int64_t>				backfill_order_;
 	size_t						backfill_rr_ = 0;
+	size_t						backfill_rr_low_ = 0;
 	int						backfill_inflight_ = 0;
 	bool						backfill_started_ = false;
 	bool						backfill_enabled_ = false;
@@ -935,7 +967,7 @@ struct TDLib::Impl {
 	void on_backfill_page(int64_t chat_id, Object obj);
 	void arm_backfill_discovery(void);
 	void on_backfill_discovery(void);
-	void backfill_register_chat(int64_t chat_id);
+	void backfill_register_chat(int64_t chat_id, bool priority);
 	void emit_backfill_state(int64_t chat_id);
 };
 
@@ -1031,9 +1063,21 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 				if (u.chat_) {
 					handle_new_chat(*u.chat_, true);
 					/* Register every accessible chat (group and
-					 * private) for background history backfill. */
-					backfill_register_chat(u.chat_->id_);
+					 * private) for background history backfill,
+					 * prioritizing the ones the user keeps in
+					 * their own chat list. */
+					backfill_register_chat(u.chat_->id_,
+						chat_in_user_list(*u.chat_));
 				}
+			},
+			[this](td_api::updateChatAddedToList &u) {
+				/* The user joined a group/channel or started a
+				 * chat after we first saw it: promote it to the
+				 * high-priority backfill tier. */
+				if (u.chat_list_ &&
+				    (u.chat_list_->get_id() == td_api::chatListMain::ID ||
+				     u.chat_list_->get_id() == td_api::chatListArchive::ID))
+					backfill_register_chat(u.chat_id_, true);
 			},
 			[this](td_api::updateChatTitle &u) {
 				auto it = chat_to_group_.find(u.chat_id_);
@@ -2050,33 +2094,48 @@ void TDLib::Impl::backfill_tick(void)
 	if (n == 0)
 		return;
 
-	/* Round-robin from the last position: fetch one page for the next chat
+	/*
+	 * Round-robin from the last position: fetch one page for the next chat
 	 * that is neither finished nor already in flight, so every chat makes
-	 * steady progress instead of one draining first. */
-	for (size_t i = 0; i < n; i++) {
-		size_t idx = (backfill_rr_ + i) % n;
-		int64_t chat_id = backfill_order_[idx];
-		auto it = backfill_.find(chat_id);
-		if (it == backfill_.end())
-			continue;
-		BackfillEntry &e = it->second;
-		if (e.done || e.in_flight)
-			continue;
+	 * steady progress instead of one draining first.
+	 *
+	 * Two tiers: the user's own chats (in their Main/Archive list) are
+	 * served first, each tier with its own cursor for fairness within it. A
+	 * low-priority chat is only picked once no high-priority chat still has
+	 * work, so the incidental chats wait until the user's are done.
+	 */
+	auto pick = [&](bool want_priority, size_t &rr) -> int64_t {
+		for (size_t i = 0; i < n; i++) {
+			size_t idx = (rr + i) % n;
+			auto it = backfill_.find(backfill_order_[idx]);
+			if (it == backfill_.end())
+				continue;
+			BackfillEntry &e = it->second;
+			if (e.done || e.in_flight || e.priority != want_priority)
+				continue;
+			rr = (idx + 1) % n;
+			return backfill_order_[idx];
+		}
+		return 0;
+	};
 
-		backfill_rr_ = (idx + 1) % n;
-		e.in_flight = true;
-		backfill_inflight_++;
+	int64_t chat_id = pick(true, backfill_rr_);
+	if (chat_id == 0)
+		chat_id = pick(false, backfill_rr_low_);
+	if (chat_id == 0)
+		return;	/* nothing left to fetch. */
 
-		/* from_message_id 0 = start at the newest message; only_local
-		 * false so TDLib fetches older messages from the server. */
-		send_query(td_api::make_object<td_api::getChatHistory>(
-				   chat_id, e.cursor_msg_id, 0, backfill_page_,
-				   false),
-			[this, chat_id](Object obj) {
-				on_backfill_page(chat_id, std::move(obj));
-			});
-		return;	/* one page per tick keeps it gentle. */
-	}
+	BackfillEntry &e = backfill_[chat_id];
+	e.in_flight = true;
+	backfill_inflight_++;
+
+	/* from_message_id 0 = start at the newest message; only_local false so
+	 * TDLib fetches older messages from the server. */
+	send_query(td_api::make_object<td_api::getChatHistory>(
+			   chat_id, e.cursor_msg_id, 0, backfill_page_, false),
+		[this, chat_id](Object obj) {
+			on_backfill_page(chat_id, std::move(obj));
+		});
 }
 
 void TDLib::Impl::on_backfill_page(int64_t chat_id, Object obj)
@@ -2169,14 +2228,26 @@ void TDLib::Impl::on_backfill_discovery(void)
 	arm_backfill_discovery();
 }
 
-void TDLib::Impl::backfill_register_chat(int64_t chat_id)
+void TDLib::Impl::backfill_register_chat(int64_t chat_id, bool priority)
 {
 	if (!backfill_enabled_ || chat_id == 0)
 		return;
-	if (backfill_.count(chat_id))
-		return;	/* keep any cursor/done already loaded from the DB. */
 
-	backfill_[chat_id] = BackfillEntry{};
+	auto it = backfill_.find(chat_id);
+	if (it != backfill_.end()) {
+		/* Already known (from the DB or a prior sighting): keep its
+		 * cursor/done, but promote it if it has since entered the user's
+		 * chat list. Priority never drops back to low. */
+		if (priority && !it->second.priority) {
+			it->second.priority = true;
+			emit_backfill_state(chat_id);
+		}
+		return;
+	}
+
+	BackfillEntry e{};
+	e.priority = priority;
+	backfill_[chat_id] = e;
 	backfill_order_.push_back(chat_id);
 	emit_backfill_state(chat_id);
 }
@@ -2196,6 +2267,7 @@ void TDLib::Impl::emit_backfill_state(int64_t chat_id)
 	if (e.cursor_msg_id != 0)
 		st.cursor_msg_id = e.cursor_msg_id;
 	st.done = e.done;
+	st.priority = e.priority;
 	backfill_state_handler_(st);
 }
 
@@ -2334,6 +2406,7 @@ void TDLib::loadBackfillState(const std::vector<models::BackfillState> &states)
 		Impl::BackfillEntry e;
 		e.cursor_msg_id = s.cursor_msg_id.value_or(0);
 		e.done = s.done;
+		e.priority = s.priority;
 		impl_->backfill_[s.chat_id] = e;
 		impl_->backfill_order_.push_back(s.chat_id);
 	}

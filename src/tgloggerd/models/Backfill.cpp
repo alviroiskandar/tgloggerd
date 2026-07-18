@@ -12,7 +12,8 @@ namespace tgloggerd {
 std::vector<models::BackfillState> DB::loadBackfillState(void)
 {
 	auto rows = db_.query(
-		"SELECT chat_id, scope, cursor_msg_id, done FROM chat_backfill_state");
+		"SELECT chat_id, scope, cursor_msg_id, done, priority"
+		" FROM chat_backfill_state");
 
 	std::vector<models::BackfillState> out;
 	out.reserve(rows.size());
@@ -25,6 +26,7 @@ std::vector<models::BackfillState> DB::loadBackfillState(void)
 		if (r[2].has_value())
 			st.cursor_msg_id = std::stoll(*r[2]);
 		st.done = r[3].has_value() && *r[3] == "1";
+		st.priority = r[4].has_value() && *r[4] == "1";
 		out.push_back(std::move(st));
 	}
 	return out;
@@ -38,12 +40,12 @@ void DB::upsertBackfillState(const models::BackfillState &st)
 
 	db_.execute(
 		"INSERT INTO chat_backfill_state"
-		" (chat_id, scope, cursor_msg_id, done, last_fetch_at)"
-		" VALUES (?, ?, ?, ?, NOW()) AS new ON DUPLICATE KEY UPDATE"
+		" (chat_id, scope, cursor_msg_id, done, priority, last_fetch_at)"
+		" VALUES (?, ?, ?, ?, ?, NOW()) AS new ON DUPLICATE KEY UPDATE"
 		" scope = new.scope, cursor_msg_id = new.cursor_msg_id,"
-		" done = new.done, last_fetch_at = NOW()",
+		" done = new.done, priority = new.priority, last_fetch_at = NOW()",
 		{ (int64_t)st.chat_id, st.scope, cursor_param,
-		  (int64_t)(st.done ? 1 : 0) });
+		  (int64_t)(st.done ? 1 : 0), (int64_t)(st.priority ? 1 : 0) });
 }
 
 } /* namespace tgloggerd */

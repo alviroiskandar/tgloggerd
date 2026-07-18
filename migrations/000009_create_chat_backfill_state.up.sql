@@ -19,6 +19,14 @@ CREATE TABLE chat_backfill_state (
 	-- History start reached; nothing older remains to fetch.
 	done          TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'History start reached.',
 
+	-- Fetch priority. 1 for chats the user actually keeps in their Main or
+	-- Archive chat list (private chats with a history, and the groups or
+	-- channels the user joined); 0 for chats seen only incidentally, e.g.
+	-- as the origin of a forward or the target of a reply. High-priority
+	-- chats are backfilled first; the rest are walked only once every
+	-- high-priority chat is done.
+	priority      TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'In the user chat list (Main/Archive) = 1.',
+
 	-- When a page was last fetched for this chat.
 	last_fetch_at DATETIME     NULL COMMENT 'Last time a page was fetched for this chat.',
 
@@ -27,6 +35,8 @@ CREATE TABLE chat_backfill_state (
 	                           ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last time the row was updated.',
 
 	PRIMARY KEY (chat_id),
-	KEY idx_chat_backfill_state_done (done)
+	KEY idx_chat_backfill_state_done (done),
+	-- The backfiller picks the next unfinished chat highest-priority first.
+	KEY idx_chat_backfill_state_priority (priority, done)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='Backward-walk progress for the background message backfiller.';
