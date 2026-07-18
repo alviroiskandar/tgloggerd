@@ -7,6 +7,8 @@
     <h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
   </div>
 
+  <p class="detail-actions"><a class="btn" href="/users/{{ user.id }}/chat">💬 Chat history</a></p>
+
   <div class="badges">
 ## if user.is_premium
     <span class="badge">premium</span>

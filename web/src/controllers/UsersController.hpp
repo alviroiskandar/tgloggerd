@@ -20,11 +20,15 @@ public:
 		      "tgweb::auth::AuthFilter");
 	ADD_METHOD_TO(UsersController::detail, "/users/{1}", drogon::Get,
 		      "tgweb::auth::AuthFilter");
+	ADD_METHOD_TO(UsersController::chat, "/users/{1}/chat", drogon::Get,
+		      "tgweb::auth::AuthFilter");
 	METHOD_LIST_END
 
 	drogon::Task<drogon::HttpResponsePtr> list(drogon::HttpRequestPtr req);
 	drogon::Task<drogon::HttpResponsePtr> detail(drogon::HttpRequestPtr req,
 						     std::string id);
+	drogon::Task<drogon::HttpResponsePtr> chat(drogon::HttpRequestPtr req,
+						   std::string id);
 };
 
 } /* namespace tgweb::controllers */

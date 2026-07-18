@@ -117,6 +117,28 @@ struct FileMeta {
 drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 					      int64_t id);
 
+/*
+ * Header for a chat-history page. scope is "group" (chatId is a groups.id) or
+ * "private" (chatId is the peer users.id). Returns {kind, id, title, type,
+ * photo_file_id?} with strings escaped, or std::nullopt when no such chat.
+ */
+drogon::Task<std::optional<nlohmann::json>>
+chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId);
+
+/*
+ * The most recent `limit` messages of one chat, ordered oldest-first (so the
+ * template renders newest at the bottom), each fully resolved for a chat view:
+ * sender (name/username/photo), content (text + media), reply preview, forward
+ * origin, deletion and edit state, and the edit history for edited messages.
+ * scope selects the private_* or group_* tables. Result:
+ * {messages:[...], oldest_msg_id} where oldest_msg_id is the keyset cursor for
+ * loading older messages later (0 when the page is empty). All
+ * attacker-controlled strings are already escaped.
+ */
+drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
+					 std::string scope, int64_t chatId,
+					 int limit);
+
 } /* namespace tgweb::dao::browse */
 
 #endif /* TGLOGGERD_WEB_DAO_BROWSE_HPP */

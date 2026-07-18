@@ -137,6 +137,13 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 .detail .crumb { margin-top: 0; }
 .detail-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
 .detail-head h1 { margin: 0; }
+.detail-actions { margin: 0.2rem 0 1rem; }
+.btn {
+	display: inline-block; padding: 0.4rem 0.9rem;
+	border: 1px solid var(--accent); border-radius: 6px;
+	background: var(--accent); color: var(--accent-fg);
+}
+.btn:hover { filter: brightness(1.05); text-decoration: none; }
 .avatar {
 	flex: none;
 	width: 72px; height: 72px;
@@ -181,4 +188,96 @@ code {
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	background: var(--card); border: 1px solid var(--border);
 	border-radius: 4px; padding: 0.05rem 0.3rem;
+}
+
+/* Chat history --------------------------------------------------------------*/
+html { scroll-behavior: smooth; }
+
+.chat-head {
+	position: sticky; top: 0; z-index: 5;
+	display: flex; align-items: center; gap: 0.7rem;
+	margin: -1.5rem -1rem 1rem; padding: 0.6rem 1rem;
+	background: var(--card); border-bottom: 1px solid var(--border);
+}
+.chat-back { font-size: 1.3rem; line-height: 1; color: var(--fg); padding: 0 0.2rem; }
+.chat-head .chat-title { font-weight: 700; }
+.chat-head .chat-sub { font-size: 0.8rem; }
+
+.chat-log { display: flex; flex-direction: column; gap: 0.35rem; }
+.chat-empty { text-align: center; padding: 2rem 0; }
+
+/* One message row: avatar + bubble, aligned left (incoming) or right (out). */
+.msg { display: flex; align-items: flex-end; gap: 0.5rem; max-width: 100%; }
+.msg.out { justify-content: flex-end; }
+.msg .msg-avatar { flex: none; align-self: flex-end; }
+
+.bubble {
+	max-width: min(72%, 42rem);
+	padding: 0.4rem 0.6rem;
+	border: 1px solid var(--border); border-radius: 12px;
+	background: var(--card);
+	overflow-wrap: anywhere;
+}
+.msg.out .bubble {
+	background: color-mix(in srgb, var(--accent) 16%, var(--card));
+	border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+/* Consecutive-bubble tails give the classic chat shape. */
+.msg.in  .bubble { border-bottom-left-radius: 4px; }
+.msg.out .bubble { border-bottom-right-radius: 4px; }
+
+.msg-sender { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.15rem; }
+.msg-sender a { color: var(--accent); }
+
+.msg-text { white-space: pre-wrap; word-break: break-word; }
+.msg-sig { font-size: 0.8rem; margin-top: 0.2rem; }
+
+/* Forward header. */
+.fwd {
+	font-size: 0.82rem; margin-bottom: 0.25rem;
+	padding-left: 0.5rem; border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.fwd .fwd-label { margin-right: 0.25rem; }
+
+/* Reply quote — clickable, jumps to the referenced message. */
+.reply-quote {
+	display: block; margin: 0 0 0.3rem; padding: 0.25rem 0.5rem;
+	border-left: 3px solid var(--accent);
+	background: color-mix(in srgb, var(--accent) 8%, transparent);
+	border-radius: 0 6px 6px 0; font-size: 0.85rem; color: inherit;
+}
+.reply-quote:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.reply-quote .reply-name { display: block; font-weight: 600; color: var(--accent); }
+.reply-quote .reply-text { display: block; color: var(--muted); }
+
+/* Media. */
+.msg-media { display: block; max-width: 100%; max-height: 380px; height: auto;
+	border-radius: 8px; margin: 0.15rem 0; }
+img.msg-media { cursor: zoom-in; object-fit: contain; }
+.msg-audio { display: block; margin: 0.2rem 0; max-width: 100%; }
+.msg-file {
+	display: inline-block; margin: 0.2rem 0; padding: 0.4rem 0.6rem;
+	background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+
+/* Meta line: timestamp, edited disclosure, deleted badge. */
+.msg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem;
+	margin-top: 0.2rem; font-size: 0.72rem; color: var(--muted); }
+.msg.deleted .bubble { opacity: 0.7; }
+.msg.deleted .msg-text { text-decoration: line-through; }
+
+.edit-history summary { cursor: pointer; color: var(--accent); }
+.edit-history[open] summary { margin-bottom: 0.3rem; }
+.edit-list { margin: 0.2rem 0 0.2rem 1rem; padding-left: 0.5rem; }
+.edit-list li { margin-bottom: 0.4rem; }
+.edit-when { font-size: 0.72rem; }
+.edit-text { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+
+/* Highlight a message when navigated to via a reply link. */
+.msg:target .bubble {
+	outline: 2px solid var(--accent);
+	animation: msg-flash 2s ease-out 1;
+}
+@keyframes msg-flash {
+	0% { background: color-mix(in srgb, var(--accent) 40%, var(--card)); }
 }

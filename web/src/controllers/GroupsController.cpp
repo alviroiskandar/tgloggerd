@@ -91,4 +91,27 @@ GroupsController::admins(drogon::HttpRequestPtr req, std::string id)
 	co_return htmlPage(views::Render::page("group_admins.html", data));
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+GroupsController::chat(drogon::HttpRequestPtr req, std::string id)
+{
+	auto db = drogon::app().getDbClient("ro");
+
+	int64_t gid = strtoll(id.c_str(), nullptr, 10);
+	auto header = co_await dao::browse::chatHeader(db, "group", gid);
+	if (!header)
+		co_return renderStatus(req, drogon::k404NotFound, "Group not found",
+				       "No group exists with that id.");
+
+	nlohmann::json data = pageBase(req);
+	data["scope"] = "group";
+	data["chat"]  = *header;
+	data["title"] = (*header)["title"];
+
+	nlohmann::json hist = co_await dao::browse::chatHistory(db, "group", gid, 300);
+	data["messages"]      = hist["messages"];
+	data["oldest_msg_id"] = hist["oldest_msg_id"];
+
+	co_return htmlPage(views::Render::page("chat.html", data));
+}
+
 } /* namespace tgweb::controllers */

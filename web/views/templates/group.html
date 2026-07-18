@@ -7,6 +7,8 @@
     <h1>{{ group.title }} <span class="muted">#{{ group.id }}</span></h1>
   </div>
 
+  <p class="detail-actions"><a class="btn" href="/groups/{{ group.id }}/chat">💬 Chat history</a></p>
+
   <table class="kv">
     <tr><th>Type</th><td>{{ group.type }}</td></tr>
     <tr><th>Description</th><td>{% if group.description != "" %}{{ group.description }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
