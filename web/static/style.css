@@ -270,6 +270,7 @@ html { scroll-behavior: smooth; }
 	color: var(--muted); font-size: 0.82rem; word-break: break-word;
 }
 .service-who { font-weight: 600; color: var(--fg); }
+a.service-who:hover { text-decoration: underline; }
 .msg-service:target .service-bubble {
 	outline: 2px solid var(--accent);
 	animation: msg-flash 2s ease-out 1;

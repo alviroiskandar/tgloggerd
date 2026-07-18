@@ -23,7 +23,7 @@
 ## for m in messages
 ## if m.is_service
     <div class="msg-service" id="msg-{{ m.msg_id }}">
-      <span class="service-bubble">{% if existsIn(m.sender, "name") and m.sender.name != "" %}<span class="service-who">{{ m.sender.name }}</span> {% endif %}{% if m.text != "" %}{{ m.text }}{% else %}{{ m.service_type }}{% endif %}<span class="service-time muted"> · {% if m.date != "" %}{{ m.date }}{% else %}—{% endif %}</span>{% if m.is_deleted %} <span class="badge warn">deleted</span>{% endif %}</span>
+      <span class="service-bubble">{% if existsIn(m.sender, "name") and m.sender.name != "" %}{% if m.sender.kind == "user" %}<a class="service-who" href="/users/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else if m.sender.kind == "group" %}<a class="service-who" href="/groups/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else %}<span class="service-who">{{ m.sender.name }}</span>{% endif %} {% endif %}{% if m.text != "" %}{{ m.text }}{% else %}{{ m.service_type }}{% endif %}<span class="service-time muted"> · {% if m.date != "" %}{{ m.date }}{% else %}—{% endif %}</span>{% if m.is_deleted %} <span class="badge warn">deleted</span>{% endif %}</span>
     </div>
 ## else
     <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}{% if m.is_deleted %} deleted{% endif %}" id="msg-{{ m.msg_id }}">
