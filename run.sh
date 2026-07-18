@@ -24,6 +24,13 @@ MODE="${1:-daemon}"
 # and the *_DIR environment variables resolve consistently for both modes.
 cd "$(dirname "$(readlink -f "$0")")"
 
+# The container may run as a uid with no /etc/passwd entry (see TG_UID in the
+# compose file), in which case HOME defaults to "/" and is not writable. Point
+# it somewhere writable so `git config --global` below can store its config.
+if [ ! -w "${HOME:-/}" ]; then
+	export HOME=/tmp
+fi
+
 log() { printf '\n\033[1;32m=== %s ===\033[0m\n' "$*"; }
 
 NPROC="$(nproc)"

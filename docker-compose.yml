@@ -16,6 +16,11 @@ x-build: &build
     context: .
     dockerfile: Dockerfile
   image: tgloggerd:latest
+  # Run the daemon and web containers as this uid:gid (default 1000:1000, the
+  # typical first host user) so files written to the bind mount -- build output,
+  # the TDLib session, downloaded media -- are owned by you, not root. Override
+  # via TG_UID / TG_GID in .env (e.g. set them to `id -u` / `id -g`).
+  user: "${TG_UID:-1000}:${TG_GID:-1000}"
 
 services:
   mysql:
