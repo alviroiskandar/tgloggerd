@@ -57,6 +57,8 @@ add_executable(tgloggerd
 	src/tgloggerd/models/GroupMessage.cpp
 	src/tgloggerd/models/GroupAdmin.hpp
 	src/tgloggerd/models/GroupAdmin.cpp
+	src/tgloggerd/models/Backfill.hpp
+	src/tgloggerd/models/Backfill.cpp
 	src/tgloggerd/helpers/common.c
 	src/tgloggerd/helpers/common.h
 	src/tgloggerd/helpers/log.c

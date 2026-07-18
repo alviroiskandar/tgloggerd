@@ -341,6 +341,45 @@ int TgLoggerd::start(void)
 	pr_debug(l_, "admin poll: interval=%.0fs batch=%d", admin_interval,
 		 admin_batch);
 
+	/*
+	 * Background message backfiller. It walks every accessible chat's
+	 * history newest->oldest, round-robin and gently paced, feeding messages
+	 * through the same handlers as real time. Progress is persisted to
+	 * chat_backfill_state (fire-and-forget on serial_) and reloaded here so
+	 * each chat's walk resumes across restarts. Interval <= 0 disables it.
+	 */
+	double bf_interval = atof(env("TG_BACKFILL_INTERVAL", "3").c_str());
+	double bf_discovery = atof(env("TG_BACKFILL_DISCOVERY_INTERVAL", "300").c_str());
+	int bf_page = atoi(env("TG_BACKFILL_PAGE", "100").c_str());
+	int bf_inflight = atoi(env("TG_BACKFILL_INFLIGHT", "1").c_str());
+	tdlib_->setBackfillConfig(bf_interval, bf_discovery, bf_page, bf_inflight);
+	pr_debug(l_, "backfill: interval=%.1fs discovery=%.0fs page=%d inflight=%d",
+		 bf_interval, bf_discovery, bf_page, bf_inflight);
+
+	tdlib_->setBackfillStateHandler([this](const models::BackfillState &st) {
+		serial_->post([this, st] {
+			try {
+				db_->upsertBackfillState(st);
+			} catch (const std::exception &e) {
+				pr_error(l_, "Failed to persist backfill state"
+					 " chat_id=%lld: %s",
+					 (long long)st.chat_id, e.what());
+			}
+		});
+	});
+
+	if (bf_interval > 0.0) {
+		try {
+			auto states = db_->loadBackfillState();
+			tdlib_->loadBackfillState(states);
+			pr_debug(l_, "backfill: resumed %zu chats from state table",
+				 states.size());
+		} catch (const std::exception &e) {
+			pr_error(l_, "Failed to load backfill state: %s",
+				 e.what());
+		}
+	}
+
 	pr_info(l_, "Listening for incoming messages...");
 	while (!tdlib_->isStopped() && !g_tgld_stop)
 		tdlib_->loop(10);

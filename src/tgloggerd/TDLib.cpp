@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <functional>
 #include <ctime>
@@ -440,6 +441,10 @@ constexpr size_t kReplyDedupCap = 1000000;
  * errors (e.g. we left it or lost visibility). */
 constexpr int kAdminPollMaxMiss = 3;
 
+/* getChatHistory can return an empty page transiently while it loads from the
+ * server; tolerate this many empties before declaring a chat's history done. */
+constexpr int kBackfillEmptyRetries = 3;
+
 /*
  * The (chat_id, message_id) of the message @m replies to, written to
  * @chat_id / @msg_id. Returns false for a non-reply or a story reply. The
@@ -541,6 +546,28 @@ struct TDLib::Impl {
 	double						admin_poll_interval_ = 300.0;
 	int						admin_poll_batch_ = 4;
 
+	/* Background backfiller: a newest->oldest history walk per chat, driven
+	 * round-robin and gently paced. cursor_msg_id is the oldest TdLib LOCAL
+	 * message id fetched so far (0 = start at newest). */
+	struct BackfillEntry {
+		int64_t	cursor_msg_id = 0;
+		bool	done = false;
+		bool	in_flight = false;
+		int	empty_retries = 0;
+	};
+	std::function<void(const models::BackfillState &)> backfill_state_handler_;
+	std::unordered_map<int64_t, BackfillEntry>	backfill_;
+	std::vector<int64_t>				backfill_order_;
+	size_t						backfill_rr_ = 0;
+	int						backfill_inflight_ = 0;
+	bool						backfill_started_ = false;
+	bool						backfill_enabled_ = false;
+	double						backfill_interval_ = 0.0;
+	double						backfill_discovery_interval_ = 300.0;
+	double						backfill_next_delay_ = 0.0;
+	int						backfill_page_ = 100;
+	int						backfill_inflight_max_ = 1;
+
 	Impl(uint32_t api_id, const char *api_hash, const char *data_dir);
 
 	std::uint64_t next_query_id(void) { return ++current_query_id_; }
@@ -589,6 +616,15 @@ struct TDLib::Impl {
 					const td_api::chatPhotoInfo *photo);
 	void emit_group(int64_t group_id);
 	void emit_group_photo(int64_t group_id, const td_api::file &f);
+
+	void arm_backfill_alarm(void);
+	void on_backfill_alarm(void);
+	void backfill_tick(void);
+	void on_backfill_page(int64_t chat_id, Object obj);
+	void arm_backfill_discovery(void);
+	void on_backfill_discovery(void);
+	void backfill_register_chat(int64_t chat_id);
+	void emit_backfill_state(int64_t chat_id);
 };
 
 
@@ -680,8 +716,12 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 					handle_file_update(*u.file_);
 			},
 			[this](td_api::updateNewChat &u) {
-				if (u.chat_)
+				if (u.chat_) {
 					handle_new_chat(*u.chat_, true);
+					/* Register every accessible chat (group and
+					 * private) for background history backfill. */
+					backfill_register_chat(u.chat_->id_);
+				}
 			},
 			[this](td_api::updateChatTitle &u) {
 				auto it = chat_to_group_.find(u.chat_id_);
@@ -871,6 +911,16 @@ void TDLib::Impl::on_authorization_state_update(void)
 				    group_admins_handler_) {
 					admin_poll_started_ = true;
 					arm_admin_alarm();
+				}
+				/*
+				 * Start the background backfiller once. Kick an
+				 * initial chat-list load so every accessible chat
+				 * is discovered (each arrives via updateNewChat).
+				 */
+				if (backfill_enabled_ && !backfill_started_) {
+					backfill_started_ = true;
+					arm_backfill_alarm();
+					on_backfill_discovery();
 				}
 			},
 			[this](td_api::authorizationStateLoggingOut &) {
@@ -1654,6 +1704,189 @@ void TDLib::Impl::poll_admin_batch(void)
 	}
 }
 
+/* --- Background message backfiller ------------------------------------- */
+
+void TDLib::Impl::arm_backfill_alarm(void)
+{
+	/* One alarm in flight at a time; setAlarm's reply lands on the loop
+	 * thread, where all backfill state safely lives (like the admin poll). */
+	double delay = backfill_next_delay_ > 0.0 ? backfill_next_delay_
+						  : backfill_interval_;
+	backfill_next_delay_ = 0.0;
+	send_query(td_api::make_object<td_api::setAlarm>(delay),
+		   [this](Object) { on_backfill_alarm(); });
+}
+
+void TDLib::Impl::on_backfill_alarm(void)
+{
+	if (stopped_ || closing_)
+		return;
+	if (is_authorized_)
+		backfill_tick();
+	arm_backfill_alarm();
+}
+
+void TDLib::Impl::backfill_tick(void)
+{
+	/* Backfill reuses the real-time message handlers, so wait for them. */
+	if (!group_msg_handler_ || !private_msg_handler_)
+		return;
+	if (backfill_inflight_ >= backfill_inflight_max_)
+		return;
+
+	size_t n = backfill_order_.size();
+	if (n == 0)
+		return;
+
+	/* Round-robin from the last position: fetch one page for the next chat
+	 * that is neither finished nor already in flight, so every chat makes
+	 * steady progress instead of one draining first. */
+	for (size_t i = 0; i < n; i++) {
+		size_t idx = (backfill_rr_ + i) % n;
+		int64_t chat_id = backfill_order_[idx];
+		auto it = backfill_.find(chat_id);
+		if (it == backfill_.end())
+			continue;
+		BackfillEntry &e = it->second;
+		if (e.done || e.in_flight)
+			continue;
+
+		backfill_rr_ = (idx + 1) % n;
+		e.in_flight = true;
+		backfill_inflight_++;
+
+		/* from_message_id 0 = start at the newest message; only_local
+		 * false so TDLib fetches older messages from the server. */
+		send_query(td_api::make_object<td_api::getChatHistory>(
+				   chat_id, e.cursor_msg_id, 0, backfill_page_,
+				   false),
+			[this, chat_id](Object obj) {
+				on_backfill_page(chat_id, std::move(obj));
+			});
+		return;	/* one page per tick keeps it gentle. */
+	}
+}
+
+void TDLib::Impl::on_backfill_page(int64_t chat_id, Object obj)
+{
+	auto it = backfill_.find(chat_id);
+	if (it == backfill_.end())
+		return;
+	BackfillEntry &e = it->second;
+	e.in_flight = false;
+	if (backfill_inflight_ > 0)
+		backfill_inflight_--;
+
+	if (obj->get_id() == td_api::error::ID) {
+		auto err = td::move_tl_object_as<td_api::error>(obj);
+		/*
+		 * Flood wait: back the whole walk off for the requested time.
+		 * Any other error: leave the cursor untouched and retry the chat
+		 * on a later round.
+		 */
+		if (err->code_ == 420) {
+			double secs = 30.0;
+			auto pos = err->message_.find_last_of(' ');
+			if (pos != std::string::npos)
+				secs = atof(err->message_.c_str() + pos + 1);
+			backfill_next_delay_ = secs >= 1.0 ? secs : 30.0;
+		}
+		return;
+	}
+	if (obj->get_id() != td_api::messages::ID)
+		return;
+
+	auto msgs = td::move_tl_object_as<td_api::messages>(obj);
+	if (msgs->messages_.empty()) {
+		/* Usually the history start; getChatHistory can also return an
+		 * empty page transiently while loading, so tolerate a few. */
+		if (++e.empty_retries >= kBackfillEmptyRetries) {
+			e.done = true;
+			emit_backfill_state(chat_id);
+		}
+		return;
+	}
+	e.empty_retries = 0;
+
+	/*
+	 * messages_ is newest -> oldest. Process oldest-first through the exact
+	 * same handlers as the real-time path (which ensure entities are saved,
+	 * download media, resolve replies and persist idempotently), then
+	 * advance the cursor to the oldest id so the next call fetches strictly
+	 * older messages.
+	 */
+	for (auto rit = msgs->messages_.rbegin(); rit != msgs->messages_.rend();
+	     ++rit) {
+		if (!*rit)
+			continue;
+		td_api::message &m = **rit;
+		if (is_private_chat(m.chat_id_))
+			handle_message_for_private_chat(m, 0);
+		else
+			handle_message_for_group_chat(m, 0);
+	}
+
+	int64_t oldest = e.cursor_msg_id;
+	if (msgs->messages_.back())
+		oldest = msgs->messages_.back()->id_;
+	e.cursor_msg_id = oldest;
+	emit_backfill_state(chat_id);
+}
+
+void TDLib::Impl::arm_backfill_discovery(void)
+{
+	send_query(td_api::make_object<td_api::setAlarm>(
+			   backfill_discovery_interval_),
+		   [this](Object) { on_backfill_discovery(); });
+}
+
+void TDLib::Impl::on_backfill_discovery(void)
+{
+	if (stopped_ || closing_)
+		return;
+	if (is_authorized_)
+		/*
+		 * Pull more chats into the main list; each newly loaded chat
+		 * arrives via updateNewChat, which registers it for backfill.
+		 * Returns Ok normally and error 404 once everything is loaded --
+		 * both are fine, so no handler is needed.
+		 */
+		send_query(td_api::make_object<td_api::loadChats>(
+				   td_api::make_object<td_api::chatListMain>(),
+				   500), {});
+	arm_backfill_discovery();
+}
+
+void TDLib::Impl::backfill_register_chat(int64_t chat_id)
+{
+	if (!backfill_enabled_ || chat_id == 0)
+		return;
+	if (backfill_.count(chat_id))
+		return;	/* keep any cursor/done already loaded from the DB. */
+
+	backfill_[chat_id] = BackfillEntry{};
+	backfill_order_.push_back(chat_id);
+	emit_backfill_state(chat_id);
+}
+
+void TDLib::Impl::emit_backfill_state(int64_t chat_id)
+{
+	if (!backfill_state_handler_)
+		return;
+	auto it = backfill_.find(chat_id);
+	if (it == backfill_.end())
+		return;
+
+	const BackfillEntry &e = it->second;
+	models::BackfillState st;
+	st.chat_id = chat_id;
+	st.scope = is_private_chat(chat_id) ? "private" : "group";
+	if (e.cursor_msg_id != 0)
+		st.cursor_msg_id = e.cursor_msg_id;
+	st.done = e.done;
+	backfill_state_handler_(st);
+}
+
 void TDLib::Impl::maybe_download_group_photo(int64_t group_id,
 					     const td_api::chatPhotoInfo *photo)
 {
@@ -1775,6 +2008,34 @@ void TDLib::setAdminPollConfig(double interval_seconds, int batch)
 {
 	impl_->admin_poll_interval_ = interval_seconds;
 	impl_->admin_poll_batch_ = batch > 0 ? batch : 1;
+}
+
+void TDLib::setBackfillStateHandler(
+	std::function<void(const models::BackfillState &)> cb)
+{
+	impl_->backfill_state_handler_ = std::move(cb);
+}
+
+void TDLib::loadBackfillState(const std::vector<models::BackfillState> &states)
+{
+	for (const auto &s : states) {
+		Impl::BackfillEntry e;
+		e.cursor_msg_id = s.cursor_msg_id.value_or(0);
+		e.done = s.done;
+		impl_->backfill_[s.chat_id] = e;
+		impl_->backfill_order_.push_back(s.chat_id);
+	}
+}
+
+void TDLib::setBackfillConfig(double tick_interval, double discovery_interval,
+			      int page, int inflight)
+{
+	impl_->backfill_interval_ = tick_interval;
+	impl_->backfill_enabled_ = tick_interval > 0.0;
+	impl_->backfill_discovery_interval_ =
+		discovery_interval > 0.0 ? discovery_interval : 300.0;
+	impl_->backfill_page_ = (page > 0 && page <= 100) ? page : 100;
+	impl_->backfill_inflight_max_ = inflight > 0 ? inflight : 1;
 }
 
 void TDLib::loop(int timeout)

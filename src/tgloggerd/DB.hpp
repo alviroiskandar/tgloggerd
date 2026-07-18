@@ -12,6 +12,9 @@
 #include <tgloggerd/models/PrivateMessage.hpp>
 #include <tgloggerd/models/GroupMessage.hpp>
 #include <tgloggerd/models/GroupAdmin.hpp>
+#include <tgloggerd/models/Backfill.hpp>
+
+#include <vector>
 
 namespace tgloggerd {
 
@@ -111,6 +114,18 @@ public:
 	void setGroupMessageReply(int64_t chat_id, int64_t message_id,
 				  int64_t reply_to_chat_id,
 				  int64_t reply_to_message_id);
+
+	/*
+	 * Load every backfill-progress row so the backfiller can resume its
+	 * per-chat newest->oldest history walks after a restart.
+	 */
+	std::vector<models::BackfillState> loadBackfillState(void);
+
+	/*
+	 * Insert or update a chat's backfill progress (cursor and done flag),
+	 * stamping last_fetch_at. Keyed by chat_id.
+	 */
+	void upsertBackfillState(const models::BackfillState &st);
 
 private:
 	void syncUsernames(mysql::Transaction &tx, const models::User &u);

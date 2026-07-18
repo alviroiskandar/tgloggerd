@@ -15,6 +15,9 @@
 #include <tgloggerd/models/PrivateMessage.hpp>
 #include <tgloggerd/models/GroupMessage.hpp>
 #include <tgloggerd/models/GroupAdmin.hpp>
+#include <tgloggerd/models/Backfill.hpp>
+
+#include <vector>
 
 namespace tgloggerd {
 
@@ -176,6 +179,35 @@ public:
 	 * Must be called before the client authorizes.
 	 */
 	void setAdminPollConfig(double interval_seconds, int batch);
+
+	/*
+	 * Background message backfiller. It walks every accessible chat's history
+	 * newest -> oldest, round-robin and gently paced, to collect messages the
+	 * real-time path never saw, and it resumes across restarts.
+	 */
+
+	/*
+	 * Set the callback invoked whenever a chat's backfill progress changes
+	 * (registered, cursor advanced, or completed), so it can be persisted.
+	 */
+	void setBackfillStateHandler(
+		std::function<void(const models::BackfillState &)> cb);
+
+	/*
+	 * Seed the backfiller with the progress rows loaded from the database so
+	 * each chat's history walk resumes where it left off. Call before the
+	 * client authorizes.
+	 */
+	void loadBackfillState(const std::vector<models::BackfillState> &states);
+
+	/*
+	 * Configure the backfiller. tick_interval seconds between history pages
+	 * (<= 0 disables backfilling), discovery_interval seconds between chat-list
+	 * sweeps, page messages per getChatHistory call, and inflight the max
+	 * concurrent history requests. Call before the client authorizes.
+	 */
+	void setBackfillConfig(double tick_interval, double discovery_interval,
+			       int page, int inflight);
 
 	/*
 	 * Process a single batch of TDLib events, waiting up to @timeout
