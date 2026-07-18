@@ -490,6 +490,49 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	co_return j;
 }
 
+drogon::Task<std::optional<nlohmann::json>>
+getGroupAdmins(drogon::orm::DbClientPtr db, int64_t id)
+{
+	auto gr = co_await db->execSqlCoro(
+		"SELECT id, type, title FROM `groups` WHERE id = ?", id);
+	if (gr.empty())
+		co_return std::nullopt;
+
+	const auto &g = gr[0];
+	std::string title = g["title"].isNull() ? "" : g["title"].as<std::string>();
+	nlohmann::json group;
+	group["id"]    = g["id"].as<int64_t>();
+	group["type"]  = g["type"].as<std::string>();
+	group["title"] = Render::esc(title.empty() ? "(no title)" : title);
+
+	/* Same projection as getGroup's admin block; see grantedPerms/kPerms. */
+	auto ad = co_await db->execSqlCoro(
+		"SELECT ga.*, u.first_name, u.last_name, "
+		"(SELECT un.username FROM user_usernames un "
+		" WHERE un.user_id = ga.user_id AND un.kind = 'active' "
+		" ORDER BY un.position LIMIT 1) AS username "
+		"FROM group_admins ga LEFT JOIN users u ON u.id = ga.user_id "
+		"WHERE ga.group_id = ? ORDER BY ga.status, ga.user_id",
+		id);
+	nlohmann::json admins = nlohmann::json::array();
+	for (const auto &row : ad) {
+		nlohmann::json a;
+		a["user_id"]      = row["user_id"].as<int64_t>();
+		a["name"]         = displayName(row);
+		a["username"]     = escCol(row, "username");
+		a["status"]       = row["status"].as<std::string>();
+		a["custom_title"] = escCol(row, "custom_title");
+		a["is_anonymous"] = row["is_anonymous"].as<int>() != 0;
+		a["perms"]        = grantedPerms(row);
+		admins.push_back(std::move(a));
+	}
+
+	nlohmann::json j;
+	j["group"]  = std::move(group);
+	j["admins"] = std::move(admins);
+	co_return j;
+}
+
 namespace {
 
 /* Escaped display name from two name columns, or the fallback if both empty. */

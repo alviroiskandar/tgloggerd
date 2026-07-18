@@ -54,4 +54,22 @@ GroupsController::detail(drogon::HttpRequestPtr req, std::string id)
 	co_return htmlPage(views::Render::page("group.html", data));
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+GroupsController::admins(drogon::HttpRequestPtr req, std::string id)
+{
+	auto db = drogon::app().getDbClient("ro");
+
+	int64_t gid = strtoll(id.c_str(), nullptr, 10);
+	auto found = co_await dao::browse::getGroupAdmins(db, gid);
+	if (!found)
+		co_return renderStatus(req, drogon::k404NotFound, "Group not found",
+				       "No group exists with that id.");
+
+	nlohmann::json data = pageBase(req);
+	data.merge_patch(*found);
+	data["title"] = "Admins of group " + id;
+
+	co_return htmlPage(views::Render::page("group_admins.html", data));
+}
+
 } /* namespace tgweb::controllers */

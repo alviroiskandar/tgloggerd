@@ -65,6 +65,14 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 						     int64_t id);
 
 /*
+ * A group's current admins for the dedicated admins page, or std::nullopt if
+ * no such group. Result: {group:{id, type, title}, admins:[{user_id, name,
+ * username, status, custom_title, is_anonymous, perms}]}.
+ */
+drogon::Task<std::optional<nlohmann::json>>
+getGroupAdmins(drogon::orm::DbClientPtr db, int64_t id);
+
+/*
  * One page of messages. scope is "private" or "group". When chatId has a
  * value the list is scoped to that chat and pages on message_id (covered by
  * the uq_*_chat_msg index); otherwise it is a global list paging on the PK id.
