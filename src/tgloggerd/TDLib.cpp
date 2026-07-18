@@ -54,6 +54,27 @@ static auto overloaded(F... f)
 	return overload<F...>(f...);
 }
 
+/*
+ * Convert a TDLib message id to the server (Bot API / t.me) message id.
+ *
+ * TDLib cannot use the server identifier as its message_id (it also orders
+ * local-only messages by it), so it packs the server id shifted left by 20
+ * bits: a real server message id is divisible by 2^20 and the server id is
+ * that value >> 20 (e.g. 1205367472128 = 1149528 << 20). Messages that exist
+ * only locally are not divisible by 2^20 and have no server id, so they are
+ * left unchanged. Apply this ONLY to ids stored in the database, never to an
+ * id handed back to a TDLib API call (e.g. getMessage), which needs the raw
+ * TDLib id.
+ */
+constexpr int64_t kTdMsgIdShift = 1048576; /* 2^20 */
+
+inline int64_t to_server_msg_id(int64_t td_id)
+{
+	if (td_id != 0 && (td_id % kTdMsgIdShift) == 0)
+		return td_id / kTdMsgIdShift;
+	return td_id;
+}
+
 models::User map_user(const td_api::user &u)
 {
 	models::User m;
@@ -323,7 +344,7 @@ extract_forward_info(const td_api::message &message)
 				*message.forward_info_->origin_);
 			fi.origin_type = models::ForwardOriginType::Channel;
 			fi.origin_chat_id = o.chat_id_;
-			fi.origin_message_id = o.message_id_;
+			fi.origin_message_id = to_server_msg_id(o.message_id_);
 			if (!o.author_signature_.empty())
 				fi.origin_sender_name = o.author_signature_;
 			break;
@@ -912,7 +933,7 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 
 	TextMessage msg;
 	msg.sender_id = 0;
-	msg.message_id = message.id_;
+	msg.message_id = to_server_msg_id(message.id_);
 	msg.text = content.text_->text_;
 
 	if (message.sender_id_) {
@@ -1037,9 +1058,9 @@ void TDLib::Impl::resolve_reply_message(const td_api::message &message,
 		     is_group]() {
 		MessageReply mr;
 		mr.chat_id = chat_id;
-		mr.message_id = message_id;
+		mr.message_id = to_server_msg_id(message_id);
 		mr.reply_to_chat_id = reply_chat_id;
-		mr.reply_to_msg_id = reply_msg_id;
+		mr.reply_to_msg_id = to_server_msg_id(reply_msg_id);
 		mr.is_group = is_group;
 		message_reply_handler_(mr);
 	};
@@ -1125,16 +1146,17 @@ void TDLib::Impl::handle_delete_messages(int64_t chat_id,
 		return;
 
 	for (auto msg_id : message_ids) {
+		int64_t sid = to_server_msg_id(msg_id);
 		if (priv) {
 			models::PrivateMessage pm;
 			pm.chat_id = chat_id;
-			pm.message_id = msg_id;
+			pm.message_id = sid;
 			pm.is_deleted = true;
 			private_msg_handler_(pm);
 		} else {
 			models::GroupMessage gm;
 			gm.chat_id = chat_id;
-			gm.message_id = msg_id;
+			gm.message_id = sid;
 			gm.is_deleted = true;
 			group_msg_handler_(gm);
 		}
@@ -1145,7 +1167,7 @@ void TDLib::Impl::build_private_message(const td_api::message &message,
 					models::PrivateMessage &out)
 {
 	out.chat_id = message.chat_id_;
-	out.message_id = message.id_;
+	out.message_id = to_server_msg_id(message.id_);
 	out.is_outgoing = message.is_outgoing_;
 	out.date = message.date_;
 	out.edit_date = message.edit_date_;
@@ -1173,7 +1195,7 @@ void TDLib::Impl::build_group_message(const td_api::message &message,
 				      models::GroupMessage &out)
 {
 	out.chat_id = message.chat_id_;
-	out.message_id = message.id_;
+	out.message_id = to_server_msg_id(message.id_);
 	out.is_outgoing = message.is_outgoing_;
 	out.is_channel_post = message.is_channel_post_;
 	out.date = message.date_;
@@ -1294,8 +1316,8 @@ void TDLib::Impl::maybe_download_message_file(const td_api::message &message,
 	if (!f)
 		return;
 
-	PendingMsgFile ref{ message.chat_id_, message.id_, is_group,
-			    category, file_name };
+	PendingMsgFile ref{ message.chat_id_, to_server_msg_id(message.id_),
+			    is_group, category, file_name };
 
 	/* Already downloaded: link it immediately. */
 	if (f->local_ && f->local_->is_downloading_completed_) {
