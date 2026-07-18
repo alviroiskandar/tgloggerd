@@ -29,7 +29,13 @@
     <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}{% if m.is_deleted %} deleted{% endif %}" id="msg-{{ m.msg_id }}">
 ## if not m.is_outgoing
 ## if existsIn(m.sender, "photo_file_id")
+## if m.sender.kind == "user"
+      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+## else if m.sender.kind == "group"
+      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+## else
       <img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt="">
+## endif
 ## else
       <span class="avatar-sm placeholder msg-avatar"></span>
 ## endif
