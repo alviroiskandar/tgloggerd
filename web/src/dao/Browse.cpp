@@ -95,6 +95,7 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 	std::string like = likePattern(query);
 	std::string q =
 		"SELECT u.id, u.first_name, u.last_name, u.type, "
+		"u.profile_photo_file_id, "
 		"u.is_premium, u.is_verified, u.is_scam, u.is_fake, "
 		"(SELECT un.username FROM user_usernames un "
 		" WHERE un.user_id = u.id AND un.kind = 'active' "
@@ -128,6 +129,9 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 		u["name"]        = displayName(r);
 		u["username"]    = escCol(r, "username");
 		u["type"]        = r["type"].as<std::string>();
+		if (!r["profile_photo_file_id"].isNull())
+			u["photo_file_id"] =
+				r["profile_photo_file_id"].as<int64_t>();
 		u["is_premium"]  = r["is_premium"].as<int>() != 0;
 		u["is_verified"] = r["is_verified"].as<int>() != 0;
 		u["is_scam"]     = r["is_scam"].as<int>() != 0;
@@ -364,7 +368,7 @@ drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 	 * requirement for the SQL string. */
 	std::string like = likePattern(query);
 	std::string q =
-		"SELECT g.id, g.type, g.title, "
+		"SELECT g.id, g.type, g.title, g.photo_file_id, "
 		"(SELECT gu.username FROM group_usernames gu "
 		" WHERE gu.group_id = g.id AND gu.kind = 'active' "
 		" ORDER BY gu.position LIMIT 1) AS username, "
@@ -404,6 +408,8 @@ drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 			g["title"] = "(no title)";
 		g["username"] = escCol(r, "username");
 		g["admins"]   = r["admins"].as<int64_t>();
+		if (!r["photo_file_id"].isNull())
+			g["photo_file_id"] = r["photo_file_id"].as<int64_t>();
 		groups.push_back(std::move(g));
 	}
 

@@ -3,11 +3,12 @@
 {% include "search.html" %}
   <table>
     <thead>
-      <tr><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th></tr>
+      <tr><th class="col-photo"></th><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th></tr>
     </thead>
     <tbody>
 ## for u in users
       <tr>
+        <td class="col-photo">{% if existsIn(u, "photo_file_id") %}<img class="avatar-sm" src="/media/{{ u.photo_file_id }}" alt="">{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
         <td><a href="/users/{{ u.id }}">{{ u.id }}</a></td>
         <td>{{ u.name }}</td>
         <td>
@@ -35,7 +36,7 @@
       </tr>
 ## endfor
 ## if length(users) == 0
-      <tr><td colspan="5" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
+      <tr><td colspan="6" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
 ## endif
     </tbody>
   </table>

@@ -144,6 +144,18 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 	border: 1px solid var(--border);
 	background: var(--card);
 }
+
+/* Small round photo in the first column of the listing tables. */
+.avatar-sm {
+	display: block;
+	width: 28px; height: 28px;
+	border-radius: 50%;
+	object-fit: cover;
+	border: 1px solid var(--border);
+	background: var(--card);
+}
+.avatar-sm.placeholder { background: var(--border); }
+td.col-photo, th.col-photo { width: 28px; padding-right: 0; }
 .detail h2 { font-size: 1.05rem; margin-top: 1.6rem; }
 .chips { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .chips li { padding: 0.2rem 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
