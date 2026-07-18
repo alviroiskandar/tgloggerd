@@ -33,6 +33,13 @@ services:
   # and grants and seed the first admin — see web/README.web ("Running in
   # Docker"). It reaches MySQL over the tg-loggerd network by service name.
   web:
+    # The image compiles the vendored Drogon and MariaDB Connector/C from
+    # submodules/, so initialize them before the first build (a fresh clone
+    # leaves them empty and the build fails with "does not contain a
+    # CMakeLists.txt file"):
+    #
+    #     git submodule update --init --recursive \
+    #         submodules/drogon submodules/mariadb-connector-c
     build:
       context: .
       dockerfile: web/Dockerfile
