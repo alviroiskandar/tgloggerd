@@ -79,16 +79,18 @@ drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db)
 
 drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 				       int64_t cursor, int limit,
-				       std::string query)
+				       std::string query, std::string field)
 {
 	/*
 	 * A single parameterized statement covers every case: the leading
-	 * "? = ''" disables the search filter when no query is given, and
-	 * "? = 0 OR u.id < ?" makes the cursor optional (cursor 0 = first page).
-	 * Fetch one extra row to know whether a further page exists. The SQL is a
-	 * named local (never a temporary in the co_await operand) so it outlives
-	 * the suspension; a temporary there is mishandled by the coroutine
-	 * lowering and double-freed across thread migration.
+	 * "? = ''" disables the search filter when no query is given, each
+	 * matched column is gated by "? IN ('all', <field>)" so `field` scopes
+	 * the search ("all" matches id/name/username), and "? = 0 OR u.id < ?"
+	 * makes the cursor optional (cursor 0 = first page). Fetch one extra row
+	 * to know whether a further page exists. The SQL is a named local (never
+	 * a temporary in the co_await operand) so it outlives the suspension; a
+	 * temporary there is mishandled by the coroutine lowering and
+	 * double-freed across thread migration.
 	 */
 	std::string like = likePattern(query);
 	std::string q =
@@ -99,17 +101,19 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 		" ORDER BY un.position LIMIT 1) AS username "
 		"FROM users u "
 		"WHERE (? = '' "
-		"       OR CAST(u.id AS CHAR) LIKE ? "
-		"       OR u.first_name LIKE ? "
-		"       OR u.last_name LIKE ? "
-		"       OR CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? "
-		"       OR EXISTS (SELECT 1 FROM user_usernames un "
-		"                  WHERE un.user_id = u.id AND un.username LIKE ?)) "
+		"       OR (CAST(u.id AS CHAR) LIKE ? AND ? IN ('all','id')) "
+		"       OR (CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? "
+		"           AND ? IN ('all','name')) "
+		"       OR (EXISTS (SELECT 1 FROM user_usernames un "
+		"                   WHERE un.user_id = u.id AND un.username LIKE ?) "
+		"           AND ? IN ('all','username')) "
+		"       OR (u.phone_number LIKE ? AND ? IN ('phone')) "
+		"       OR (u.bio LIKE ? AND ? IN ('bio'))) "
 		"AND (? = 0 OR u.id < ?) "
 		"ORDER BY u.id DESC LIMIT ?";
-	auto rowsHolder = co_await db->execSqlCoro(q, query, like, like, like,
-						   like, like, cursor, cursor,
-						   limit + 1);
+	auto rowsHolder = co_await db->execSqlCoro(
+		q, query, like, field, like, field, like, field, like, field,
+		like, field, cursor, cursor, limit + 1);
 	const drogon::orm::Result &rows = rowsHolder;
 
 	nlohmann::json users = nlohmann::json::array();
@@ -353,10 +357,11 @@ nlohmann::json grantedPerms(const drogon::orm::Row &r)
 
 drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 					int64_t cursor, int limit,
-					std::string query)
+					std::string query, std::string field)
 {
-	/* See listUsers for the "? = ''" (search) and "? = 0 OR ..." (cursor)
-	 * toggles and the named-local requirement for the SQL string. */
+	/* See listUsers for the "? = ''" (search), "? IN ('all', <field>)"
+	 * (field scope) and "? = 0 OR ..." (cursor) toggles and the named-local
+	 * requirement for the SQL string. */
 	std::string like = likePattern(query);
 	std::string q =
 		"SELECT g.id, g.type, g.title, "
@@ -367,14 +372,17 @@ drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
 		" WHERE ga.group_id = g.id) AS admins "
 		"FROM `groups` g "
 		"WHERE (? = '' "
-		"       OR CAST(g.id AS CHAR) LIKE ? "
-		"       OR g.title LIKE ? "
-		"       OR EXISTS (SELECT 1 FROM group_usernames gu "
-		"                  WHERE gu.group_id = g.id AND gu.username LIKE ?)) "
+		"       OR (CAST(g.id AS CHAR) LIKE ? AND ? IN ('all','id')) "
+		"       OR (g.title LIKE ? AND ? IN ('all','title')) "
+		"       OR (EXISTS (SELECT 1 FROM group_usernames gu "
+		"                   WHERE gu.group_id = g.id AND gu.username LIKE ?) "
+		"           AND ? IN ('all','username')) "
+		"       OR (g.description LIKE ? AND ? IN ('description'))) "
 		"AND (? = 0 OR g.id < ?) "
 		"ORDER BY g.id DESC LIMIT ?";
-	auto rowsHolder = co_await db->execSqlCoro(q, query, like, like, like,
-						   cursor, cursor, limit + 1);
+	auto rowsHolder = co_await db->execSqlCoro(
+		q, query, like, field, like, field, like, field, like, field,
+		cursor, cursor, limit + 1);
 	const drogon::orm::Result &rows = rowsHolder;
 
 	nlohmann::json groups = nlohmann::json::array();

@@ -95,8 +95,16 @@ table.kv th { width: 12rem; }
 .muted { color: var(--muted); }
 
 /* Search box (shared by the listing pages) */
-.search { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1.2rem; }
-.search input[type="search"] { flex: 1; min-width: 0; max-width: 28rem; }
+.search { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1.2rem; }
+.search input[type="search"] { flex: 1; min-width: 8rem; max-width: 28rem; }
+.search select {
+	font: inherit;
+	padding: 0.45rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--fg);
+}
 .search .clear { margin-left: 0.2rem; }
 
 /* Dashboard cards */

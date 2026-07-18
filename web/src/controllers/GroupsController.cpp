@@ -29,11 +29,26 @@ GroupsController::list(drogon::HttpRequestPtr req)
 	data["title"] = "Groups";
 	data["limit"] = limit;
 
+	nlohmann::json fields = nlohmann::json::array();
+	auto addField = [&](const char *v, const char *l) {
+		nlohmann::json o;
+		o["value"] = v;
+		o["label"] = l;
+		fields.push_back(std::move(o));
+	};
+	addField("all", "All fields");
+	addField("id", "ID");
+	addField("title", "Title");
+	addField("username", "Username");
+	addField("description", "Description");
+
+	std::string field;
 	std::string query = applySearch(data, req, "/groups",
-					"Search by id, title, or username…");
+					"Search groups…", std::move(fields),
+					field);
 
 	nlohmann::json page = co_await dao::browse::listGroups(db, cursor, limit,
-							       query);
+							       query, field);
 	data["groups"] = page["groups"];
 	data["next_cursor"] = page["next_cursor"];
 

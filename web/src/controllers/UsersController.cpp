@@ -29,11 +29,27 @@ UsersController::list(drogon::HttpRequestPtr req)
 	data["title"] = "Users";
 	data["limit"] = limit;
 
+	nlohmann::json fields = nlohmann::json::array();
+	auto addField = [&](const char *v, const char *l) {
+		nlohmann::json o;
+		o["value"] = v;
+		o["label"] = l;
+		fields.push_back(std::move(o));
+	};
+	addField("all", "All fields");
+	addField("id", "ID");
+	addField("name", "Name");
+	addField("username", "Username");
+	addField("phone", "Phone");
+	addField("bio", "Bio");
+
+	std::string field;
 	std::string query = applySearch(data, req, "/users",
-					"Search by id, name, or username…");
+					"Search users…", std::move(fields),
+					field);
 
 	nlohmann::json page = co_await dao::browse::listUsers(db, cursor, limit,
-							      query);
+							      query, field);
 	data["users"] = page["users"];
 	data["next_cursor"] = page["next_cursor"];
 
