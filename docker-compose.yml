@@ -37,7 +37,9 @@ services:
       # only while the data directory is empty; later starts keep whatever the
       # accounts were first initialized with.
       - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
-    networks: [tgnet]
+    networks:
+      tgnet:
+        ipv4_address: 10.0.88.3
 
   tgloggerd:
     <<: *build
@@ -55,7 +57,9 @@ services:
     # login can prompt for the phone number, code and 2FA password.
     stdin_open: true
     tty: true
-    networks: [tgnet]
+    networks:
+      tgnet:
+        ipv4_address: 10.0.88.5
 
   web:
     <<: *build
@@ -68,8 +72,17 @@ services:
       - .:/workspace
     ports:
       - "8080:8080"
-    networks: [tgnet]
+    networks:
+      tgnet:
+        ipv4_address: 10.0.88.4
 
 networks:
   tgnet:
     driver: bridge
+    ipam:
+      driver: default
+      config:
+      - subnet: 10.0.88.0/24
+        gateway: 10.0.88.1
+    driver_opts:
+      com.docker.network.bridge.name: tgnet
