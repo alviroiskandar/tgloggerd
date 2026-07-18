@@ -5,53 +5,73 @@
  */
 #include "auth/Csrf.hpp"
 
+#include "Config.hpp"
+#include "auth/Session.hpp"
+#include "auth/Token.hpp"
+
 #include <sodium.h>
 
 namespace tgweb::auth::csrf {
 
 namespace {
 
-constexpr const char *kKey = "csrf";
-constexpr size_t kTokenBytes = 32; /* 256-bit token → 64 hex chars. */
-
-std::string randomHex(void)
+bool secure(void)
 {
-	unsigned char buf[kTokenBytes];
-	randombytes_buf(buf, sizeof(buf));
+	static const bool v = tgweb::env("WEB_SECURE_COOKIE", "1") != "0";
+	return v;
+}
 
-	static const char hex[] = "0123456789abcdef";
-	std::string out;
-	out.reserve(sizeof(buf) * 2);
-	for (unsigned char b : buf) {
-		out.push_back(hex[b >> 4]);
-		out.push_back(hex[b & 0x0f]);
-	}
-	return out;
+/* Constant-time equality; false when either side is empty or lengths differ. */
+bool ctEqual(const std::string &a, const std::string &b)
+{
+	if (a.empty() || a.size() != b.size())
+		return false;
+	return sodium_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 } /* namespace */
 
-std::string ensure(const drogon::SessionPtr &session)
+std::string forSession(const drogon::HttpRequestPtr &req)
 {
-	if (session->find(kKey))
-		return session->getOptional<std::string>(kKey).value_or("");
-
-	std::string token = randomHex();
-	session->insert(kKey, token);
-	return token;
+	std::string s = session::rawCookie(req);
+	if (s.empty())
+		return std::string();
+	/* Keyed tag over the session cookie: unforgeable without WEB_APP_KEY,
+	 * and it rotates whenever the session cookie changes (re-login). */
+	return token::tag("csrf\n" + s);
 }
 
-bool check(const drogon::SessionPtr &session, const std::string &submitted)
+bool checkSession(const drogon::HttpRequestPtr &req,
+		  const std::string &submitted)
 {
-	std::string expected =
-		session->getOptional<std::string>(kKey).value_or("");
+	return ctEqual(forSession(req), submitted);
+}
 
-	/* No token in session, or length mismatch: reject before comparing. */
-	if (expected.empty() || expected.size() != submitted.size())
+std::string newLoginToken(void)
+{
+	return token::make(token::randomToken());
+}
+
+void setLoginCookie(const drogon::HttpResponsePtr &resp,
+		    const std::string &tok)
+{
+	drogon::Cookie c(kCookie, tok);
+	c.setHttpOnly(true);
+	c.setSecure(secure());
+	c.setSameSite(drogon::Cookie::SameSite::kLax);
+	c.setPath("/login");
+	c.setMaxAge(1800); /* enough time to complete the sign-in. */
+	resp->addCookie(std::move(c));
+}
+
+bool checkLogin(const drogon::HttpRequestPtr &req,
+		const std::string &submitted)
+{
+	std::string cookie = req->getCookie(kCookie);
+	/* Signature valid (not attacker-injected) AND echoed back in the form. */
+	if (!token::open(cookie).has_value())
 		return false;
-
-	return sodium_memcmp(expected.data(), submitted.data(),
-			     expected.size()) == 0;
+	return ctEqual(cookie, submitted);
 }
 
 } /* namespace tgweb::auth::csrf */

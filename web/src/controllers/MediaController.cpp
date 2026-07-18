@@ -103,7 +103,9 @@ MediaController::serve(drogon::HttpRequestPtr req, std::string id)
 
 	/* Audit the access before serving. */
 	auto app = drogon::app().getDbClient("app");
-	auto uid = req->session()->getOptional<uint64_t>(auth::session::kUid);
+	auto sess = auth::session::current(req);
+	std::optional<uint64_t> uid =
+		sess ? std::optional<uint64_t>(sess->uid) : std::nullopt;
 	co_await dao::audit::log(app, uid, "media",
 				 req->getPeerAddr().toIp(), "file " + id);
 

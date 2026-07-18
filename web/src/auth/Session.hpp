@@ -6,41 +6,47 @@
 #ifndef TGLOGGERD_WEB_AUTH_SESSION_HPP
 #define TGLOGGERD_WEB_AUTH_SESSION_HPP
 
-#include <drogon/Session.h>
+#include <drogon/HttpRequest.h>
+#include <drogon/HttpResponse.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace tgweb::auth::session {
 
-/* Session keys for the authenticated identity. */
-constexpr const char *kUid      = "uid";       /* web_users.id (uint64_t).   */
-constexpr const char *kUsername = "username";  /* Login name (std::string).  */
-constexpr const char *kRole     = "role";      /* "admin" or "viewer".       */
+/*
+ * Stateless authentication: the identity lives entirely in a signed cookie, so
+ * there is no server-side session store and logins survive restarts. The cookie
+ * is a token::make() token over "<uid>\n<exp>\n<role>\n<username>", so the
+ * client cannot alter uid or role without invalidating the signature. `exp` is
+ * an absolute Unix expiry (0 = no expiry).
+ */
 
-inline bool isLoggedIn(const drogon::SessionPtr &s)
-{
-	return s && s->find(kUid);
-}
+constexpr const char *kCookie = "tgw_session";
 
-inline bool isAdmin(const drogon::SessionPtr &s)
-{
-	return s && s->getOptional<std::string>(kRole).value_or("") == "admin";
-}
+struct Session {
+	uint64_t    uid = 0;
+	std::string username;
+	std::string role;      /* "admin" or "viewer". */
+	int64_t     exp = 0;   /* absolute Unix expiry; 0 = never. */
+};
 
-/* Store the authenticated identity and rotate the session id (anti-fixation). */
-inline void login(const drogon::SessionPtr &s, uint64_t uid,
-		  const std::string &username, const std::string &role)
-{
-	/* insert() does not overwrite; erase first so re-login is well defined. */
-	s->erase(kUid);
-	s->erase(kUsername);
-	s->erase(kRole);
-	s->insert(kUid, uid);
-	s->insert(kUsername, username);
-	s->insert(kRole, role);
-	s->changeSessionIdToClient();
-}
+/* The verified, unexpired session in the request's cookie, or std::nullopt. */
+std::optional<Session> current(const drogon::HttpRequestPtr &req);
+
+/* The raw signed cookie value (used to derive the CSRF token), or "". */
+std::string rawCookie(const drogon::HttpRequestPtr &req);
+
+bool isLoggedIn(const drogon::HttpRequestPtr &req);
+bool isAdmin(const drogon::HttpRequestPtr &req);
+
+/* Set the signed session cookie on the response (call on successful login). */
+void issue(const drogon::HttpResponsePtr &resp, uint64_t uid,
+	   const std::string &username, const std::string &role);
+
+/* Expire the session cookie on the response (call on logout). */
+void clear(const drogon::HttpResponsePtr &resp);
 
 } /* namespace tgweb::auth::session */
 

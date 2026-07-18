@@ -14,7 +14,7 @@ void AuthFilter::doFilter(const drogon::HttpRequestPtr &req,
 			  drogon::FilterCallback &&fcb,
 			  drogon::FilterChainCallback &&fccb)
 {
-	if (session::isLoggedIn(req->session())) {
+	if (session::isLoggedIn(req)) {
 		fccb();
 		return;
 	}

@@ -29,12 +29,11 @@ namespace tgweb::controllers {
  */
 inline nlohmann::json pageBase(const drogon::HttpRequestPtr &req)
 {
-	const auto &s = req->session();
+	auto s = auth::session::current(req);
 	nlohmann::json j;
-	j["username"] = views::Render::esc(
-		s->getOptional<std::string>(auth::session::kUsername).value_or(""));
-	j["csrf"] = auth::csrf::ensure(s);
-	j["is_admin"] = auth::session::isAdmin(s);
+	j["username"] = views::Render::esc(s ? s->username : std::string());
+	j["csrf"] = auth::csrf::forSession(req);
+	j["is_admin"] = s && s->role == "admin";
 	return j;
 }
 

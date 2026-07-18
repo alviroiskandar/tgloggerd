@@ -63,23 +63,32 @@ drogon::HttpResponsePtr redirect(const std::string &to)
 	return drogon::HttpResponse::newRedirectionResponse(to);
 }
 
+/*
+ * Render the login page and set a fresh signed pre-auth CSRF cookie whose token
+ * is echoed in the form; the two are matched on POST.
+ */
+drogon::HttpResponsePtr loginPage(const char *error, drogon::HttpStatusCode code)
+{
+	std::string token = tgweb::auth::csrf::newLoginToken();
+	auto resp = htmlResponse(renderLogin(token, error), code);
+	tgweb::auth::csrf::setLoginCookie(resp, token);
+	return resp;
+}
+
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
 AuthController::getLogin(drogon::HttpRequestPtr req)
 {
-	const auto &s = req->session();
-	if (tgweb::auth::session::isLoggedIn(s))
+	if (tgweb::auth::session::isLoggedIn(req))
 		co_return redirect("/");
 
-	std::string token = tgweb::auth::csrf::ensure(s);
-	co_return htmlResponse(renderLogin(token, nullptr), drogon::k200OK);
+	co_return loginPage(nullptr, drogon::k200OK);
 }
 
 drogon::Task<drogon::HttpResponsePtr>
 AuthController::postLogin(drogon::HttpRequestPtr req)
 {
-	const auto &s = req->session();
 	auto db = drogon::app().getDbClient("app");
 
 	std::string username = req->getParameter("username");
@@ -88,22 +97,16 @@ AuthController::postLogin(drogon::HttpRequestPtr req)
 	std::string ip = req->getPeerAddr().toIp();
 
 	/* CSRF first: a bad/missing token means the request is not trusted. */
-	if (!tgweb::auth::csrf::check(s, csrf)) {
-		std::string token = tgweb::auth::csrf::ensure(s);
-		co_return htmlResponse(
-			renderLogin(token, "Your session expired. Please try again."),
-			drogon::k403Forbidden);
-	}
+	if (!tgweb::auth::csrf::checkLogin(req, csrf))
+		co_return loginPage("Your session expired. Please try again.",
+				    drogon::k403Forbidden);
 
 	std::string rlKey = ip + "\n" + username;
 	if (!limiter().allowed(rlKey)) {
 		co_await tgweb::dao::audit::log(db, std::nullopt, "login_ratelimited",
 						ip, username);
-		std::string token = tgweb::auth::csrf::ensure(s);
-		co_return htmlResponse(
-			renderLogin(token,
-				    "Too many attempts. Please wait and try again."),
-			drogon::k429TooManyRequests);
+		co_return loginPage("Too many attempts. Please wait and try again.",
+				    drogon::k429TooManyRequests);
 	}
 
 	auto user = co_await tgweb::dao::accounts::findByUsername(db, username);
@@ -115,38 +118,36 @@ AuthController::postLogin(drogon::HttpRequestPtr req)
 		limiter().recordFailure(rlKey);
 		co_await tgweb::dao::audit::log(db, std::nullopt, "login_fail",
 						ip, username);
-		std::string token = tgweb::auth::csrf::ensure(s);
-		co_return htmlResponse(
-			renderLogin(token, "Invalid username or password."),
-			drogon::k401Unauthorized);
+		co_return loginPage("Invalid username or password.",
+				    drogon::k401Unauthorized);
 	}
 
 	limiter().reset(rlKey);
-	tgweb::auth::session::login(s, user->id, user->username, user->role);
 	co_await tgweb::dao::audit::log(db, user->id, "login_ok", ip, user->username);
 
-	co_return redirect("/");
+	/* Issue the signed session cookie on the redirect response. */
+	auto resp = redirect("/");
+	tgweb::auth::session::issue(resp, user->id, user->username, user->role);
+	co_return resp;
 }
 
 drogon::Task<drogon::HttpResponsePtr>
 AuthController::postLogout(drogon::HttpRequestPtr req)
 {
-	const auto &s = req->session();
 	auto db = drogon::app().getDbClient("app");
 
-	if (!tgweb::auth::csrf::check(s, req->getParameter("csrf")))
+	if (!tgweb::auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return htmlResponse("403 Forbidden\n", drogon::k403Forbidden);
 
-	if (tgweb::auth::session::isLoggedIn(s)) {
-		auto uid = s->getOptional<uint64_t>(tgweb::auth::session::kUid);
+	if (auto s = tgweb::auth::session::current(req)) {
 		std::string ip = req->getPeerAddr().toIp();
-		co_await tgweb::dao::audit::log(db, uid, "logout", ip,
-			s->getOptional<std::string>(
-				tgweb::auth::session::kUsername).value_or(""));
+		co_await tgweb::dao::audit::log(db, s->uid, "logout", ip,
+						s->username);
 	}
 
-	s->clear();
-	co_return redirect("/login");
+	auto resp = redirect("/login");
+	tgweb::auth::session::clear(resp);
+	co_return resp;
 }
 
 } /* namespace tgweb::controllers */

@@ -14,15 +14,13 @@ void AdminFilter::doFilter(const drogon::HttpRequestPtr &req,
 			   drogon::FilterCallback &&fcb,
 			   drogon::FilterChainCallback &&fccb)
 {
-	const auto &s = req->session();
-
-	if (!session::isLoggedIn(s)) {
+	if (!session::isLoggedIn(req)) {
 		auto resp = drogon::HttpResponse::newRedirectionResponse("/login");
 		fcb(resp);
 		return;
 	}
 
-	if (!session::isAdmin(s)) {
+	if (!session::isAdmin(req)) {
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::k403Forbidden);
 		resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
