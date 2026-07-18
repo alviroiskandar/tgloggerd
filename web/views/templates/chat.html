@@ -87,6 +87,8 @@
         <video class="msg-media" src="/media/{{ m.media.file_id }}" controls preload="metadata"></video>
 ## else if m.media.render == "animation"
         <video class="msg-media" src="/media/{{ m.media.file_id }}" autoplay loop muted playsinline preload="metadata"></video>
+## else if m.media.render == "lottie"
+        <div class="msg-media tgs-sticker" data-tgs="/media/{{ m.media.file_id }}"><a class="msg-file" href="/media/{{ m.media.file_id }}">🎞️ {% if m.media.name != "" %}{{ m.media.name }}{% else %}animated sticker{% endif %}</a></div>
 ## else if m.media.render == "audio"
         <audio class="msg-audio" src="/media/{{ m.media.file_id }}" controls preload="none"></audio>
 ## else

@@ -1103,7 +1103,7 @@ const char *mediaRender(const std::string &ctype, const std::string &ext)
 		if (ext == "webm")
 			return "animation";
 		if (ext == "tgs")
-			return "file";
+			return "lottie";
 		return "image";
 	}
 	if (ctype == "photo")
