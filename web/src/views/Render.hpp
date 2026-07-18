@@ -33,6 +33,13 @@ public:
 	static std::string esc(const std::string &s);
 
 	/*
+	 * Like esc(), but also turns line breaks into <br> so multi-line text
+	 * (bios, descriptions, ...) keeps its line structure in HTML. The text is
+	 * fully escaped first, so the only markup in the result is the <br> tags.
+	 */
+	static std::string escMultiline(const std::string &s);
+
+	/*
 	 * Render a content template and wrap it in the base layout. The layout
 	 * shows the top bar with a sign-out form when data contains "username";
 	 * that data must then also carry a "csrf" token.

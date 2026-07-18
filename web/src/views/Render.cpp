@@ -59,6 +59,22 @@ std::string Render::esc(const std::string &s)
 	return out;
 }
 
+std::string Render::escMultiline(const std::string &s)
+{
+	/* Escape first (leaves \n and \r untouched), then turn line breaks into
+	 * <br>; a lone \r or the \r of a \r\n pair is dropped. */
+	std::string e = esc(s);
+	std::string out;
+	out.reserve(e.size());
+	for (char c : e) {
+		if (c == '\n')
+			out += "<br>";
+		else if (c != '\r')
+			out += c;
+	}
+	return out;
+}
+
 std::string Render::renderNamed(const std::string &name,
 				const nlohmann::json &data)
 {

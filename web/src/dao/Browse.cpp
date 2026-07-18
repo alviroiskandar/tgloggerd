@@ -21,6 +21,14 @@ std::string escCol(const drogon::orm::Row &r, const char *col)
 	return Render::esc(r[col].as<std::string>());
 }
 
+/* Like escCol, but preserves line breaks as <br> (for bios, descriptions). */
+std::string escColMulti(const drogon::orm::Row &r, const char *col)
+{
+	if (r[col].isNull())
+		return std::string();
+	return Render::escMultiline(r[col].as<std::string>());
+}
+
 /*
  * A LIKE pattern "%q%" with the LIKE metacharacters in q escaped, so a user's
  * literal % or _ matches itself (backslash is LIKE's default escape char). The
@@ -182,7 +190,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	user["last_name"]         = escCol(r, "last_name");
 	user["phone_number"]      = escCol(r, "phone_number");
 	user["type"]              = r["type"].as<std::string>();
-	user["bio"]               = escCol(r, "bio");
+	user["bio"]               = escColMulti(r, "bio");
 	user["language_code"]     = escCol(r, "language_code");
 	user["restriction_reason"] = escCol(r, "restriction_reason");
 	user["is_verified"]       = r["is_verified"].as<int>() != 0;
@@ -287,7 +295,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	nlohmann::json bioHist = nlohmann::json::array();
 	for (const auto &row : bh) {
 		nlohmann::json e;
-		e["bio"]        = escCol(row, "bio");
+		e["bio"]        = escColMulti(row, "bio");
 		e["created_at"] = row["created_at"].as<std::string>();
 		bioHist.push_back(std::move(e));
 	}
@@ -444,7 +452,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	group["id"]          = r["id"].as<int64_t>();
 	group["type"]        = r["type"].as<std::string>();
 	group["title"]       = Render::esc(title.empty() ? "(no title)" : title);
-	group["description"] = escCol(r, "description");
+	group["description"] = escColMulti(r, "description");
 	group["created_at"]  = r["created_at"].as<std::string>();
 	group["updated_at"]  = r["updated_at"].as<std::string>();
 	if (!r["photo_file_id"].isNull())
@@ -512,7 +520,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	nlohmann::json descHist = nlohmann::json::array();
 	for (const auto &row : dh) {
 		nlohmann::json e;
-		e["description"] = escCol(row, "description");
+		e["description"] = escColMulti(row, "description");
 		e["created_at"]  = row["created_at"].as<std::string>();
 		descHist.push_back(std::move(e));
 	}
