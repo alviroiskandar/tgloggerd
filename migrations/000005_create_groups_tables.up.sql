@@ -37,8 +37,10 @@ CREATE TABLE group_usernames (
 	id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 	group_id   BIGINT          NULL COMMENT 'FK to groups.id; NULL when released.',
 	username   VARCHAR(32)     NOT NULL COMMENT 'Username without the leading @.',
-	kind       ENUM('active', 'disabled', 'collectible') NOT NULL
-	                           COMMENT 'Source list: active/disabled/collectible.',
+	-- Activation status; "collectible" is orthogonal (see is_collectible).
+	kind       ENUM('active', 'disabled') NOT NULL
+	                           COMMENT 'Activation status: active or disabled.',
+	is_collectible TINYINT(1)  NOT NULL DEFAULT 0 COMMENT 'Purchased at fragment.com.',
 	position   INT             NOT NULL DEFAULT 0 COMMENT 'Order within its list (0-based).',
 	created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',
 
@@ -109,10 +111,12 @@ CREATE TABLE group_hist_usernames_events (
 	id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 	group_id   BIGINT          NOT NULL COMMENT 'FK to groups.id.',
 	username   VARCHAR(32)     NOT NULL COMMENT 'The username that was modified.',
-	action     ENUM('added', 'removed', 'reordered', 'kind_changed') NOT NULL
+	action     ENUM('added', 'removed', 'reordered', 'kind_changed',
+	                'collectible_changed') NOT NULL
 	                           COMMENT 'What triggered this history log.',
-	kind       ENUM('active', 'disabled', 'collectible') NULL
-	                           COMMENT 'Kind after the change; NULL if removed.',
+	kind       ENUM('active', 'disabled') NULL
+	                           COMMENT 'Activation status after the change; NULL if removed.',
+	is_collectible TINYINT(1)  NULL COMMENT 'Collectible state after the change; NULL if removed.',
 	position   INT             NULL COMMENT 'New position (0-based); NULL if removed.',
 	created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',
 

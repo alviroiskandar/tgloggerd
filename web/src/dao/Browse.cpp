@@ -242,15 +242,16 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Current usernames. */
 	auto un = co_await db->execSqlCoro(
-		"SELECT username, kind, position FROM user_usernames "
+		"SELECT username, kind, position, is_collectible FROM user_usernames "
 		"WHERE user_id = ? ORDER BY kind, position",
 		id);
 	nlohmann::json usernames = nlohmann::json::array();
 	for (const auto &row : un) {
 		nlohmann::json e;
-		e["username"] = escCol(row, "username");
-		e["kind"]     = row["kind"].as<std::string>();
-		e["position"] = row["position"].as<int>();
+		e["username"]    = escCol(row, "username");
+		e["kind"]        = row["kind"].as<std::string>();
+		e["position"]    = row["position"].as<int>();
+		e["collectible"] = row["is_collectible"].as<int>() != 0;
 		usernames.push_back(std::move(e));
 	}
 	j["usernames"] = std::move(usernames);
@@ -271,18 +272,20 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Username events. */
 	auto ue = co_await db->execSqlCoro(
-		"SELECT username, action, kind, position, created_at "
+		"SELECT username, action, kind, position, is_collectible, created_at "
 		"FROM user_hist_usernames_events "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json unEvents = nlohmann::json::array();
 	for (const auto &row : ue) {
 		nlohmann::json e;
-		e["username"]   = escCol(row, "username");
-		e["action"]     = row["action"].as<std::string>();
-		e["kind"]       = row["kind"].isNull()
-					  ? "" : row["kind"].as<std::string>();
-		e["created_at"] = row["created_at"].as<std::string>();
+		e["username"]    = escCol(row, "username");
+		e["action"]      = row["action"].as<std::string>();
+		e["kind"]        = row["kind"].isNull()
+					   ? "" : row["kind"].as<std::string>();
+		e["collectible"] = !row["is_collectible"].isNull() &&
+				   row["is_collectible"].as<int>() != 0;
+		e["created_at"]  = row["created_at"].as<std::string>();
 		unEvents.push_back(std::move(e));
 	}
 	j["username_events"] = std::move(unEvents);
@@ -463,14 +466,15 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Current usernames. */
 	auto un = co_await db->execSqlCoro(
-		"SELECT username, kind, position FROM group_usernames "
+		"SELECT username, kind, position, is_collectible FROM group_usernames "
 		"WHERE group_id = ? ORDER BY kind, position",
 		id);
 	nlohmann::json usernames = nlohmann::json::array();
 	for (const auto &row : un) {
 		nlohmann::json e;
-		e["username"] = escCol(row, "username");
-		e["kind"]     = row["kind"].as<std::string>();
+		e["username"]    = escCol(row, "username");
+		e["kind"]        = row["kind"].as<std::string>();
+		e["collectible"] = row["is_collectible"].as<int>() != 0;
 		usernames.push_back(std::move(e));
 	}
 	j["usernames"] = std::move(usernames);
@@ -528,18 +532,20 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Username events. */
 	auto ue = co_await db->execSqlCoro(
-		"SELECT username, action, kind, created_at "
+		"SELECT username, action, kind, is_collectible, created_at "
 		"FROM group_hist_usernames_events "
 		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json unEvents = nlohmann::json::array();
 	for (const auto &row : ue) {
 		nlohmann::json e;
-		e["username"]   = escCol(row, "username");
-		e["action"]     = row["action"].as<std::string>();
-		e["kind"]       = row["kind"].isNull()
-					  ? "" : row["kind"].as<std::string>();
-		e["created_at"] = row["created_at"].as<std::string>();
+		e["username"]    = escCol(row, "username");
+		e["action"]      = row["action"].as<std::string>();
+		e["kind"]        = row["kind"].isNull()
+					   ? "" : row["kind"].as<std::string>();
+		e["collectible"] = !row["is_collectible"].isNull() &&
+				   row["is_collectible"].as<int>() != 0;
+		e["created_at"]  = row["created_at"].as<std::string>();
 		unEvents.push_back(std::move(e));
 	}
 	j["username_events"] = std::move(unEvents);

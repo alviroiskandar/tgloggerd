@@ -14,10 +14,15 @@ CREATE TABLE user_usernames (
 	user_id    BIGINT          NULL COMMENT 'FK to users.id; NULL when released.',
 	-- The username text without the leading '@'.
 	username   VARCHAR(32)     NOT NULL COMMENT 'Username without the leading @.',
-	-- Which td_api::usernames list this username came from.
-	kind       ENUM('active', 'disabled', 'collectible') NOT NULL
-	                           COMMENT 'Source list: active/disabled/collectible.',
-	-- Preserves order within the active/collectible lists (0-based).
+	-- Activation status. A username is active XOR disabled; "collectible" is
+	-- orthogonal (see is_collectible), since a username can be active AND
+	-- collectible at the same time.
+	kind       ENUM('active', 'disabled') NOT NULL
+	                           COMMENT 'Activation status: active or disabled.',
+	-- Whether this username was purchased at fragment.com (td_api
+	-- usernames.collectible_usernames). Independent of active/disabled.
+	is_collectible TINYINT(1)  NOT NULL DEFAULT 0 COMMENT 'Purchased at fragment.com.',
+	-- Preserves order within the active list (0-based).
 	position   INT             NOT NULL DEFAULT 0 COMMENT 'Order within its list (0-based).',
 	-- Row creation time.
 	created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',

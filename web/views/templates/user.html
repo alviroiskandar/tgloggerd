@@ -88,7 +88,7 @@
 ## else
   <ul class="chips">
 ## for un in usernames
-    <li>@{{ un.username }} <span class="muted">({{ un.kind }})</span></li>
+    <li>@{{ un.username }} <span class="muted">({{ un.kind }})</span>{% if un.collectible %} <span class="badge">collectible</span>{% endif %}</li>
 ## endfor
   </ul>
 ## endif
@@ -115,7 +115,7 @@
     <thead><tr><th>When</th><th>Username</th><th>Action</th><th>Kind</th></tr></thead>
     <tbody>
 ## for e in username_events
-      <tr><td>{{ e.created_at }}</td><td>@{{ e.username }}</td><td>{{ e.action }}</td><td>{% if e.kind != "" %}{{ e.kind }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      <tr><td>{{ e.created_at }}</td><td>@{{ e.username }}</td><td>{{ e.action }}</td><td>{% if e.kind != "" %}{{ e.kind }}{% else %}<span class="muted">—</span>{% endif %}{% if e.collectible %} <span class="badge">collectible</span>{% endif %}</td></tr>
 ## endfor
     </tbody>
   </table>

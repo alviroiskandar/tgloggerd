@@ -176,8 +176,9 @@ void DB::setUserProfilePhoto(int64_t user_id, uint64_t file_id)
 void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 {
 	struct Entry {
-		std::string	kind;
+		std::string	kind;         /* "active" or "disabled". */
 		int		position = 0;
+		bool		collectible = false;
 	};
 
 	/*
@@ -185,7 +186,7 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 	 * be diffed against them to record the individual changes.
 	 */
 	auto old_rows = tx.query(
-		"SELECT username, kind, position FROM user_usernames"
+		"SELECT username, kind, position, is_collectible FROM user_usernames"
 		" WHERE user_id = ?",
 		{ (int64_t)u.id });
 
@@ -196,56 +197,78 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 		old_map.emplace(*r[0], Entry{
 			r[1].value_or(""),
 			r[2].has_value() ? std::stoi(*r[2]) : 0,
+			r[3].has_value() && *r[3] != "0",
 		});
 	}
 
-	/* Build the new set from the model, preserving list order. */
+	/*
+	 * Build the new set, ONE entry per username. A username is active XOR
+	 * disabled (its kind); collectible is orthogonal (a username can be
+	 * active AND purchased at fragment.com), so it is a flag, not a kind.
+	 * Recording it as a separate "collectible" row is what made the diff
+	 * flap: the same name appeared as both active and collectible, and the
+	 * unique-key upsert could keep only one, so every resync saw a kind
+	 * change. A collectible username that is neither active nor disabled
+	 * (owned but unassigned) is recorded as disabled.
+	 */
 	std::vector<std::pair<std::string, Entry>> new_list;
-	std::unordered_map<std::string, Entry> new_map;
-	auto collect = [&](const std::vector<std::string> &names,
-			   const char *kind) {
-		for (size_t i = 0; i < names.size(); i++) {
-			Entry e{ kind, (int)i };
-			new_list.emplace_back(names[i], e);
-			new_map[names[i]] = e;
-		}
+	std::unordered_map<std::string, size_t> idx;
+	auto add = [&](const std::string &name, const char *kind, int pos) {
+		idx[name] = new_list.size();
+		new_list.push_back({ name, Entry{ kind, pos, false } });
 	};
-	collect(u.active_usernames, "active");
-	collect(u.disabled_usernames, "disabled");
-	collect(u.collectible_usernames, "collectible");
+	for (size_t i = 0; i < u.active_usernames.size(); i++)
+		add(u.active_usernames[i], "active", (int)i);
+	for (size_t i = 0; i < u.disabled_usernames.size(); i++)
+		add(u.disabled_usernames[i], "disabled", (int)i);
+	for (size_t i = 0; i < u.collectible_usernames.size(); i++) {
+		const std::string &name = u.collectible_usernames[i];
+		auto it = idx.find(name);
+		if (it != idx.end())
+			new_list[it->second].second.collectible = true;
+		else {
+			add(name, "disabled", (int)i);
+			new_list.back().second.collectible = true;
+		}
+	}
 
 	static const char *ev =
 		"INSERT INTO user_hist_usernames_events"
-		" (user_id, username, action, kind, position)"
-		" VALUES (?, ?, ?, ?, ?)";
+		" (user_id, username, action, kind, position, is_collectible)"
+		" VALUES (?, ?, ?, ?, ?, ?)";
 
-	/* Additions, kind changes and reorders. */
+	/* Additions, status changes, collectible changes and reorders. */
 	for (auto &n : new_list) {
 		const std::string &uname = n.first;
 		const Entry &ne = n.second;
+		int64_t coll = ne.collectible ? 1 : 0;
 		auto it = old_map.find(uname);
 		if (it == old_map.end()) {
 			tx.execute(ev, { (int64_t)u.id, uname,
 					 std::string("added"), ne.kind,
-					 (int64_t)ne.position });
+					 (int64_t)ne.position, coll });
 		} else if (it->second.kind != ne.kind) {
 			tx.execute(ev, { (int64_t)u.id, uname,
 					 std::string("kind_changed"), ne.kind,
-					 (int64_t)ne.position });
+					 (int64_t)ne.position, coll });
+		} else if (it->second.collectible != ne.collectible) {
+			tx.execute(ev, { (int64_t)u.id, uname,
+					 std::string("collectible_changed"), ne.kind,
+					 (int64_t)ne.position, coll });
 		} else if (it->second.position != ne.position) {
 			tx.execute(ev, { (int64_t)u.id, uname,
 					 std::string("reordered"), ne.kind,
-					 (int64_t)ne.position });
+					 (int64_t)ne.position, coll });
 		}
 	}
 
 	/* Removals: usernames the user no longer owns are released. */
 	for (auto &o : old_map) {
-		if (new_map.find(o.first) != new_map.end())
+		if (idx.find(o.first) != idx.end())
 			continue;
 		tx.execute(ev, { (int64_t)u.id, o.first,
 				 std::string("removed"), std::monostate{},
-				 std::monostate{} });
+				 std::monostate{}, std::monostate{} });
 		tx.execute("UPDATE user_usernames SET user_id = NULL"
 			   " WHERE user_id = ? AND username = ?",
 			   { (int64_t)u.id, o.first });
@@ -254,16 +277,18 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 	/*
 	 * Upsert the current usernames. The UNIQUE key on username lets a
 	 * single statement claim a new username, transfer ownership of an
-	 * existing one, and update its kind and position.
+	 * existing one, and update its kind, position and collectible flag.
 	 */
 	static const char *ins =
-		"INSERT INTO user_usernames (user_id, username, kind, position)"
-		" VALUES (?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
+		"INSERT INTO user_usernames"
+		" (user_id, username, kind, position, is_collectible)"
+		" VALUES (?, ?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
 		" user_id = new.user_id, kind = new.kind,"
-		" position = new.position";
+		" position = new.position, is_collectible = new.is_collectible";
 	for (auto &n : new_list) {
 		tx.execute(ins, { (int64_t)u.id, n.first, n.second.kind,
-				  (int64_t)n.second.position });
+				  (int64_t)n.second.position,
+				  (int64_t)(n.second.collectible ? 1 : 0) });
 	}
 }
 

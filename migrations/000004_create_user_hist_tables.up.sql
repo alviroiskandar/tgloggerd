@@ -103,11 +103,14 @@ CREATE TABLE user_hist_usernames_events (
 	-- The username that was modified.
 	username   VARCHAR(32)     NOT NULL COMMENT 'The username that was modified.',
 	-- What triggered this history log.
-	action     ENUM('added', 'removed', 'reordered', 'kind_changed') NOT NULL
+	action     ENUM('added', 'removed', 'reordered', 'kind_changed',
+	                'collectible_changed') NOT NULL
 	                           COMMENT 'What triggered this history log.',
-	-- State after the change; NULL when the action is 'removed'.
-	kind       ENUM('active', 'disabled', 'collectible') NULL
-	                           COMMENT 'Kind after the change; NULL if removed.',
+	-- Activation status after the change; NULL when the action is 'removed'.
+	kind       ENUM('active', 'disabled') NULL
+	                           COMMENT 'Activation status after the change; NULL if removed.',
+	-- Collectible flag after the change; NULL when the action is 'removed'.
+	is_collectible TINYINT(1)  NULL COMMENT 'Collectible state after the change; NULL if removed.',
 	position   INT             NULL COMMENT 'New position (0-based); NULL if removed.',
 	-- When this change was recorded.
 	created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',
