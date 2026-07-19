@@ -78,7 +78,8 @@ CREATE TABLE user_hist_bio (
 	id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 	-- The user whose bio changed.
 	user_id    BIGINT          NOT NULL COMMENT 'FK to users.id.',
-	-- Snapshot of the bio before the change.
+	-- Snapshot of the bio as observed: the initial bio and every later
+	-- change, appended when non-empty and different from the previous one.
 	bio        VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'User bio snapshot.',
 	-- When this snapshot was recorded.
 	created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',

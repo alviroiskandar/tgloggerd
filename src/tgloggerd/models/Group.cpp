@@ -50,13 +50,13 @@ void DB::upsertGroup(const models::Group &g)
 		});
 
 		if (old.empty()) {
-			/* First time seeing this group; record initial values. */
+			/* First time seeing this group; record the initial
+			 * title. The description is handled below: it is empty
+			 * here (it only arrives later with full info), so it
+			 * must not be snapshotted as a blank initial value. */
 			tx.insert("INSERT INTO group_hist_title"
 				  " (group_id, title) VALUES (?, ?)",
 				  { (int64_t)g.id, g.title });
-			tx.insert("INSERT INTO group_hist_description"
-				  " (group_id, description) VALUES (?, ?)",
-				  { (int64_t)g.id, g.description });
 		} else {
 			std::string ot = old[0][0].value_or("");
 			if (ot != g.title) {
@@ -64,15 +64,16 @@ void DB::upsertGroup(const models::Group &g)
 					  " (group_id, title) VALUES (?, ?)",
 					  { (int64_t)g.id, ot });
 			}
-
-			std::string od = old[0][1].value_or("");
-			if (od != g.description) {
-				tx.insert("INSERT INTO group_hist_description"
-					  " (group_id, description)"
-					  " VALUES (?, ?)",
-					  { (int64_t)g.id, od });
-			}
 		}
+
+		/*
+		 * Snapshot the description as observed (skipping empty and
+		 * unchanged values), so the first real description -- which
+		 * arrives with full info after the row already exists -- is
+		 * captured instead of a run of blank rows.
+		 */
+		recordTextHistory(tx, "group_hist_description", "group_id",
+				  "description", g.id, g.description);
 
 		syncGroupUsernames(tx, g);
 	});

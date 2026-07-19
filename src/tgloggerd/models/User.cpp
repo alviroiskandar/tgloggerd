@@ -332,13 +332,14 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 		if (old.empty())
 			return;
 
-		/* Record the previous bio when it changes. */
-		std::string old_bio = old[0][0].value_or("");
-		if (old_bio != fi.bio) {
-			tx.insert("INSERT INTO user_hist_bio (user_id, bio)"
-				  " VALUES (?, ?)",
-				  { (int64_t)fi.user_id, old_bio });
-		}
+		/*
+		 * Snapshot the bio as observed. This is the first point at which
+		 * the bio is known (the users row was created without it, from
+		 * the plain user object), so recording it here captures the
+		 * initial bio and every later change, and never an empty row.
+		 */
+		recordTextHistory(tx, "user_hist_bio", "user_id", "bio",
+				  fi.user_id, fi.bio);
 
 		mysql::Param bday = std::monostate{};
 		if (fi.birthday_day.has_value())

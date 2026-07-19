@@ -136,6 +136,19 @@ private:
 				   int64_t group_id, uint64_t file_id);
 
 	/*
+	 * Append a snapshot of a free-text field (a user bio, a group
+	 * description) to its history table when it is worth recording: the
+	 * value is non-empty and differs from the most recent snapshot. Unlike
+	 * the name/phone history, this records the value as observed -- so the
+	 * first real value (which arrives with full info, after the row is
+	 * created empty) is captured, and empty placeholders never are. The
+	 * table and columns are compile-time literals, never user input.
+	 */
+	void recordTextHistory(mysql::Transaction &tx, const char *table,
+			       const char *fk_column, const char *value_column,
+			       int64_t entity_id, const std::string &value);
+
+	/*
 	 * Shared message-upsert helpers, parameterized by table and
 	 * foreign-key column so the identical private/group logic is not
 	 * duplicated. The table and column arguments are compile-time

@@ -74,6 +74,9 @@ CREATE TABLE group_hist_title (
 CREATE TABLE group_hist_description (
 	id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 	group_id    BIGINT          NOT NULL COMMENT 'FK to groups.id.',
+	-- Snapshot of the description as observed: the initial description and
+	-- every later change, appended when non-empty and different from the
+	-- previous one.
 	description VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'Group description snapshot.',
 	created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Row creation time.',
 
