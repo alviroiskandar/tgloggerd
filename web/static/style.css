@@ -176,7 +176,9 @@ td.col-photo, th.col-photo { width: 28px; padding-right: 0; }
 .pager { margin-top: 1rem; }
 
 /* Messages */
-.subnav { display: flex; gap: 1rem; margin: 0.5rem 0 1rem; }
+.subnav { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.5rem 0 1rem; }
+.subnav a.active { font-weight: 600; color: var(--fg); text-decoration: underline; }
+.file-icon { font-size: 1.2rem; }
 tr.deleted td { opacity: 0.55; text-decoration: line-through; }
 tr.deleted td a { text-decoration: line-through; }
 .reply-box {
