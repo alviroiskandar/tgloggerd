@@ -6,7 +6,7 @@
     <a class="chat-back" href="/users/{{ chat.id }}" title="Back to details">←</a>
 ## endif
 ## if existsIn(chat, "photo_file_id")
-    <img class="avatar-sm" src="/media/{{ chat.photo_file_id }}" alt="">
+    <img class="avatar-sm" src="{{ media(chat.photo_file_id) }}" alt="">
 ## else
     <span class="avatar-sm placeholder"></span>
 ## endif
@@ -30,11 +30,11 @@
 ## if not m.is_outgoing
 ## if existsIn(m.sender, "photo_file_id")
 ## if m.sender.kind == "user"
-      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt=""></a>
 ## else if m.sender.kind == "group"
-      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt=""></a>
 ## else
-      <img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt="">
+      <img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt="">
 ## endif
 ## else
       <span class="avatar-sm placeholder msg-avatar"></span>
@@ -83,15 +83,15 @@
           <span class="album-item wide deleted" id="msg-{{ it.msg_id }}"><span class="muted">(deleted)</span></span>
 ## else if existsIn(it, "media")
 ## if it.media.render == "image"
-          <a class="album-item" id="msg-{{ it.msg_id }}" href="/media/{{ it.media.file_id }}" target="_blank" rel="noopener"><img src="/media/{{ it.media.file_id }}" alt="{{ it.content_type }}" loading="lazy"></a>
+          <a class="album-item" id="msg-{{ it.msg_id }}" href="{{ media(it.media.file_id) }}" target="_blank" rel="noopener"><img src="{{ media(it.media.file_id) }}" alt="{{ it.content_type }}" loading="lazy"></a>
 ## else if it.media.render == "video"
-          <video class="album-item" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" controls preload="metadata"></video>
+          <video class="album-item" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" controls preload="metadata"></video>
 ## else if it.media.render == "animation"
-          <video class="album-item" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" autoplay loop muted playsinline preload="metadata"></video>
+          <video class="album-item" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video>
 ## else if it.media.render == "audio"
-          <audio class="album-item wide" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" controls preload="none"></audio>
+          <audio class="album-item wide" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" controls preload="none"></audio>
 ## else
-          <a class="album-item wide msg-file" id="msg-{{ it.msg_id }}" href="/media/{{ it.media.file_id }}">📎 {% if it.media.name != "" %}{{ it.media.name }}{% else %}{{ it.content_type }} file{% endif %}</a>
+          <a class="album-item wide msg-file" id="msg-{{ it.msg_id }}" href="{{ media(it.media.file_id) }}">📎 {% if it.media.name != "" %}{{ it.media.name }}{% else %}{{ it.content_type }} file{% endif %}</a>
 ## endif
 ## endif
 ## endfor
@@ -134,11 +134,11 @@
 ## if not m.is_outgoing
 ## if existsIn(m.sender, "photo_file_id")
 ## if m.sender.kind == "user"
-      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt=""></a>
 ## else if m.sender.kind == "group"
-      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt=""></a>
 ## else
-      <img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt="">
+      <img class="avatar-sm msg-avatar" src="{{ media(m.sender.photo_file_id) }}" alt="">
 ## endif
 ## else
       <span class="avatar-sm placeholder msg-avatar"></span>
@@ -186,17 +186,17 @@
 
 ## if existsIn(m, "media")
 ## if m.media.render == "image"
-        <a class="msg-media-link" href="/media/{{ m.media.file_id }}" target="_blank" rel="noopener"><img class="msg-media" src="/media/{{ m.media.file_id }}" alt="{{ m.content_type }}" loading="lazy"></a>
+        <a class="msg-media-link" href="{{ media(m.media.file_id) }}" target="_blank" rel="noopener"><img class="msg-media" src="{{ media(m.media.file_id) }}" alt="{{ m.content_type }}" loading="lazy"></a>
 ## else if m.media.render == "video"
-        <video class="msg-media" src="/media/{{ m.media.file_id }}" controls preload="metadata"></video>
+        <video class="msg-media" src="{{ media(m.media.file_id) }}" controls preload="metadata"></video>
 ## else if m.media.render == "animation"
-        <video class="msg-media" src="/media/{{ m.media.file_id }}" autoplay loop muted playsinline preload="metadata"></video>
+        <video class="msg-media" src="{{ media(m.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video>
 ## else if m.media.render == "lottie"
-        <div class="msg-media tgs-sticker" data-tgs="/media/{{ m.media.file_id }}"><a class="msg-file" href="/media/{{ m.media.file_id }}">🎞️ {% if m.media.name != "" %}{{ m.media.name }}{% else %}animated sticker{% endif %}</a></div>
+        <div class="msg-media tgs-sticker" data-tgs="{{ media(m.media.file_id) }}"><a class="msg-file" href="{{ media(m.media.file_id) }}">🎞️ {% if m.media.name != "" %}{{ m.media.name }}{% else %}animated sticker{% endif %}</a></div>
 ## else if m.media.render == "audio"
-        <audio class="msg-audio" src="/media/{{ m.media.file_id }}" controls preload="none"></audio>
+        <audio class="msg-audio" src="{{ media(m.media.file_id) }}" controls preload="none"></audio>
 ## else
-        <a class="msg-file" href="/media/{{ m.media.file_id }}">📎 {% if m.media.name != "" %}{{ m.media.name }}{% else %}{{ m.content_type }} file{% endif %}{% if existsIn(m.media, "size") %} <span class="muted">({{ m.media.size }} bytes)</span>{% endif %}</a>
+        <a class="msg-file" href="{{ media(m.media.file_id) }}">📎 {% if m.media.name != "" %}{{ m.media.name }}{% else %}{{ m.content_type }} file{% endif %}{% if existsIn(m.media, "size") %} <span class="muted">({{ m.media.size }} bytes)</span>{% endif %}</a>
 ## endif
 ## endif
 
@@ -223,7 +223,7 @@
 ## if e.text != ""
                 <div class="edit-text">{{ e.text }}</div>
 ## else
-                <div class="muted">({{ e.content_type }}{% if existsIn(e, "file_id") %}, <a href="/media/{{ e.file_id }}">file #{{ e.file_id }}</a>{% endif %})</div>
+                <div class="muted">({{ e.content_type }}{% if existsIn(e, "file_id") %}, <a href="{{ media(e.file_id) }}">file #{{ e.file_id }}</a>{% endif %})</div>
 ## endif
               </li>
 ## endfor

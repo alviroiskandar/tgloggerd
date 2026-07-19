@@ -6,6 +6,7 @@
 #include "controllers/MediaController.hpp"
 
 #include "Config.hpp"
+#include "auth/FileToken.hpp"
 #include "auth/Session.hpp"
 #include "controllers/Common.hpp"
 #include "dao/Browse.hpp"
@@ -76,11 +77,18 @@ bool viewInline(const std::string &fileType)
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
-MediaController::serve(drogon::HttpRequestPtr req, std::string id)
+MediaController::serve(drogon::HttpRequestPtr req, std::string token)
 {
-	auto ro = drogon::app().getDbClient("ro");
-	int64_t fid = strtoll(id.c_str(), nullptr, 10);
+	/* The token is the encrypted file id; an invalid or forged one (which a
+	 * public visitor probing the URL space would produce) fails to decrypt
+	 * and is indistinguishable from a missing file. */
+	auto decoded = auth::filetoken::decrypt(token);
+	if (!decoded)
+		co_return renderStatus(req, drogon::k404NotFound, "File not found",
+				       "No file exists with that id.");
+	int64_t fid = (int64_t)*decoded;
 
+	auto ro = drogon::app().getDbClient("ro");
 	auto meta = co_await dao::browse::getFile(ro, fid);
 	if (!meta || !isHex64(meta->hex))
 		co_return renderStatus(req, drogon::k404NotFound, "File not found",
@@ -101,13 +109,15 @@ MediaController::serve(drogon::HttpRequestPtr req, std::string id)
 		co_return renderStatus(req, drogon::k404NotFound, "File not found",
 				       "The file is recorded but not in storage.");
 
-	/* Audit the access before serving. */
-	auto app = drogon::app().getDbClient("app");
+	/* Audit only authenticated access. The route is public, so anonymous
+	 * hits (hotlinked images, crawlers) must not flood the audit log. */
 	auto sess = auth::session::current(req);
-	std::optional<uint64_t> uid =
-		sess ? std::optional<uint64_t>(sess->uid) : std::nullopt;
-	co_await dao::audit::log(app, uid, "media",
-				 req->getPeerAddr().toIp(), "file " + id);
+	if (sess) {
+		auto app = drogon::app().getDbClient("app");
+		co_await dao::audit::log(app, sess->uid, "media",
+					 req->getPeerAddr().toIp(),
+					 "file " + std::to_string(fid));
+	}
 
 	std::string attachment;
 	if (!viewInline(meta->fileType)) {
@@ -118,8 +128,13 @@ MediaController::serve(drogon::HttpRequestPtr req, std::string id)
 
 	/* Passing req lets Drogon honour Range and conditional requests; the
 	 * on-disk extension drives the Content-Type. */
-	co_return drogon::HttpResponse::newFileResponse(
+	auto resp = drogon::HttpResponse::newFileResponse(
 		path.string(), attachment, drogon::CT_NONE, "", req);
+
+	/* A token maps to one immutable, content-addressed file, so it can be
+	 * cached indefinitely. */
+	resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+	co_return resp;
 }
 
 } /* namespace tgweb::controllers */

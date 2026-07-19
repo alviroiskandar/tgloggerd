@@ -23,7 +23,7 @@
 ## if m.snippet != ""
           {{ m.snippet }}{% if m.text_truncated %}<span class="muted">…</span>{% endif %}
 ## else if existsIn(m, "file_id")
-          <a href="/media/{{ m.file_id }}">[{{ m.content_type }}]</a>
+          <a href="{{ media(m.file_id) }}">[{{ m.content_type }}]</a>
 ## else
           <span class="muted">—</span>
 ## endif

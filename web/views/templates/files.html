@@ -20,12 +20,12 @@
       <tr>
         <td class="col-photo">
 ## if f.type == "photo"
-          <a href="/media/{{ f.id }}"><img class="avatar-sm" src="/media/{{ f.id }}" alt="" loading="lazy"></a>
+          <a href="{{ media(f.id) }}"><img class="avatar-sm" src="{{ media(f.id) }}" alt="" loading="lazy"></a>
 ## else
           <span class="file-icon">{% if f.type == "video" %}🎬{% else if f.type == "animation" %}🎞️{% else if f.type == "sticker" %}🌟{% else if f.type == "document" %}📄{% else if f.type == "audio" %}🎵{% else if f.type == "voice" %}🎤{% else %}📎{% endif %}</span>
 ## endif
         </td>
-        <td><a href="/media/{{ f.id }}">{{ f.id }}</a></td>
+        <td><a href="{{ media(f.id) }}">{{ f.id }}</a></td>
         <td>{{ f.type }}</td>
         <td>{% if f.name != "" %}{{ f.name }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{% if f.ext != "" %}{{ f.ext }}{% else %}<span class="muted">—</span>{% endif %}</td>

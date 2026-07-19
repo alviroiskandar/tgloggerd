@@ -17,6 +17,7 @@
 #include "Config.hpp"
 #include "auth/Password.hpp"
 #include "auth/Token.hpp"
+#include "auth/FileToken.hpp"
 #include "dao/Accounts.hpp"
 #include "views/Render.hpp"
 
@@ -156,6 +157,14 @@ int main(int argc, char **argv)
 	if (!tgweb::auth::token::init()) {
 		std::cerr << "error: WEB_APP_KEY is unset or not valid base64 of "
 			     "at least 16 bytes\n";
+		return 1;
+	}
+
+	/* Same key, distinct subkeys: the reversible tokens for the public
+	 * /files/<token> URLs. token::init() already validated WEB_APP_KEY. */
+	if (!tgweb::auth::filetoken::init()) {
+		std::cerr << "error: failed to derive file-token key from "
+			     "WEB_APP_KEY\n";
 		return 1;
 	}
 

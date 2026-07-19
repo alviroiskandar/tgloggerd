@@ -40,7 +40,7 @@
     <tr><th>Deleted</th><td>{% if existsIn(message, "deleted_at") %}{{ message.deleted_at }}{% else %}<span class="muted">(time unknown)</span>{% endif %}</td></tr>
 ## endif
 ## if existsIn(message, "file_id")
-    <tr><th>File</th><td><a href="/media/{{ message.file_id }}">file #{{ message.file_id }}</a></td></tr>
+    <tr><th>File</th><td><a href="{{ media(message.file_id) }}">file #{{ message.file_id }}</a></td></tr>
 ## endif
 ## if existsIn(message, "author_signature") and message.author_signature != ""
     <tr><th>Signature</th><td>{{ message.author_signature }}</td></tr>
@@ -84,7 +84,7 @@
       <tr>
         <td>{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{{ e.content_type }}</td>
-        <td>{% if e.snippet != "" %}{{ e.snippet }}{% else if existsIn(e, "file_id") %}<a href="/media/{{ e.file_id }}">[{{ e.content_type }}]</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{% if e.snippet != "" %}{{ e.snippet }}{% else if existsIn(e, "file_id") %}<a href="{{ media(e.file_id) }}">[{{ e.content_type }}]</a>{% else %}<span class="muted">—</span>{% endif %}</td>
       </tr>
 ## endfor
     </tbody>

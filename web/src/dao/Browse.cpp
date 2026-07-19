@@ -475,7 +475,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	}
 	j["phone_hist"] = std::move(phoneHist);
 
-	/* Profile photo history (file ids resolve to /media/<id>). */
+	/* Profile photo history (file ids resolve to /files/<token>). */
 	auto phot = co_await db->execSqlCoro(
 		"SELECT file_id, created_at FROM user_hist_profile_photo "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",

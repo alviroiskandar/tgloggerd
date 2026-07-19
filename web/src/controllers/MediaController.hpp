@@ -13,19 +13,20 @@
 namespace tgweb::controllers {
 
 /*
- * Serve a stored file by id. Requires a session. The file is located by
- * resolving files.id -> SHA-256 -> the daemon's 5-level hex fan-out path;
- * the path is derived entirely from the database, never from the request.
+ * Serve a stored file at /files/<token>. The token is the encrypted file id
+ * (see auth::filetoken), so this route is public -- no session is required and
+ * the file id is never exposed in the clear or enumerable. The on-disk path is
+ * resolved from files.id -> SHA-256 -> the daemon's 5-level hex fan-out, all
+ * derived from the database, never from the request.
  */
 class MediaController : public drogon::HttpController<MediaController> {
 public:
 	METHOD_LIST_BEGIN
-	ADD_METHOD_TO(MediaController::serve, "/media/{1}", drogon::Get,
-		      "tgweb::auth::AuthFilter");
+	ADD_METHOD_TO(MediaController::serve, "/files/{1}", drogon::Get);
 	METHOD_LIST_END
 
 	drogon::Task<drogon::HttpResponsePtr> serve(drogon::HttpRequestPtr req,
-						    std::string id);
+						    std::string token);
 };
 
 } /* namespace tgweb::controllers */

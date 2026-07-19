@@ -5,6 +5,8 @@
  */
 #include "views/Render.hpp"
 
+#include "auth/FileToken.hpp"
+
 #include <inja/inja.hpp>
 
 #include <unordered_map>
@@ -26,6 +28,24 @@ std::string renderThreadLocal(const std::string &name,
 {
 	thread_local inja::Environment env(g_templateDir + "/");
 	thread_local std::unordered_map<std::string, inja::Template> cache;
+	thread_local bool configured = false;
+
+	if (!configured) {
+		/* {{ media(id) }} -> the public, opaque URL for a stored file.
+		 * The id is encrypted so the templates never expose a raw,
+		 * enumerable file id. Returns only [/files] + hex, so it needs
+		 * no escaping. */
+		env.add_callback("media", 1, [](inja::Arguments &args)
+				 -> nlohmann::json {
+			const nlohmann::json *a = args.at(0);
+			if (!a->is_number())
+				return std::string();
+			uint64_t id = a->get<uint64_t>();
+			return std::string("/files/") +
+			       auth::filetoken::encrypt(id);
+		});
+		configured = true;
+	}
 
 	auto it = cache.find(name);
 	if (it == cache.end())

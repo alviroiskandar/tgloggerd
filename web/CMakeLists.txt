@@ -80,6 +80,7 @@ add_executable(tgloggerd_web
 	src/main.cpp
 	src/auth/Password.cpp
 	src/auth/Token.cpp
+	src/auth/FileToken.cpp
 	src/auth/Session.cpp
 	src/auth/Csrf.cpp
 	src/auth/AuthFilter.cpp

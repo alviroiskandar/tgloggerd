@@ -2,7 +2,7 @@
   <p class="crumb"><a href="/users">← Users</a></p>
   <div class="detail-head">
 ## if existsIn(user, "profile_photo_file_id")
-    <img class="avatar" src="/media/{{ user.profile_photo_file_id }}" alt="Profile photo">
+    <img class="avatar" src="{{ media(user.profile_photo_file_id) }}" alt="Profile photo">
 ## endif
     <h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
   </div>
@@ -78,7 +78,7 @@
     <tr><th>Restriction</th><td>{{ user.restriction_reason }}</td></tr>
 ## endif
 ## if existsIn(user, "profile_photo_file_id")
-    <tr><th>Profile photo</th><td><a href="/media/{{ user.profile_photo_file_id }}">file #{{ user.profile_photo_file_id }}</a></td></tr>
+    <tr><th>Profile photo</th><td><a href="{{ media(user.profile_photo_file_id) }}">file #{{ user.profile_photo_file_id }}</a></td></tr>
 ## endif
     <tr><th>First seen</th><td>{{ user.created_at }}</td></tr>
     <tr><th>Last updated</th><td>{{ user.updated_at }}</td></tr>
@@ -159,7 +159,7 @@
     <thead><tr><th>When</th><th>Photo</th></tr></thead>
     <tbody>
 ## for h in photo_hist
-      <tr><td>{{ h.created_at }}</td><td>{% if existsIn(h, "file_id") %}<a href="/media/{{ h.file_id }}">file #{{ h.file_id }}</a>{% else %}<span class="muted">removed</span>{% endif %}</td></tr>
+      <tr><td>{{ h.created_at }}</td><td>{% if existsIn(h, "file_id") %}<a href="{{ media(h.file_id) }}">file #{{ h.file_id }}</a>{% else %}<span class="muted">removed</span>{% endif %}</td></tr>
 ## endfor
     </tbody>
   </table>
