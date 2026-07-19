@@ -1408,10 +1408,29 @@ chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId)
 
 drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 					 std::string scope, int64_t chatId,
-					 int limit, std::optional<int64_t> after)
+					 int limit, std::optional<int64_t> after,
+					 std::optional<int64_t> afterTs)
 {
 	bool group = scope == "group";
 	const char *mtable = group ? "group_messages" : "private_messages";
+
+	/*
+	 * A time cursor takes precedence over a message cursor: resolve it to
+	 * the id just before the first message at or after that unix time, so
+	 * the page starts there and the rest of the paging (older/newer, reply
+	 * jumps) is unchanged. If nothing is that recent, fall through with no
+	 * cursor -- i.e. the newest page -- rather than an empty result.
+	 */
+	if (afterTs.has_value()) {
+		auto b = co_await db->execSqlCoro(
+			std::string("SELECT message_id FROM ") + mtable +
+			" WHERE chat_id = ? AND date >= ? "
+			"ORDER BY message_id ASC LIMIT 1",
+			chatId, *afterTs);
+		after = b.empty() ? std::optional<int64_t>()
+				  : std::optional<int64_t>(
+					    b[0]["message_id"].as<int64_t>() - 1);
+	}
 
 	/* One rich row per message (columns + joins, no WHERE yet). The private
 	 * query aliases its columns to the group shape (constant NULL/0 for the

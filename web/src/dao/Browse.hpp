@@ -149,7 +149,8 @@ chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId);
  */
 drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 					 std::string scope, int64_t chatId,
-					 int limit, std::optional<int64_t> after);
+					 int limit, std::optional<int64_t> after,
+					 std::optional<int64_t> afterTs);
 
 } /* namespace tgweb::dao::browse */
 

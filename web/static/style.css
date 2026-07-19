@@ -208,10 +208,23 @@ html { scroll-behavior: smooth; }
 	height: calc(100dvh - 5rem);
 	min-height: 18rem;
 }
+/* Date/time jump bar, above the chat title. */
+.chat-jump {
+	flex: 0 0 auto;
+	display: flex; align-items: center; gap: 0.4rem;
+	margin: -1.5rem -1rem 0; padding: 0.4rem 1rem;
+	background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.chat-date-input {
+	flex: 1 1 auto; max-width: 240px;
+	font: inherit; padding: 0.3rem 0.5rem;
+	border: 1px solid var(--border); border-radius: 6px;
+	background: var(--card); color: var(--fg);
+}
 .chat-head {
 	flex: 0 0 auto;
 	display: flex; align-items: center; gap: 0.7rem;
-	margin: -1.5rem -1rem 0; padding: 0.6rem 1rem;
+	margin: 0 -1rem 0; padding: 0.6rem 1rem;
 	background: var(--card); border-bottom: 1px solid var(--border);
 }
 .chat-back { font-size: 1.3rem; line-height: 1; color: var(--fg); padding: 0 0.2rem; }
@@ -228,7 +241,7 @@ html { scroll-behavior: smooth; }
 /* Server-rendered pager at the top (older) and bottom (newer) of the log.
  * Extension point for infinite scroll: swap the link for an on-scroll fetch
  * of the same ?after= cursor. */
-.chat-pager { display: flex; justify-content: center; padding: 0.35rem 0; }
+.chat-pager { display: flex; justify-content: center; gap: 0.5rem; padding: 0.35rem 0; }
 .pager-btn {
 	display: inline-block; padding: 0.4rem 0.9rem;
 	border: 1px solid var(--border); border-radius: 999px;

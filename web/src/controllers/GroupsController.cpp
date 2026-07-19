@@ -108,14 +108,18 @@ GroupsController::chat(drogon::HttpRequestPtr req, std::string id)
 	std::string afterParam = req->getParameter("after");
 	if (!afterParam.empty())
 		after = strtoll(afterParam.c_str(), nullptr, 10);
+	std::optional<int64_t> afterTs;
+	std::string afterTsParam = req->getParameter("after_ts");
+	if (!afterTsParam.empty())
+		afterTs = strtoll(afterTsParam.c_str(), nullptr, 10);
 
 	nlohmann::json data = pageBase(req);
 	data["scope"] = "group";
 	data["chat"]  = *header;
 	data["title"] = (*header)["title"];
 
-	nlohmann::json hist =
-		co_await dao::browse::chatHistory(db, "group", gid, limit, after);
+	nlohmann::json hist = co_await dao::browse::chatHistory(
+		db, "group", gid, limit, after, afterTs);
 	data["messages"]    = hist["messages"];
 	data["limit"]       = hist["limit"];
 	data["has_older"]   = hist.contains("older_after");
