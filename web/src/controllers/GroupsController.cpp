@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 
 namespace tgweb::controllers {
 
@@ -102,14 +103,27 @@ GroupsController::chat(drogon::HttpRequestPtr req, std::string id)
 		co_return renderStatus(req, drogon::k404NotFound, "Group not found",
 				       "No group exists with that id.");
 
+	int limit = clampedIntParam(req, "limit", 30, 1, 100);
+	std::optional<int64_t> after;
+	std::string afterParam = req->getParameter("after");
+	if (!afterParam.empty())
+		after = strtoll(afterParam.c_str(), nullptr, 10);
+
 	nlohmann::json data = pageBase(req);
 	data["scope"] = "group";
 	data["chat"]  = *header;
 	data["title"] = (*header)["title"];
 
-	nlohmann::json hist = co_await dao::browse::chatHistory(db, "group", gid, 300);
-	data["messages"]      = hist["messages"];
-	data["oldest_msg_id"] = hist["oldest_msg_id"];
+	nlohmann::json hist =
+		co_await dao::browse::chatHistory(db, "group", gid, limit, after);
+	data["messages"]    = hist["messages"];
+	data["limit"]       = hist["limit"];
+	data["has_older"]   = hist.contains("older_after");
+	data["older_after"] = hist.contains("older_after") ? hist["older_after"]
+							   : nlohmann::json(0);
+	data["has_newer"]   = hist.contains("newer_after");
+	data["newer_after"] = hist.contains("newer_after") ? hist["newer_after"]
+							   : nlohmann::json(0);
 
 	co_return htmlPage(views::Render::page("chat.html", data));
 }

@@ -11,10 +11,23 @@
 	if (!log)
 		return;
 
-	// Jump to the newest message unless the URL targets a specific one
-	// (e.g. a reply anchor), which the browser scrolls to itself.
-	if (!window.location.hash)
-		window.scrollTo(0, document.body.scrollHeight);
+	// The message list is its own scroll container. Center a targeted
+	// message (#msg-<id> from a reply link, same page or freshly loaded);
+	// otherwise land on the newest message at the bottom.
+	function focusHash() {
+		var h = window.location.hash;
+		if (h.indexOf("#msg-") !== 0)
+			return false;
+		var el = document.getElementById(h.slice(1));
+		if (!el)
+			return false;
+		el.scrollIntoView({ block: "center" });
+		return true;
+	}
+	if (!focusHash())
+		log.scrollTop = log.scrollHeight;
+	// Re-center when an in-page reply link changes the hash (no reload).
+	window.addEventListener("hashchange", focusHash);
 
 	var canGunzip = typeof DecompressionStream !== "undefined";
 

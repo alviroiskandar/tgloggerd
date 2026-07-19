@@ -136,18 +136,20 @@ drogon::Task<std::optional<nlohmann::json>>
 chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId);
 
 /*
- * The most recent `limit` messages of one chat, ordered oldest-first (so the
- * template renders newest at the bottom), each fully resolved for a chat view:
- * sender (name/username/photo), content (text + media), reply preview, forward
- * origin, deletion and edit state, and the edit history for edited messages.
- * scope selects the private_* or group_* tables. Result:
- * {messages:[...], oldest_msg_id} where oldest_msg_id is the keyset cursor for
- * loading older messages later (0 when the page is empty). All
- * attacker-controlled strings are already escaped.
+ * One page of a chat's history for the scrollable chat view. `after` is a
+ * message-id cursor: with it, the page is the oldest `limit` messages newer
+ * than `after`; without it, the newest `limit` messages (the landing page).
+ * Messages come oldest-first (newest at the bottom). Each same-chat reply
+ * gets a `href` that jumps to its target -- an in-page #anchor when the target
+ * is on this page, else a "?limit&after#msg" URL that loads the page holding
+ * it (centered). The result also carries the pagination cursors
+ * (older_after/newer_after, absent when there is nothing that way) and the
+ * effective `limit`, so the same data drives the server-rendered pager today
+ * and a scroll/fetch endpoint later.
  */
 drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 					 std::string scope, int64_t chatId,
-					 int limit);
+					 int limit, std::optional<int64_t> after);
 
 } /* namespace tgweb::dao::browse */
 

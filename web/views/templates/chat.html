@@ -17,6 +17,11 @@
   </header>
 
   <div class="chat-log" id="chat-log">
+## if has_older
+    <div class="chat-pager top">
+      <a class="pager-btn" href="?limit={{ limit }}&amp;after={{ older_after }}">↑ Load older messages</a>
+    </div>
+## endif
 ## if length(messages) == 0
     <p class="chat-empty muted">No messages recorded for this chat.</p>
 ## else
@@ -67,7 +72,7 @@
         </div>
 ## endif
 ## if existsIn(m, "reply")
-        <a class="reply-quote" href="#msg-{{ m.reply.msg_id }}">
+        <a class="reply-quote" href="{{ m.reply.href }}">
 ## if m.reply.in_chat
           <span class="reply-name">{% if m.reply.sender_name != "" %}{{ m.reply.sender_name }}{% else %}In reply to{% endif %}</span>
           <span class="reply-text">{% if m.reply.deleted %}<span class="muted">(deleted message)</span>{% else if m.reply.snippet != "" %}{{ m.reply.snippet }}{% else %}<span class="muted">{{ m.reply.content_type }}</span>{% endif %}</span>
@@ -173,7 +178,7 @@
 ## endif
 
 ## if existsIn(m, "reply")
-        <a class="reply-quote" href="#msg-{{ m.reply.msg_id }}">
+        <a class="reply-quote" href="{{ m.reply.href }}">
 ## if m.reply.in_chat
           <span class="reply-name">{% if m.reply.sender_name != "" %}{{ m.reply.sender_name }}{% else %}In reply to{% endif %}</span>
           <span class="reply-text">{% if m.reply.deleted %}<span class="muted">(deleted message)</span>{% else if m.reply.snippet != "" %}{{ m.reply.snippet }}{% else %}<span class="muted">{{ m.reply.content_type }}</span>{% endif %}</span>
@@ -239,6 +244,11 @@
     </div>
 ## endif
 ## endfor
+## endif
+## if has_newer
+    <div class="chat-pager bottom">
+      <a class="pager-btn" href="?limit={{ limit }}&amp;after={{ newer_after }}">↓ Load newer messages</a>
+    </div>
 ## endif
   </div>
 </section>

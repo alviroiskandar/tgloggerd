@@ -200,18 +200,41 @@ code {
 /* Chat history --------------------------------------------------------------*/
 html { scroll-behavior: smooth; }
 
+/* The chat fills the space under the top bar; only the message log scrolls,
+ * not the whole window. (The calc offset approximates the top bar + the
+ * content's vertical padding; a few px either way just leaves a small gap.) */
+.chat {
+	display: flex; flex-direction: column;
+	height: calc(100dvh - 5rem);
+	min-height: 18rem;
+}
 .chat-head {
-	position: sticky; top: 0; z-index: 5;
+	flex: 0 0 auto;
 	display: flex; align-items: center; gap: 0.7rem;
-	margin: -1.5rem -1rem 1rem; padding: 0.6rem 1rem;
+	margin: -1.5rem -1rem 0; padding: 0.6rem 1rem;
 	background: var(--card); border-bottom: 1px solid var(--border);
 }
 .chat-back { font-size: 1.3rem; line-height: 1; color: var(--fg); padding: 0 0.2rem; }
 .chat-head .chat-title { font-weight: 700; }
 .chat-head .chat-sub { font-size: 0.8rem; }
 
-.chat-log { display: flex; flex-direction: column; gap: 0.35rem; }
+.chat-log {
+	flex: 1 1 auto; min-height: 0; overflow-y: auto;
+	display: flex; flex-direction: column; gap: 0.35rem;
+	padding: 0.75rem 0.25rem 0.5rem;
+}
 .chat-empty { text-align: center; padding: 2rem 0; }
+
+/* Server-rendered pager at the top (older) and bottom (newer) of the log.
+ * Extension point for infinite scroll: swap the link for an on-scroll fetch
+ * of the same ?after= cursor. */
+.chat-pager { display: flex; justify-content: center; padding: 0.35rem 0; }
+.pager-btn {
+	display: inline-block; padding: 0.4rem 0.9rem;
+	border: 1px solid var(--border); border-radius: 999px;
+	background: var(--card); color: var(--accent); font-size: 0.85rem;
+}
+.pager-btn:hover { text-decoration: none; border-color: var(--accent); }
 
 /* One message row: avatar + bubble, aligned left (incoming) or right (out). */
 .msg { display: flex; align-items: flex-end; gap: 0.5rem; max-width: 100%; }

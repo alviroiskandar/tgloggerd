@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace tgweb::dao::browse {
@@ -1374,14 +1376,15 @@ chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId)
 
 drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 					 std::string scope, int64_t chatId,
-					 int limit)
+					 int limit, std::optional<int64_t> after)
 {
 	bool group = scope == "group";
+	const char *mtable = group ? "group_messages" : "private_messages";
 
-	/* One rich row per message. The private query aliases its columns to the
-	 * group shape (constant NULL/0 for the group-only columns) so a single
-	 * builder handles both. Newest-first here; reversed to oldest-first below. */
-	std::string q = group ?
+	/* One rich row per message (columns + joins, no WHERE yet). The private
+	 * query aliases its columns to the group shape (constant NULL/0 for the
+	 * group-only columns) so a single builder handles both. */
+	std::string base = group ?
 		"SELECT m.id, m.message_id, m.sender_user_id, m.sender_chat_id, "
 		/* group_messages has no is_outgoing; a constant keeps the shared
 		 * builder's row shape (a public group has no "own" perspective). */
@@ -1410,7 +1413,6 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"LEFT JOIN group_messages rm ON rm.id = m.reply_to_id "
 		"LEFT JOIN users rsu ON rsu.id = rm.sender_user_id "
 		"LEFT JOIN `groups` rsg ON rsg.id = rm.sender_chat_id "
-		"WHERE m.chat_id = ? ORDER BY m.message_id DESC LIMIT ?"
 		:
 		"SELECT m.id, m.message_id, m.sender_id AS sender_user_id, "
 		"NULL AS sender_chat_id, m.is_outgoing, 0 AS is_channel_post, "
@@ -1436,15 +1438,33 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"LEFT JOIN files f ON f.id = m.file_id "
 		"LEFT JOIN private_message_fwd_info fw ON fw.private_message_id = m.id "
 		"LEFT JOIN private_messages rm ON rm.id = m.reply_to_id "
-		"LEFT JOIN users rsu ON rsu.id = rm.sender_id "
-		"WHERE m.chat_id = ? ORDER BY m.message_id DESC LIMIT ?";
+		"LEFT JOIN users rsu ON rsu.id = rm.sender_id ";
 
-	auto rows = co_await db->execSqlCoro(q, chatId, limit);
+	/*
+	 * The page window. With a cursor, take the oldest `limit` messages newer
+	 * than it (already ascending). Without one, take the newest `limit`
+	 * (descending, reversed to ascending below) -- the landing page. The SQL
+	 * lives in a named local so it outlives the co_await suspension.
+	 */
+	std::optional<drogon::orm::Result> rowsHolder;
+	if (after.has_value()) {
+		std::string q = base +
+			"WHERE m.chat_id = ? AND m.message_id > ? "
+			"ORDER BY m.message_id ASC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, chatId, *after, limit);
+	} else {
+		std::string q = base +
+			"WHERE m.chat_id = ? ORDER BY m.message_id DESC LIMIT ?";
+		rowsHolder = co_await db->execSqlCoro(q, chatId, limit);
+	}
+	const drogon::orm::Result &rows = *rowsHolder;
 
+	std::unordered_set<int64_t> pageIds;
 	std::vector<nlohmann::json> msgs;
 	std::vector<int64_t> rowIds;
 	std::vector<int64_t> editedIds;
 	for (const auto &r : rows) {
+		pageIds.insert(r["message_id"].as<int64_t>());
 		int64_t rid = 0;
 		nlohmann::json m = buildChatMessage(r, rid, group);
 		if (m["is_edited"].get<bool>())
@@ -1492,10 +1512,16 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		}
 	}
 
-	/* Reverse to oldest-first for rendering; front() is then the oldest. */
+	/* Oldest-first for rendering. The cursor window is already ascending;
+	 * the landing window came back newest-first, so reverse it. */
 	nlohmann::json ordered = nlohmann::json::array();
-	for (auto it = msgs.rbegin(); it != msgs.rend(); ++it)
-		ordered.push_back(std::move(*it));
+	if (after.has_value()) {
+		for (auto &m : msgs)
+			ordered.push_back(std::move(m));
+	} else {
+		for (auto it = msgs.rbegin(); it != msgs.rend(); ++it)
+			ordered.push_back(std::move(*it));
+	}
 
 	/*
 	 * Collapse albums (media groups). Messages sent together share an
@@ -1575,7 +1601,70 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 	}
 
 	nlohmann::json j;
-	j["oldest_msg_id"] = out.empty() ? 0 : out.front()["msg_id"].get<int64_t>();
+	j["limit"] = limit;
+
+	if (!pageIds.empty()) {
+		auto mm = std::minmax_element(pageIds.begin(), pageIds.end());
+		int64_t mFirst = *mm.first;	/* oldest id on the page */
+		int64_t mLast  = *mm.second;	/* newest id on the page */
+
+		/*
+		 * Older cursor: the `limit` messages just below mFirst. The
+		 * oldest of them, minus one, is the `after` for a contiguous
+		 * older page (after is exclusive). Absent when nothing is older.
+		 */
+		auto older = co_await db->execSqlCoro(
+			std::string("SELECT message_id FROM ") + mtable +
+			" WHERE chat_id = ? AND message_id < ? "
+			"ORDER BY message_id DESC LIMIT ?",
+			chatId, mFirst, limit);
+		if (!older.empty()) {
+			int64_t oldest =
+				older[older.size() - 1]["message_id"].as<int64_t>();
+			j["older_after"] = oldest - 1;
+		}
+
+		/* Newer cursor: after mLast yields the contiguous newer page.
+		 * Absent when mLast is already the newest message. */
+		auto newer = co_await db->execSqlCoro(
+			std::string("SELECT 1 FROM ") + mtable +
+			" WHERE chat_id = ? AND message_id > ? LIMIT 1",
+			chatId, mLast);
+		if (!newer.empty())
+			j["newer_after"] = mLast;
+
+		/*
+		 * Reply links. A same-chat reply target already on this page
+		 * gets a cheap in-page #anchor; one off the page gets a URL that
+		 * loads the page holding it, centered (the window starts about
+		 * half a page below the target). Cross-chat replies keep a plain
+		 * #anchor (not navigable from here), as before.
+		 */
+		int half = limit / 2;
+		for (auto &m : out) {
+			if (!m.contains("reply") || !m["reply"].contains("msg_id"))
+				continue;
+			auto &rep = m["reply"];
+			int64_t t = rep["msg_id"].get<int64_t>();
+			if (rep.value("in_chat", false) && !pageIds.count(t)) {
+				int64_t c = -1;
+				auto s = co_await db->execSqlCoro(
+					std::string("SELECT message_id FROM ") +
+					mtable + " WHERE chat_id = ? AND "
+					"message_id < ? ORDER BY message_id DESC "
+					"LIMIT 1 OFFSET ?",
+					chatId, t, half);
+				if (!s.empty())
+					c = s[0]["message_id"].as<int64_t>() - 1;
+				rep["href"] = "?limit=" + std::to_string(limit) +
+					      "&amp;after=" + std::to_string(c) +
+					      "#msg-" + std::to_string(t);
+			} else {
+				rep["href"] = "#msg-" + std::to_string(t);
+			}
+		}
+	}
+
 	j["messages"] = std::move(out);
 	co_return j;
 }
