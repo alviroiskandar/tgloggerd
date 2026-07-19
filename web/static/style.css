@@ -328,6 +328,48 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 }
 .album .album-item:target img, .album .album-item:target video,
 .album .album-item:target { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Preview-able media open in a lightbox; hint it with a zoom cursor. */
+.zoomable { cursor: zoom-in; }
+
+/* Video / animation preview: a still frame with a play badge overlaid. The
+ * wrapper is relative so the badge can centre over it; clicking opens the
+ * lightbox rather than playing inline. */
+.media-thumb { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.play-badge {
+	position: absolute; top: 50%; left: 50%;
+	transform: translate(-50%, -50%);
+	width: 52px; height: 52px; border-radius: 50%;
+	background: rgba(0, 0, 0, 0.55); pointer-events: none;
+}
+.play-badge::after {
+	content: ""; position: absolute; top: 50%; left: 55%;
+	transform: translate(-50%, -50%);
+	border: 11px solid transparent; border-left: 17px solid #fff; border-right: 0;
+}
+
+/* Lightbox overlay for enlarged media. */
+.media-modal {
+	position: fixed; inset: 0; z-index: 1000;
+	display: flex; align-items: center; justify-content: center;
+	padding: 2.5rem; background: rgba(0, 0, 0, 0.86);
+}
+.media-modal[hidden] { display: none; }
+.media-modal-body {
+	display: flex; align-items: center; justify-content: center;
+	max-width: 94vw; max-height: 92vh;
+}
+.media-modal-body img, .media-modal-body video {
+	display: block; max-width: 94vw; max-height: 92vh;
+	width: auto; height: auto; border-radius: 6px;
+}
+.media-modal-body .mm-lottie { width: min(80vw, 80vh); height: min(80vw, 80vh); }
+.media-modal-body .mm-lottie svg { width: 100%; height: 100%; }
+.media-modal-close {
+	position: fixed; top: 0.75rem; right: 1.25rem; z-index: 1001;
+	font-size: 2.4rem; line-height: 1; color: #fff;
+	background: none; border: none; cursor: pointer;
+}
 .msg-file {
 	display: inline-block; margin: 0.2rem 0; padding: 0.4rem 0.6rem;
 	background: var(--bg); border: 1px solid var(--border); border-radius: 8px;

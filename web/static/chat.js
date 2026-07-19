@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * tgloggerd web — chat-history page enhancement. The page is fully functional
- * without it: it lands the viewport on the newest message and, where the
- * browser supports it, plays animated (.tgs / Lottie) stickers inline.
+ * tgloggerd web — chat-history page enhancement. The page is functional
+ * without it: it lands the viewport on the newest message, plays animated
+ * (.tgs / Lottie) stickers inline, and opens preview-able media (photo,
+ * video, gif, sticker) in a lightbox instead of navigating away.
  */
 (function () {
 	"use strict";
@@ -15,43 +16,28 @@
 	if (!window.location.hash)
 		window.scrollTo(0, document.body.scrollHeight);
 
-	initStickers();
+	var canGunzip = typeof DecompressionStream !== "undefined";
 
-	/*
-	 * Animated stickers are gzip-compressed Lottie JSON (.tgs). Render them
-	 * with the locally bundled lottie player, loaded on demand only when a
-	 * chat actually has one. Each sticker is decompressed in the browser and
-	 * rendered lazily as it scrolls into view, so a chat full of them does
-	 * not decode everything at once. Browsers without DecompressionStream
-	 * (or with JS disabled) keep the download-link fallback in the markup.
-	 */
-	function initStickers() {
-		var stickers = document.querySelectorAll(".tgs-sticker");
-		if (!stickers.length || typeof DecompressionStream === "undefined")
-			return;
-
-		var s = document.createElement("script");
-		s.src = "/lottie.min.js";
-		s.onload = function () {
-			var io = new IntersectionObserver(function (entries) {
-				entries.forEach(function (e) {
-					if (!e.isIntersecting)
-						return;
-					io.unobserve(e.target);
-					renderSticker(e.target);
-				});
-			}, { rootMargin: "200px" });
-			stickers.forEach(function (el) { io.observe(el); });
-		};
-		document.head.appendChild(s);
+	/* Load the bundled lottie player on demand; resolves once available. */
+	var lottieReady = null;
+	function ensureLottie() {
+		if (window.lottie)
+			return Promise.resolve();
+		if (!lottieReady) {
+			lottieReady = new Promise(function (resolve, reject) {
+				var s = document.createElement("script");
+				s.src = "/lottie.min.js";
+				s.onload = resolve;
+				s.onerror = reject;
+				document.head.appendChild(s);
+			});
+		}
+		return lottieReady;
 	}
 
-	function renderSticker(el) {
-		var url = el.getAttribute("data-tgs");
-		if (!url || !window.lottie)
-			return;
-
-		fetch(url)
+	/* Decompress a .tgs and play it inside el. Returns a Promise. */
+	function renderTgs(el, url) {
+		return fetch(url)
 			.then(function (r) {
 				return r.body.pipeThrough(
 					new DecompressionStream("gzip"));
@@ -60,7 +46,7 @@
 				return new Response(stream).json();
 			})
 			.then(function (data) {
-				el.textContent = "";	// drop the fallback link
+				el.textContent = "";
 				window.lottie.loadAnimation({
 					container: el,
 					renderer: "svg",
@@ -68,7 +54,104 @@
 					autoplay: true,
 					animationData: data,
 				});
-			})
-			.catch(function () { /* keep the fallback link */ });
+			});
 	}
+
+	/* Inline stickers, rendered lazily as they scroll into view. */
+	(function initStickers() {
+		var stickers = document.querySelectorAll(".tgs-sticker");
+		if (!stickers.length || !canGunzip)
+			return;
+
+		var io = new IntersectionObserver(function (entries) {
+			entries.forEach(function (e) {
+				if (!e.isIntersecting)
+					return;
+				io.unobserve(e.target);
+				var el = e.target;
+				ensureLottie().then(function () {
+					renderTgs(el, el.getAttribute("data-tgs"))
+						.catch(function () {});
+				}).catch(function () {});
+			});
+		}, { rootMargin: "200px" });
+		stickers.forEach(function (el) { io.observe(el); });
+	}());
+
+	/* Lightbox: enlarge preview-able media on click. */
+	(function initLightbox() {
+		var modal = document.getElementById("media-modal");
+		var body = document.getElementById("media-modal-body");
+		var closeBtn = document.getElementById("media-modal-close");
+		if (!modal || !body)
+			return;
+
+		function fill(kind, z) {
+			if (kind === "image") {
+				var img = document.createElement("img");
+				img.src = z.getAttribute("data-src");
+				body.appendChild(img);
+				return true;
+			}
+			if (kind === "video" || kind === "animation") {
+				var v = document.createElement("video");
+				v.src = z.getAttribute("data-src");
+				v.controls = true;
+				v.autoplay = true;
+				v.playsInline = true;
+				if (kind === "animation") {
+					v.loop = true;
+					v.muted = true;
+				}
+				body.appendChild(v);
+				return true;
+			}
+			if (kind === "lottie") {
+				if (!canGunzip)
+					return false; /* let the fallback link work */
+				var c = document.createElement("div");
+				c.className = "mm-lottie";
+				body.appendChild(c);
+				ensureLottie().then(function () {
+					renderTgs(c, z.getAttribute("data-tgs"))
+						.catch(function () {});
+				}).catch(function () {});
+				return true;
+			}
+			return false;
+		}
+
+		function open(z) {
+			body.textContent = "";
+			if (!fill(z.getAttribute("data-zoom"), z))
+				return false;
+			modal.hidden = false;
+			document.body.style.overflow = "hidden";
+			return true;
+		}
+
+		function close() {
+			modal.hidden = true;
+			body.textContent = "";	/* stop any video / lottie */
+			document.body.style.overflow = "";
+		}
+
+		log.addEventListener("click", function (e) {
+			var z = e.target.closest(".zoomable");
+			if (!z || !log.contains(z))
+				return;
+			if (open(z))
+				e.preventDefault();
+		});
+		closeBtn.addEventListener("click", close);
+		modal.addEventListener("click", function (e) {
+			/* A click on the backdrop (not the media) closes it. */
+			if (e.target === modal || e.target === body)
+				close();
+		});
+		document.addEventListener("keydown", function (e) {
+			if (e.key === "Escape" && !modal.hidden)
+				close();
+		});
+	}());
 }());

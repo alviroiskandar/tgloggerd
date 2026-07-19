@@ -83,11 +83,11 @@
           <span class="album-item wide deleted" id="msg-{{ it.msg_id }}"><span class="muted">(deleted)</span></span>
 ## else if existsIn(it, "media")
 ## if it.media.render == "image"
-          <a class="album-item" id="msg-{{ it.msg_id }}" href="{{ media(it.media.file_id) }}" target="_blank" rel="noopener"><img src="{{ media(it.media.file_id) }}" alt="{{ it.content_type }}" loading="lazy"></a>
+          <a class="album-item zoomable" id="msg-{{ it.msg_id }}" data-zoom="image" data-src="{{ media(it.media.file_id) }}" href="{{ media(it.media.file_id) }}"><img src="{{ media(it.media.file_id) }}" alt="{{ it.content_type }}" loading="lazy"></a>
 ## else if it.media.render == "video"
-          <video class="album-item" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" controls preload="metadata"></video>
+          <a class="album-item media-thumb zoomable" id="msg-{{ it.msg_id }}" data-zoom="video" data-src="{{ media(it.media.file_id) }}" href="{{ media(it.media.file_id) }}"><video src="{{ media(it.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>
 ## else if it.media.render == "animation"
-          <video class="album-item" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video>
+          <a class="album-item media-thumb zoomable" id="msg-{{ it.msg_id }}" data-zoom="animation" data-src="{{ media(it.media.file_id) }}" href="{{ media(it.media.file_id) }}"><video src="{{ media(it.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video></a>
 ## else if it.media.render == "audio"
           <audio class="album-item wide" id="msg-{{ it.msg_id }}" src="{{ media(it.media.file_id) }}" controls preload="none"></audio>
 ## else
@@ -186,13 +186,13 @@
 
 ## if existsIn(m, "media")
 ## if m.media.render == "image"
-        <a class="msg-media-link" href="{{ media(m.media.file_id) }}" target="_blank" rel="noopener"><img class="msg-media" src="{{ media(m.media.file_id) }}" alt="{{ m.content_type }}" loading="lazy"></a>
+        <a class="msg-media-link zoomable" data-zoom="image" data-src="{{ media(m.media.file_id) }}" href="{{ media(m.media.file_id) }}"><img class="msg-media" src="{{ media(m.media.file_id) }}" alt="{{ m.content_type }}" loading="lazy"></a>
 ## else if m.media.render == "video"
-        <video class="msg-media" src="{{ media(m.media.file_id) }}" controls preload="metadata"></video>
+        <a class="media-thumb zoomable" data-zoom="video" data-src="{{ media(m.media.file_id) }}" href="{{ media(m.media.file_id) }}"><video class="msg-media" src="{{ media(m.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>
 ## else if m.media.render == "animation"
-        <video class="msg-media" src="{{ media(m.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video>
+        <a class="media-thumb zoomable" data-zoom="animation" data-src="{{ media(m.media.file_id) }}" href="{{ media(m.media.file_id) }}"><video class="msg-media" src="{{ media(m.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video></a>
 ## else if m.media.render == "lottie"
-        <div class="msg-media tgs-sticker" data-tgs="{{ media(m.media.file_id) }}"><a class="msg-file" href="{{ media(m.media.file_id) }}">🎞️ {% if m.media.name != "" %}{{ m.media.name }}{% else %}animated sticker{% endif %}</a></div>
+        <div class="msg-media tgs-sticker zoomable" data-zoom="lottie" data-tgs="{{ media(m.media.file_id) }}"><a class="msg-file" href="{{ media(m.media.file_id) }}">🎞️ {% if m.media.name != "" %}{{ m.media.name }}{% else %}animated sticker{% endif %}</a></div>
 ## else if m.media.render == "audio"
         <audio class="msg-audio" src="{{ media(m.media.file_id) }}" controls preload="none"></audio>
 ## else
@@ -242,4 +242,9 @@
 ## endif
   </div>
 </section>
+
+<div class="media-modal" id="media-modal" hidden>
+  <button class="media-modal-close" id="media-modal-close" type="button" aria-label="Close">&times;</button>
+  <div class="media-modal-body" id="media-modal-body"></div>
+</div>
 <script src="/chat.js" defer></script>
