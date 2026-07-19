@@ -836,7 +836,9 @@ std::string groupSelect(const char *textProj)
 	return std::string(
 		"SELECT m.id, m.message_id, m.chat_id, m.sender_user_id, "
 		"m.sender_chat_id, m.is_channel_post, m.author_signature, "
-		"m.is_outgoing, IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
+		/* group_messages has no is_outgoing (irrelevant for public group
+		 * logging); a constant keeps the shared row shape. */
+		"0 AS is_outgoing, IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, ") + textProj + ", "
 		"m.file_id, m.deleted_at, m.is_forwarded, "
 		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
@@ -1372,7 +1374,9 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 	 * builder handles both. Newest-first here; reversed to oldest-first below. */
 	std::string q = group ?
 		"SELECT m.id, m.message_id, m.sender_user_id, m.sender_chat_id, "
-		"m.is_outgoing, m.is_channel_post, m.author_signature, "
+		/* group_messages has no is_outgoing; a constant keeps the shared
+		 * builder's row shape (a public group has no "own" perspective). */
+		"0 AS is_outgoing, m.is_channel_post, m.author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
 		"m.file_id, m.deleted_at, "

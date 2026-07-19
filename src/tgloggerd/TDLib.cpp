@@ -1614,7 +1614,6 @@ void TDLib::Impl::build_group_message(const td_api::message &message,
 {
 	out.chat_id = message.chat_id_;
 	out.message_id = to_server_msg_id(message.id_);
-	out.is_outgoing = message.is_outgoing_;
 	out.is_channel_post = message.is_channel_post_;
 	out.date = message.date_;
 	out.edit_date = message.edit_date_;
@@ -1628,9 +1627,9 @@ void TDLib::Impl::build_group_message(const td_api::message &message,
 	/*
 	 * A group message's sender may be a user or a chat/channel (channel
 	 * posts, anonymous admins). Record whichever applies; the schema
-	 * keeps them in separate foreign-key columns. Unlike private
-	 * messages, the own account's sender is recorded too (is_outgoing
-	 * still marks it), since a group has many participants.
+	 * keeps them in separate foreign-key columns. The own account's sender
+	 * is recorded like any other participant -- a group is public, so
+	 * "outgoing" is not tracked.
 	 */
 	if (message.sender_id_) {
 		if (message.sender_id_->get_id() ==

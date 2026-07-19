@@ -21,9 +21,6 @@ CREATE TABLE group_messages (
 	-- (messageSenderChat): channel posts and anonymous group admins.
 	sender_chat_id BIGINT          NULL COMMENT 'FK to groups.id; set when a chat/channel sent the message.',
 
-	-- Whether the message was sent by the logged-in user.
-	is_outgoing    TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Message was sent by the logged-in account.',
-
 	-- Whether the message is a channel post.
 	is_channel_post TINYINT(1)     NOT NULL DEFAULT 0 COMMENT 'td_api::message.is_channel_post_.',
 

@@ -33,7 +33,6 @@ struct GroupMessage {
 	 * anonymous group admins. */
 	std::optional<int64_t>	sender_chat_id;
 
-	bool		is_outgoing = false;
 	bool		is_channel_post = false;
 
 	/* Author signature for channel posts / anonymous admins. */

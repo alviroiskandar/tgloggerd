@@ -37,15 +37,14 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 	static const char *upsert_sql =
 		"INSERT INTO group_messages ("
 		" chat_id, message_id, sender_user_id, sender_chat_id,"
-		" is_outgoing, is_channel_post, author_signature, date,"
+		" is_channel_post, author_signature, date,"
 		" edit_date, content_type, text, entities, service_type,"
 		" is_forwarded, media_album_id"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_user_id = new.sender_user_id,"
 		" sender_chat_id = new.sender_chat_id,"
-		" is_outgoing = new.is_outgoing,"
 		" is_channel_post = new.is_channel_post,"
 		" author_signature = new.author_signature,"
 		" date = new.date,"
@@ -104,7 +103,6 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 				(int64_t)msg.message_id,
 				sender_user_param,
 				sender_chat_param,
-				b(msg.is_outgoing),
 				b(msg.is_channel_post),
 				author_param,
 				(int64_t)msg.date,
