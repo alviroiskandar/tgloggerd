@@ -41,6 +41,8 @@ private:
 	char api_hash_[64];
 	char data_dir_[512];
 	std::string storage_dir_;
+	/* Delete TDLib's own cached copy after storing our own (avoid dup). */
+	bool prune_tdlib_files_ = true;
 	log_hd_t *l_ = nullptr;
 	std::unique_ptr<TDLib> tdlib_;
 	std::unique_ptr<DB> db_;

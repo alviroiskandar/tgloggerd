@@ -182,6 +182,14 @@ int TgLoggerd::start(void)
 	pr_debug(l_, "storage_dir: %s", storage_dir_.c_str());
 
 	/*
+	 * TDLib downloads each file into its own store and tgloggerd keeps a
+	 * second content-addressed copy; delete TDLib's copy once ours is
+	 * secured so files are not stored twice. Both default on.
+	 */
+	prune_tdlib_files_ = env("TG_PRUNE_TDLIB_FILES", "1") != "0";
+	pr_debug(l_, "prune_tdlib_files: %d", (int)prune_tdlib_files_);
+
+	/*
 	 * Construct the workers only past the early-return points above, so a
 	 * failed startup never leaves threads to join. serial_ = 1 thread
 	 * (strict FIFO); files_ = file_threads.
@@ -196,6 +204,7 @@ int TgLoggerd::start(void)
 
 	tdlib_ = std::make_unique<TDLib>(this->api_id_, this->api_hash_,
 					 tdlib_path);
+	tdlib_->setPruneOnStart(env("TG_PRUNE_TDLIB_ON_START", "1") != "0");
 	/*
 	 * Handlers run on the event loop, where the models are already built
 	 * from td_api objects. They only enqueue the persistence work: DB
@@ -418,6 +427,10 @@ void TgLoggerd::onProfilePhoto(const ProfilePhoto &p)
 	if (!file_id.has_value())
 		return;
 
+	/* Our copy is durable; drop TDLib's to avoid storing it twice. */
+	if (prune_tdlib_files_)
+		tdlib_->deleteLocalFile(p.tg_local_file_id);
+
 	int64_t user_id = p.user_id;
 	uint64_t fid = *file_id;
 	serial_->post([this, user_id, fid] {
@@ -439,6 +452,10 @@ void TgLoggerd::onGroupPhoto(const GroupPhoto &p)
 					   p.file_size, "photo");
 	if (!file_id.has_value())
 		return;
+
+	/* Our copy is durable; drop TDLib's to avoid storing it twice. */
+	if (prune_tdlib_files_)
+		tdlib_->deleteLocalFile(p.tg_local_file_id);
 
 	int64_t group_id = p.group_id;
 	uint64_t fid = *file_id;
@@ -462,6 +479,10 @@ void TgLoggerd::onMessageFile(const MessageFile &m)
 					   m.orig_file_name);
 	if (!file_id.has_value())
 		return;
+
+	/* Our copy is durable; drop TDLib's to avoid storing it twice. */
+	if (prune_tdlib_files_)
+		tdlib_->deleteLocalFile(m.tg_local_file_id);
 
 	int64_t chat_id = m.chat_id;
 	int64_t message_id = m.message_id;

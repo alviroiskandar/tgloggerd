@@ -41,7 +41,8 @@ struct TextMessage {
 struct ProfilePhoto {
 	int64_t		user_id;
 	std::string	local_path;
-	std::string	tg_file_id;
+	std::string	tg_file_id;	/* remote id (string), for DB dedup */
+	int32_t		tg_local_file_id; /* local id, for TDLib deleteFile */
 	int64_t		file_size;
 };
 
@@ -51,7 +52,8 @@ struct ProfilePhoto {
 struct GroupPhoto {
 	int64_t		group_id;
 	std::string	local_path;
-	std::string	tg_file_id;
+	std::string	tg_file_id;	/* remote id (string), for DB dedup */
+	int32_t		tg_local_file_id; /* local id, for TDLib deleteFile */
 	int64_t		file_size;
 };
 
@@ -65,7 +67,8 @@ struct MessageFile {
 	int64_t		message_id;
 	bool		is_group;
 	std::string	local_path;
-	std::string	tg_file_id;
+	std::string	tg_file_id;	/* remote id (string), for DB dedup */
+	int32_t		tg_local_file_id; /* local id, for TDLib deleteFile */
 	int64_t		file_size;
 	std::string	content_type;	/* files.file_type: "photo", ... */
 	std::string	orig_file_name;	/* original Telegram name; empty if none */
@@ -226,6 +229,22 @@ public:
 	 * Request a graceful shutdown of the TDLib client.
 	 */
 	void close(void);
+
+	/*
+	 * Delete TDLib's own cached copy of a downloaded file (by its local
+	 * file id) once tgloggerd has secured its own copy, so the file is not
+	 * stored twice. Fire-and-forget and thread-safe: callable from a file
+	 * worker thread, not just the loop thread. Keeps the remote reference,
+	 * so the file can be re-downloaded on demand.
+	 */
+	void deleteLocalFile(int32_t file_id);
+
+	/*
+	 * When enabled, issue a one-time optimizeStorage once the client
+	 * reaches the ready state, reclaiming files TDLib cached in a previous
+	 * run. Must be called before loop().
+	 */
+	void setPruneOnStart(bool on);
 
 private:
 	struct Impl;

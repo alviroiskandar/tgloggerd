@@ -11,6 +11,7 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -814,6 +815,18 @@ struct TDLib::Impl {
 	int64_t		user_id_ = 0;
 	std::uint64_t	current_query_id_ = 0;
 
+	/*
+	 * Query-id counter for fire-and-forget requests issued off the loop
+	 * thread (deleteLocalFile). Seeded high so it never collides with the
+	 * loop thread's monotonic current_query_id_; no handler is registered
+	 * for these, so the response is simply dropped by process_response.
+	 */
+	std::atomic<std::uint64_t>	aux_query_id_{1ull << 62};
+
+	/* One-time startup optimizeStorage (reclaim TDLib's cached backlog). */
+	bool		purge_on_start_ = false;
+	bool		purge_started_ = false;
+
 	std::function<void(const TextMessage &)>	msg_handler_;
 	std::function<void(const models::PrivateMessage &)> private_msg_handler_;
 	std::function<void(const models::GroupMessage &)> group_msg_handler_;
@@ -913,6 +926,7 @@ struct TDLib::Impl {
 
 	void send_query(td_api::object_ptr<td_api::Function> f,
 			std::function<void(Object)> handler);
+	void delete_local_file(int32_t file_id);
 	void process_response(td::ClientManager::Response response);
 	void process_update(td_api::object_ptr<td_api::Object> update);
 	void on_authorization_state_update(void);
@@ -992,6 +1006,21 @@ void TDLib::Impl::send_query(td_api::object_ptr<td_api::Function> f,
 		handlers_.emplace(query_id, std::move(handler));
 
 	client_manager_->send(client_id_, query_id, std::move(f));
+}
+
+
+/*
+ * Thread-safe fire-and-forget deleteFile. Unlike send_query this may be called
+ * from a file worker thread, so it must not touch the loop-thread-owned state
+ * (handlers_, current_query_id_). td::ClientManager::send is thread-safe; the
+ * aux query id is drawn from a separate atomic counter and no handler is
+ * registered, so process_response drops the Ok response.
+ */
+void TDLib::Impl::delete_local_file(int32_t file_id)
+{
+	std::uint64_t id = aux_query_id_.fetch_add(1);
+	client_manager_->send(client_id_, id,
+		td_api::make_object<td_api::deleteFile>(file_id));
 }
 
 
@@ -1262,6 +1291,38 @@ void TDLib::Impl::on_authorization_state_update(void)
 							td_api::user>(obj);
 						user_id_ = u->id_;
 					});
+				/*
+				 * Reclaim TDLib's cached file backlog once per
+				 * boot. tgloggerd keeps its own copy of every
+				 * file it needs, so purging TDLib's cache only
+				 * removes duplicates; immunity_delay spares files
+				 * a file worker may be copying right now.
+				 * optimizeStorage never touches db.sqlite /
+				 * td.binlog, unlike a raw rm of the tree.
+				 */
+				if (purge_on_start_ && !purge_started_) {
+					purge_started_ = true;
+					auto o = td_api::make_object<
+						td_api::optimizeStorage>();
+					o->size_ = 1;
+					o->ttl_ = 0;
+					o->count_ = 0;
+					o->immunity_delay_ = 60;
+					o->return_deleted_file_statistics_ = true;
+					send_query(std::move(o),
+						[this](Object obj) {
+							if (obj->get_id() !=
+							    td_api::storageStatistics::ID)
+								return;
+							auto s = td::move_tl_object_as<
+								td_api::storageStatistics>(obj);
+							std::cerr << "optimizeStorage:"
+								" reclaimed TDLib cache;"
+								" size now " << s->size_
+								<< " bytes in " << s->count_
+								<< " files\n";
+						});
+				}
 				/*
 				 * Start the periodic admin poll once. Guarded
 				 * so a re-login does not spawn a second alarm
@@ -1768,6 +1829,7 @@ void TDLib::Impl::emit_message_file(const PendingMsgFile &ref,
 	mf.is_group = ref.is_group;
 	mf.local_path = f.local_->path_;
 	mf.tg_file_id = f.remote_ ? f.remote_->id_ : std::string();
+	mf.tg_local_file_id = f.id_;
 	mf.file_size = f.size_;
 	mf.content_type = ref.content_type;
 	mf.orig_file_name = ref.orig_file_name;
@@ -1849,6 +1911,7 @@ void TDLib::Impl::emit_photo(int64_t user_id, const td_api::file &f)
 	p.user_id = user_id;
 	p.local_path = f.local_->path_;
 	p.tg_file_id = f.remote_ ? f.remote_->id_ : std::string();
+	p.tg_local_file_id = f.id_;
 	p.file_size = f.size_;
 	photo_handler_(p);
 }
@@ -2325,6 +2388,7 @@ void TDLib::Impl::emit_group_photo(int64_t group_id, const td_api::file &f)
 	p.group_id = group_id;
 	p.local_path = f.local_->path_;
 	p.tg_file_id = f.remote_ ? f.remote_->id_ : std::string();
+	p.tg_local_file_id = f.id_;
 	p.file_size = f.size_;
 	group_photo_handler_(p);
 }
@@ -2446,6 +2510,16 @@ void TDLib::close(void)
 	/* Stop re-arming the admin-poll alarm while TDLib shuts down. */
 	impl_->closing_ = true;
 	impl_->send_query(td_api::make_object<td_api::close>(), {});
+}
+
+void TDLib::deleteLocalFile(int32_t file_id)
+{
+	impl_->delete_local_file(file_id);
+}
+
+void TDLib::setPruneOnStart(bool on)
+{
+	impl_->purge_on_start_ = on;
 }
 
 } /* namespace tgloggerd */
