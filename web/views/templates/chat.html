@@ -22,6 +22,7 @@
   </header>
 
   <div class="chat-log" id="chat-log">
+    <div class="chat-datebadge-wrap"><span class="chat-datebadge" id="chat-datebadge" aria-hidden="true"></span></div>
 ## if has_older
     <div class="chat-pager top">
       <a class="pager-btn" href="?limit={{ limit }}&amp;after={{ older_after }}">↑ Load older messages</a>
@@ -33,11 +34,11 @@
 ## else
 ## for m in messages
 ## if m.is_service
-    <div class="msg-service" id="msg-{{ m.msg_id }}">
+    <div class="msg-service" id="msg-{{ m.msg_id }}" data-day="{{ m.day }}">
       <span class="service-bubble">{% if existsIn(m.sender, "name") and m.sender.name != "" %}{% if m.sender.kind == "user" %}<a class="service-who" href="/users/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else if m.sender.kind == "group" %}<a class="service-who" href="/groups/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else %}<span class="service-who">{{ m.sender.name }}</span>{% endif %} {% endif %}{% if m.text != "" %}{{ m.text }}{% else %}{{ m.service_type }}{% endif %}<span class="service-time muted"> · {% if m.date != "" %}{{ m.date }}{% else %}—{% endif %}</span>{% if m.is_deleted %} <span class="badge warn">deleted</span>{% endif %}</span>
     </div>
 ## else if existsIn(m, "is_album") and m.is_album
-    <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}">
+    <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}" data-day="{{ m.day }}">
 ## if not m.is_outgoing
 ## if existsIn(m.sender, "photo_file_id")
 ## if m.sender.kind == "user"
@@ -141,7 +142,7 @@
       </div>
     </div>
 ## else
-    <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}{% if m.is_deleted %} deleted{% endif %}" id="msg-{{ m.msg_id }}">
+    <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}{% if m.is_deleted %} deleted{% endif %}" id="msg-{{ m.msg_id }}" data-day="{{ m.day }}">
 ## if not m.is_outgoing
 ## if existsIn(m.sender, "photo_file_id")
 ## if m.sender.kind == "user"

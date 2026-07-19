@@ -43,6 +43,53 @@ jQuery(function ($) {
 		log.scrollTop = log.scrollHeight;
 	$(window).on("hashchange", focusHash);
 
+	/*
+	 * Floating date badge: while scrolling, show the day of the message at
+	 * the top of the viewport; fade it out slowly 2 s after scrolling stops.
+	 */
+	(function initDateBadge() {
+		var badge = document.getElementById("chat-datebadge");
+		var msgs = log.querySelectorAll("[data-day]");
+		if (!badge || !msgs.length)
+			return;
+
+		function currentDay() {
+			var edge = log.getBoundingClientRect().top + 12;
+			var day = msgs[0].getAttribute("data-day") || "";
+			for (var i = 0; i < msgs.length; i++) {
+				if (msgs[i].getBoundingClientRect().top <= edge) {
+					var d = msgs[i].getAttribute("data-day");
+					if (d)
+						day = d;
+				} else {
+					break;	/* messages run top-to-bottom */
+				}
+			}
+			return day;
+		}
+
+		var hideTimer = null;
+		var ticking = false;
+		function refresh() {
+			ticking = false;
+			var day = currentDay();
+			if (!day)
+				return;
+			badge.textContent = day;
+			badge.classList.add("show");
+			clearTimeout(hideTimer);
+			hideTimer = setTimeout(function () {
+				badge.classList.remove("show");
+			}, 1000);
+		}
+		$log.on("scroll", function () {
+			if (!ticking) {
+				ticking = true;
+				requestAnimationFrame(refresh);
+			}
+		});
+	}());
+
 	/* Date/time jump: pick a moment, navigate to ?after_ts=<unix seconds>. */
 	(function initDateJump() {
 		var input = document.getElementById("chat-date");

@@ -1264,6 +1264,7 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 	nlohmann::json m;
 	m["msg_id"]          = r["message_id"].as<int64_t>(); /* server id / anchor */
 	m["date"]            = escCol(r, "date_str");
+	m["day"]             = escCol(r, "day_str"); /* "07 July 2026", for the scroll date badge */
 	m["content_type"]    = r["content_type"].as<std::string>();
 	m["is_deleted"]      = !r["deleted_at"].isNull();
 	if (!r["deleted_at"].isNull())
@@ -1441,6 +1442,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		 * builder's row shape (a public group has no "own" perspective). */
 		"0 AS is_outgoing, m.is_channel_post, m.author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
+		"IF(m.date>0, DATE_FORMAT(FROM_UNIXTIME(m.date), '%d %M %Y'), '') AS day_str, "
 		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
 		"m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
@@ -1469,6 +1471,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"NULL AS sender_chat_id, m.is_outgoing, 0 AS is_channel_post, "
 		"NULL AS author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
+		"IF(m.date>0, DATE_FORMAT(FROM_UNIXTIME(m.date), '%d %M %Y'), '') AS day_str, "
 		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
 		"m.file_id, m.deleted_at, "
 		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
@@ -1609,6 +1612,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		a["album_id"]    = album;
 		a["msg_id"]      = first["msg_id"];
 		a["date"]        = first["date"];
+		a["day"]         = first["day"];
 		a["is_outgoing"] = first["is_outgoing"];
 		a["show_sender"] = first["show_sender"];
 		a["sender"]      = first["sender"];

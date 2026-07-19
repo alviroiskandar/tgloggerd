@@ -238,6 +238,24 @@ html { scroll-behavior: smooth; }
 }
 .chat-empty { text-align: center; padding: 2rem 0; }
 
+/* Floating date shown while scrolling (Telegram-style). The wrapper is a
+ * zero-height sticky strip so the badge overlays the top of the log without
+ * taking layout space; it fades out slowly after scrolling stops. */
+.chat-datebadge-wrap {
+	position: sticky; top: 0; z-index: 10; height: 0;
+	text-align: center; pointer-events: none;
+}
+.chat-datebadge {
+	display: inline-block;
+	margin-top: 0.5rem; padding: 0.25rem 0.85rem;
+	border-radius: 999px; font-size: 1.2rem; line-height: 1.3;
+	white-space: nowrap;
+	background: rgba(0, 0, 0, 0.78);
+	color: #fff;
+	opacity: 0; transition: opacity 0.5s ease;
+}
+.chat-datebadge.show { opacity: 1; }
+
 /* Server-rendered pager at the top (older) and bottom (newer) of the log.
  * Extension point for infinite scroll: swap the link for an on-scroll fetch
  * of the same ?after= cursor. */
