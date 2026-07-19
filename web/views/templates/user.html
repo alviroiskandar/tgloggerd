@@ -19,15 +19,6 @@
 ## if user.is_support
     <span class="badge">support</span>
 ## endif
-## if user.is_contact
-    <span class="badge">contact</span>
-## endif
-## if user.is_mutual_contact
-    <span class="badge">mutual contact</span>
-## endif
-## if user.is_close_friend
-    <span class="badge">close friend</span>
-## endif
 ## if user.restricts_new_chats
     <span class="badge">restricts new chats</span>
 ## endif
@@ -52,8 +43,8 @@
 ## if existsIn(user, "birthday")
     <tr><th>Birthday</th><td>{{ user.birthday }}</td></tr>
 ## endif
-## if user.personal_chat_id != 0
-    <tr><th>Personal chat</th><td>{% if user.personal_chat_id < 0 %}<a href="/groups/{{ user.personal_chat_id }}">{{ user.personal_chat_id }}</a>{% else %}<a href="/users/{{ user.personal_chat_id }}">{{ user.personal_chat_id }}</a>{% endif %}</td></tr>
+## if existsIn(user, "personal_chat_id")
+    <tr><th>Personal chat</th><td><a href="/groups/{{ user.personal_chat_id }}">{{ user.personal_chat_id }}</a></td></tr>
 ## endif
 ## if user.paid_message_star_count != 0
     <tr><th>Paid message stars</th><td>{{ user.paid_message_star_count }}</td></tr>
@@ -73,7 +64,6 @@
 ## if user.profile_background_custom_emoji_id != 0
     <tr><th>Profile background emoji</th><td>#{{ user.profile_background_custom_emoji_id }}</td></tr>
 ## endif
-    <tr><th>Access</th><td>{% if user.have_access %}yes{% else %}<span class="muted">no</span>{% endif %}</td></tr>
 ## if user.restriction_reason != ""
     <tr><th>Restriction</th><td>{{ user.restriction_reason }}</td></tr>
 ## endif

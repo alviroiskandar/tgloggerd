@@ -34,94 +34,52 @@ mysql::Param b(bool v)
 void DB::upsertUser(const models::User &u)
 {
 	/*
-	 * Note: profile_photo_file_id and the created_at/updated_at columns
-	 * are intentionally omitted; the photo reference is managed after
-	 * the photo has been downloaded.
+	 * Note: profile_photo_file_id, the birthday_* columns and the
+	 * created_at/updated_at columns are intentionally omitted here; the
+	 * photo reference is managed after download, and the birthday arrives
+	 * with userFullInfo. The sparse attributes (phone, appearance, ...)
+	 * live in user_extra_info, written by upsertUserExtraFromUser below.
 	 */
 	static const char *sql =
 		"INSERT INTO users ("
-		" id, first_name, last_name, phone_number, type,"
-		" accent_color_id, background_custom_emoji_id,"
-		" profile_accent_color_id, profile_background_custom_emoji_id,"
-		" emoji_status_custom_emoji_id, emoji_status_expiration_date,"
-		" is_verified, is_scam, is_fake, is_premium, is_support,"
-		" restriction_reason, has_sensitive_content, restricts_new_chats,"
-		" paid_message_star_count, is_contact, is_mutual_contact,"
-		" is_close_friend, have_access, language_code"
-		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-		" ?, ?, ?, ?, ?"
-		") AS new ON DUPLICATE KEY UPDATE"
+		" id, first_name, last_name, type, accent_color_id,"
+		" is_verified, is_scam, is_fake, is_premium, is_support"
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		" AS new ON DUPLICATE KEY UPDATE"
 		" first_name = new.first_name,"
 		" last_name = new.last_name,"
-		" phone_number = new.phone_number,"
 		" type = new.type,"
 		" accent_color_id = new.accent_color_id,"
-		" background_custom_emoji_id = new.background_custom_emoji_id,"
-		" profile_accent_color_id = new.profile_accent_color_id,"
-		" profile_background_custom_emoji_id = new.profile_background_custom_emoji_id,"
-		" emoji_status_custom_emoji_id = new.emoji_status_custom_emoji_id,"
-		" emoji_status_expiration_date = new.emoji_status_expiration_date,"
 		" is_verified = new.is_verified,"
 		" is_scam = new.is_scam,"
 		" is_fake = new.is_fake,"
 		" is_premium = new.is_premium,"
-		" is_support = new.is_support,"
-		" restriction_reason = new.restriction_reason,"
-		" has_sensitive_content = new.has_sensitive_content,"
-		" restricts_new_chats = new.restricts_new_chats,"
-		" paid_message_star_count = new.paid_message_star_count,"
-		" is_contact = new.is_contact,"
-		" is_mutual_contact = new.is_mutual_contact,"
-		" is_close_friend = new.is_close_friend,"
-		" have_access = new.have_access,"
-		" language_code = new.language_code";
-
-	mysql::Param emoji_id = std::monostate{};
-	if (u.emoji_status_custom_emoji_id.has_value())
-		emoji_id = (int64_t)*u.emoji_status_custom_emoji_id;
-
-	mysql::Param emoji_exp = std::monostate{};
-	if (u.emoji_status_expiration_date.has_value())
-		emoji_exp = (int64_t)*u.emoji_status_expiration_date;
+		" is_support = new.is_support";
 
 	db_.transaction([&](mysql::Transaction &tx) {
 		/*
-		 * Fetch the current name and phone number in one query
-		 * so we can detect changes (existing user) or record
-		 * first-seen values (new user).
+		 * Fetch the current name (users) and phone number
+		 * (user_extra_info) in one query so we can detect changes
+		 * (existing user) or record first-seen values (new user).
 		 */
 		auto old = tx.query(
-			"SELECT first_name, last_name, phone_number"
-			" FROM users WHERE id = ?",
+			"SELECT u.first_name, u.last_name, e.phone_number"
+			" FROM users u"
+			" LEFT JOIN user_extra_info e ON e.user_id = u.id"
+			" WHERE u.id = ?",
 			{ (int64_t)u.id });
 
 		tx.execute(sql, {
 			(int64_t)u.id,
 			u.first_name,
 			u.last_name,
-			u.phone_number,
 			std::string(user_type_to_string(u.type)),
 			(int64_t)u.accent_color_id,
-			(int64_t)u.background_custom_emoji_id,
-			(int64_t)u.profile_accent_color_id,
-			(int64_t)u.profile_background_custom_emoji_id,
-			emoji_id,
-			emoji_exp,
 			b(u.is_verified),
 			b(u.is_scam),
 			b(u.is_fake),
 			b(u.is_premium),
 			b(u.is_support),
-			u.restriction_reason,
-			b(u.has_sensitive_content),
-			b(u.restricts_new_chats),
-			(int64_t)u.paid_message_star_count,
-			b(u.is_contact),
-			b(u.is_mutual_contact),
-			b(u.is_close_friend),
-			b(u.have_access),
-			u.language_code,
 		});
 
 		if (old.empty()) {
@@ -159,8 +117,105 @@ void DB::upsertUser(const models::User &u)
 			}
 		}
 
+		upsertUserExtraFromUser(tx, u);
 		syncUsernames(tx, u);
 	});
+}
+
+void DB::upsertUserExtraFromUser(mysql::Transaction &tx, const models::User &u)
+{
+	mysql::Param emoji_id = std::monostate{};
+	if (u.emoji_status_custom_emoji_id.has_value())
+		emoji_id = (int64_t)*u.emoji_status_custom_emoji_id;
+
+	mysql::Param emoji_exp = std::monostate{};
+	if (u.emoji_status_expiration_date.has_value())
+		emoji_exp = (int64_t)*u.emoji_status_expiration_date;
+
+	/* Only the columns sourced from the user object; bio/personal_chat_id
+	 * are owned by the full-info path and left untouched. */
+	tx.execute(
+		"INSERT INTO user_extra_info ("
+		" user_id, phone_number, background_custom_emoji_id,"
+		" profile_accent_color_id, profile_background_custom_emoji_id,"
+		" emoji_status_custom_emoji_id, emoji_status_expiration_date,"
+		" restriction_reason, language_code, has_sensitive_content,"
+		" restricts_new_chats, paid_message_star_count"
+		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		" AS new ON DUPLICATE KEY UPDATE"
+		" phone_number = new.phone_number,"
+		" background_custom_emoji_id = new.background_custom_emoji_id,"
+		" profile_accent_color_id = new.profile_accent_color_id,"
+		" profile_background_custom_emoji_id = new.profile_background_custom_emoji_id,"
+		" emoji_status_custom_emoji_id = new.emoji_status_custom_emoji_id,"
+		" emoji_status_expiration_date = new.emoji_status_expiration_date,"
+		" restriction_reason = new.restriction_reason,"
+		" language_code = new.language_code,"
+		" has_sensitive_content = new.has_sensitive_content,"
+		" restricts_new_chats = new.restricts_new_chats,"
+		" paid_message_star_count = new.paid_message_star_count",
+		{
+			(int64_t)u.id,
+			u.phone_number,
+			(int64_t)u.background_custom_emoji_id,
+			(int64_t)u.profile_accent_color_id,
+			(int64_t)u.profile_background_custom_emoji_id,
+			emoji_id,
+			emoji_exp,
+			u.restriction_reason,
+			u.language_code,
+			b(u.has_sensitive_content),
+			b(u.restricts_new_chats),
+			(int64_t)u.paid_message_star_count,
+		});
+
+	pruneUserExtraIfEmpty(tx, u.id);
+}
+
+void DB::upsertUserExtraFromFullInfo(mysql::Transaction &tx,
+				     const models::UserFullInfo &fi)
+{
+	/*
+	 * Link the personal chat only when its channel is already stored, so
+	 * the FK to groups holds. If it is not stored yet the value is NULL for
+	 * now; the channel fetch was kicked off on the TDLib side and a later
+	 * full-info refresh links it.
+	 */
+	mysql::Param personal = std::monostate{};
+	if (fi.personal_chat_id != 0) {
+		auto g = tx.query("SELECT id FROM `groups` WHERE id = ?",
+				  { (int64_t)fi.personal_chat_id });
+		if (!g.empty())
+			personal = (int64_t)fi.personal_chat_id;
+	}
+
+	tx.execute(
+		"INSERT INTO user_extra_info (user_id, bio, personal_chat_id)"
+		" VALUES (?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
+		" bio = new.bio, personal_chat_id = new.personal_chat_id",
+		{ (int64_t)fi.user_id, fi.bio, personal });
+
+	pruneUserExtraIfEmpty(tx, fi.user_id);
+}
+
+void DB::pruneUserExtraIfEmpty(mysql::Transaction &tx, int64_t user_id)
+{
+	/* A row is kept only while at least one column differs from its default
+	 * (the "empty" sentinel documented per column); otherwise it is dropped
+	 * so unset users cost no storage. */
+	tx.execute(
+		"DELETE FROM user_extra_info WHERE user_id = ?"
+		" AND bio = '' AND phone_number = ''"
+		" AND background_custom_emoji_id = 0"
+		" AND profile_accent_color_id = -1"
+		" AND profile_background_custom_emoji_id = 0"
+		" AND emoji_status_custom_emoji_id IS NULL"
+		" AND emoji_status_expiration_date IS NULL"
+		" AND restriction_reason = '' AND language_code = ''"
+		" AND has_sensitive_content = 0 AND restricts_new_chats = 0"
+		" AND paid_message_star_count = 0"
+		" AND personal_chat_id IS NULL",
+		{ user_id });
 }
 
 void DB::setUserProfilePhoto(int64_t user_id, uint64_t file_id)
@@ -327,9 +382,9 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 		 * before full info is fetched. If it is somehow not present
 		 * yet, skip rather than create a partial row.
 		 */
-		auto old = tx.query("SELECT bio FROM users WHERE id = ?",
-				    { (int64_t)fi.user_id });
-		if (old.empty())
+		auto exists = tx.query("SELECT 1 FROM users WHERE id = ?",
+				       { (int64_t)fi.user_id });
+		if (exists.empty())
 			return;
 
 		/*
@@ -351,16 +406,14 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 		if (fi.birthday_year.has_value())
 			byear = (int64_t)*fi.birthday_year;
 
+		/* Birthday stays on the users row; bio and personal_chat_id go
+		 * to user_extra_info. */
 		tx.execute(
-			"UPDATE users SET bio = ?, personal_chat_id = ?,"
-			" birthday_day = ?, birthday_month = ?,"
+			"UPDATE users SET birthday_day = ?, birthday_month = ?,"
 			" birthday_year = ? WHERE id = ?",
-			{
-				fi.bio,
-				(int64_t)fi.personal_chat_id,
-				bday, bmon, byear,
-				(int64_t)fi.user_id,
-			});
+			{ bday, bmon, byear, (int64_t)fi.user_id });
+
+		upsertUserExtraFromFullInfo(tx, fi);
 	});
 }
 

@@ -94,11 +94,6 @@ models::User map_user(const td_api::user &u)
 	m.is_support = u.is_support_;
 	m.restricts_new_chats = u.restricts_new_chats_;
 	m.paid_message_star_count = u.paid_message_star_count_;
-
-	m.is_contact = u.is_contact_;
-	m.is_mutual_contact = u.is_mutual_contact_;
-	m.is_close_friend = u.is_close_friend_;
-	m.have_access = u.have_access_;
 	m.language_code = u.language_code_;
 
 	if (u.verification_status_) {
@@ -1048,12 +1043,22 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 					request_user_full_info(uid);
 			},
 			[this](td_api::updateUserFullInfo &u) {
-				if (user_full_info_handler_ &&
-				    u.user_full_info_)
-					user_full_info_handler_(
-						map_user_full_info(
-							*u.user_full_info_,
-							u.user_id_));
+				if (!user_full_info_handler_ || !u.user_full_info_)
+					return;
+				auto fi = map_user_full_info(*u.user_full_info_,
+							     u.user_id_);
+				/*
+				 * The personal chat is a channel referenced by
+				 * user_extra_info.personal_chat_id (FK to groups).
+				 * Make sure it is saved first so the link resolves;
+				 * for a known chat this persists it synchronously
+				 * (ahead of the full-info upsert on the serial
+				 * queue), for an unknown one it fetches it for a
+				 * later refresh.
+				 */
+				if (fi.personal_chat_id != 0)
+					ensure_chat_saved(fi.personal_chat_id);
+				user_full_info_handler_(fi);
 			},
 			[this](td_api::updateFile &u) {
 				if (u.file_)

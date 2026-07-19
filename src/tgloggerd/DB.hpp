@@ -131,6 +131,22 @@ private:
 	void syncUsernames(mysql::Transaction &tx, const models::User &u);
 	void trackProfilePhotoChange(mysql::Transaction &tx,
 				     int64_t user_id, uint64_t file_id);
+
+	/*
+	 * user_extra_info holds the sparse per-user fields split out of the
+	 * users table. It is written from two sources -- the user object (most
+	 * fields) and userFullInfo (bio, personal_chat_id) -- so each helper
+	 * upserts only the columns it owns and never clobbers the other's.
+	 * After either write, pruneUserExtraIfEmpty drops the row when every
+	 * column is back at its default, so a row exists only when something is
+	 * set. personal_chat_id is stored only when its group is already known
+	 * (else NULL), keeping the FK to groups satisfiable.
+	 */
+	void upsertUserExtraFromUser(mysql::Transaction &tx,
+				     const models::User &u);
+	void upsertUserExtraFromFullInfo(mysql::Transaction &tx,
+					 const models::UserFullInfo &fi);
+	void pruneUserExtraIfEmpty(mysql::Transaction &tx, int64_t user_id);
 	void syncGroupUsernames(mysql::Transaction &tx, const models::Group &g);
 	void trackGroupPhotoChange(mysql::Transaction &tx,
 				   int64_t group_id, uint64_t file_id);

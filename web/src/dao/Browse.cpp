@@ -266,6 +266,8 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 		" WHERE un.user_id = u.id AND un.kind = 'active' "
 		" ORDER BY un.position LIMIT 1) AS username "
 		"FROM users u "
+		/* phone/bio live in user_extra_info; join it for those filters. */
+		"LEFT JOIN user_extra_info e ON e.user_id = u.id "
 		"WHERE (? = '' "
 		"       OR (CAST(u.id AS CHAR) LIKE ? AND ? IN ('all','id')) "
 		"       OR (CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? "
@@ -273,8 +275,8 @@ drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
 		"       OR (EXISTS (SELECT 1 FROM user_usernames un "
 		"                   WHERE un.user_id = u.id AND un.username LIKE ?) "
 		"           AND ? IN ('all','username')) "
-		"       OR (u.phone_number LIKE ? AND ? IN ('phone')) "
-		"       OR (u.bio LIKE ? AND ? IN ('bio'))) "
+		"       OR (e.phone_number LIKE ? AND ? IN ('phone')) "
+		"       OR (e.bio LIKE ? AND ? IN ('bio'))) "
 		"AND (? = 0 OR u.id < ?) "
 		"ORDER BY u.id DESC LIMIT ?";
 	auto rowsHolder = co_await db->execSqlCoro(
@@ -319,21 +321,31 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 						    int64_t id)
 {
 	auto ur = co_await db->execSqlCoro(
-		"SELECT id, first_name, last_name, phone_number, type, "
-		"profile_photo_file_id, is_verified, is_scam, is_fake, "
-		"is_premium, is_support, is_contact, is_mutual_contact, "
-		"is_close_friend, have_access, has_sensitive_content, "
-		"restricts_new_chats, paid_message_star_count, "
-		"language_code, bio, personal_chat_id, "
-		"accent_color_id, profile_accent_color_id, "
-		"background_custom_emoji_id, profile_background_custom_emoji_id, "
-		"emoji_status_custom_emoji_id, "
-		"IF(emoji_status_expiration_date > 0, "
-		"   FROM_UNIXTIME(emoji_status_expiration_date), NULL) "
+		"SELECT u.id, u.first_name, u.last_name, u.type, "
+		"u.profile_photo_file_id, u.is_verified, u.is_scam, u.is_fake, "
+		"u.is_premium, u.is_support, u.accent_color_id, "
+		"u.birthday_day, u.birthday_month, u.birthday_year, "
+		"u.created_at, u.updated_at, "
+		/* Sparse fields live in user_extra_info; a missing row reads as
+		 * all-default, so COALESCE to the same sentinels. */
+		"COALESCE(e.phone_number, '') AS phone_number, "
+		"COALESCE(e.bio, '') AS bio, "
+		"COALESCE(e.language_code, '') AS language_code, "
+		"COALESCE(e.restriction_reason, '') AS restriction_reason, "
+		"COALESCE(e.has_sensitive_content, 0) AS has_sensitive_content, "
+		"COALESCE(e.restricts_new_chats, 0) AS restricts_new_chats, "
+		"COALESCE(e.paid_message_star_count, 0) AS paid_message_star_count, "
+		"COALESCE(e.profile_accent_color_id, -1) AS profile_accent_color_id, "
+		"COALESCE(e.background_custom_emoji_id, 0) AS background_custom_emoji_id, "
+		"COALESCE(e.profile_background_custom_emoji_id, 0) "
+		"   AS profile_background_custom_emoji_id, "
+		"e.emoji_status_custom_emoji_id, "
+		"IF(e.emoji_status_expiration_date > 0, "
+		"   FROM_UNIXTIME(e.emoji_status_expiration_date), NULL) "
 		"   AS emoji_status_expires, "
-		"birthday_day, birthday_month, birthday_year, "
-		"restriction_reason, created_at, updated_at "
-		"FROM users WHERE id = ?",
+		"e.personal_chat_id "
+		"FROM users u LEFT JOIN user_extra_info e ON e.user_id = u.id "
+		"WHERE u.id = ?",
 		id);
 
 	if (ur.empty())
@@ -355,14 +367,11 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	user["is_fake"]           = r["is_fake"].as<int>() != 0;
 	user["is_premium"]        = r["is_premium"].as<int>() != 0;
 	user["is_support"]        = r["is_support"].as<int>() != 0;
-	user["is_contact"]        = r["is_contact"].as<int>() != 0;
-	user["is_mutual_contact"] = r["is_mutual_contact"].as<int>() != 0;
-	user["is_close_friend"]   = r["is_close_friend"].as<int>() != 0;
-	user["have_access"]       = r["have_access"].as<int>() != 0;
 	user["has_sensitive_content"] = r["has_sensitive_content"].as<int>() != 0;
 	user["restricts_new_chats"]   = r["restricts_new_chats"].as<int>() != 0;
 	user["paid_message_star_count"] = r["paid_message_star_count"].as<int64_t>();
-	user["personal_chat_id"]  = r["personal_chat_id"].as<int64_t>();
+	if (!r["personal_chat_id"].isNull())
+		user["personal_chat_id"] = r["personal_chat_id"].as<int64_t>();
 	user["accent_color_id"]   = r["accent_color_id"].as<int>();
 	user["profile_accent_color_id"] = r["profile_accent_color_id"].as<int>();
 	user["background_custom_emoji_id"] =

@@ -60,11 +60,6 @@ struct User {
 	bool		restricts_new_chats = false;
 	int64_t		paid_message_star_count = 0;
 
-	/* Relationship to the logged-in account. */
-	bool		is_contact = false;
-	bool		is_mutual_contact = false;
-	bool		is_close_friend = false;
-	bool		have_access = false;
 	std::string	language_code;
 
 	/* td_api::usernames */

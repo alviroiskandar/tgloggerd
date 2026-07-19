@@ -3,6 +3,13 @@
 -- Volatile online/offline status is intentionally not stored here; per
 -- attribute history (name, username, photo, ...) is tracked in dedicated
 -- tables added later.
+--
+-- Sparse or session-specific attributes (bio, phone number, appearance emoji
+-- ids, restriction/language, personal chat, ...) live in the separate
+-- user_extra_info table, which only holds a row when at least one of them is
+-- set. Fields that reveal the logged-in account's own relationship to the
+-- user (contact/close-friend/access) are not stored at all: they are
+-- meaningless once the logger is public.
 
 CREATE TABLE users (
 	-- td_api::user.id (int53): Telegram user identifier.
@@ -11,7 +18,6 @@ CREATE TABLE users (
 	-- Identity
 	first_name                         VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'User first name.',
 	last_name                          VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'User last name.',
-	phone_number                       VARCHAR(32)     NOT NULL DEFAULT '' COMMENT 'User phone number, if visible.',
 
 	-- td_api::UserType
 	type                               ENUM('regular', 'deleted', 'bot', 'unknown')
@@ -22,13 +28,6 @@ CREATE TABLE users (
 
 	-- Appearance
 	accent_color_id                    INT             NOT NULL DEFAULT 0 COMMENT 'td_api accent_color_id.',
-	background_custom_emoji_id         BIGINT          NOT NULL DEFAULT 0 COMMENT 'Custom emoji id for the name background; 0 if none.',
-	profile_accent_color_id            INT             NOT NULL DEFAULT -1 COMMENT 'Profile accent color id; -1 if none.',
-	profile_background_custom_emoji_id BIGINT          NOT NULL DEFAULT 0 COMMENT 'Custom emoji id for the profile background; 0 if none.',
-
-	-- td_api::emojiStatus
-	emoji_status_custom_emoji_id       BIGINT          NULL COMMENT 'Custom emoji id shown as emoji status; NULL if none.',
-	emoji_status_expiration_date       BIGINT          NULL COMMENT 'Unix time when the emoji status expires; NULL if none.',
 
 	-- td_api::verificationStatus
 	is_verified                        TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User is verified by Telegram.',
@@ -38,26 +37,7 @@ CREATE TABLE users (
 	is_premium                         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User has Telegram Premium.',
 	is_support                         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User is a Telegram support account.',
 
-	-- td_api::restrictionInfo
-	restriction_reason                 VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'Reason the user is restricted; empty if none.',
-	has_sensitive_content              TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User content is marked sensitive.',
-
-	restricts_new_chats                TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User may restrict new chats from non-contacts.',
-	paid_message_star_count            BIGINT          NOT NULL DEFAULT 0 COMMENT 'Telegram Stars required to message the user.',
-
-	-- Relationship to the logged-in account (td_api::user).
-	is_contact                         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User is in the account contacts.',
-	is_mutual_contact                  TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User is a mutual contact.',
-	is_close_friend                    TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'User is marked as a close friend.',
-	have_access                        TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'The account can use the user object.',
-
-	-- IETF BCP-47 language tag of the user, if known.
-	language_code                      VARCHAR(35)     NOT NULL DEFAULT '' COMMENT 'User language code.',
-
-	-- td_api::userFullInfo fields, fetched separately from the user object
-	-- (see user_hist_bio for bio history).
-	bio                                VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'User bio/about text.',
-	personal_chat_id                   BIGINT          NOT NULL DEFAULT 0 COMMENT 'Linked personal chat id; 0 if none.',
+	-- td_api::birthdate (from userFullInfo, fetched separately).
 	birthday_day                       TINYINT UNSIGNED NULL COMMENT 'Birthday day (1-31); NULL if unset.',
 	birthday_month                     TINYINT UNSIGNED NULL COMMENT 'Birthday month (1-12); NULL if unset.',
 	birthday_year                      SMALLINT UNSIGNED NULL COMMENT 'Birthday year; NULL if unset or hidden.',
