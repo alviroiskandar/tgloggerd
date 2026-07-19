@@ -74,6 +74,71 @@ bool viewInline(const std::string &fileType)
 	       fileType == "animation" || fileType == "sticker";
 }
 
+/* A single parsed byte range. present: a "bytes=..." header was given;
+ * satisfiable: it maps to a real [offset, offset+length) slice. */
+struct ByteRange {
+	bool	present = false;
+	bool	satisfiable = false;
+	size_t	offset = 0;
+	size_t	length = 0;
+};
+
+/*
+ * Parse the first range of an HTTP Range header ("bytes=start-end",
+ * "bytes=start-", "bytes=-suffix"). Only a single range is honoured; a
+ * multi-range request falls back to its first range. Returns present=false
+ * for anything that is not a byte range, and satisfiable=false for a byte
+ * range that cannot be met (so the caller answers 416).
+ */
+ByteRange parseRange(const std::string &header, uint64_t filesize)
+{
+	ByteRange r;
+	if (header.rfind("bytes=", 0) != 0 || filesize == 0)
+		return r;
+
+	std::string spec = header.substr(6);
+	auto comma = spec.find(',');
+	if (comma != std::string::npos)
+		spec = spec.substr(0, comma);
+	auto dash = spec.find('-');
+	if (dash == std::string::npos)
+		return r;
+
+	r.present = true;
+	std::string s = spec.substr(0, dash);
+	std::string e = spec.substr(dash + 1);
+	auto num = [](const std::string &x) -> uint64_t {
+		return strtoull(x.c_str(), nullptr, 10);
+	};
+
+	if (s.empty()) {
+		/* "-N": the last N bytes. */
+		if (e.empty())
+			return r;
+		uint64_t n = num(e);
+		if (n == 0)
+			return r;
+		if (n > filesize)
+			n = filesize;
+		r.offset = (size_t)(filesize - n);
+		r.length = (size_t)n;
+		r.satisfiable = true;
+	} else {
+		uint64_t start = num(s);
+		if (start >= filesize)
+			return r;	/* start past EOF -> 416 */
+		uint64_t end = e.empty() ? filesize - 1 : num(e);
+		if (end >= filesize)
+			end = filesize - 1;
+		if (end < start)
+			return r;
+		r.offset = (size_t)start;
+		r.length = (size_t)(end - start + 1);
+		r.satisfiable = true;
+	}
+	return r;
+}
+
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
@@ -126,13 +191,35 @@ MediaController::serve(drogon::HttpRequestPtr req, std::string token)
 			attachment = name;
 	}
 
-	/* Passing req lets Drogon honour Range and conditional requests; the
-	 * on-disk extension drives the Content-Type. */
-	auto resp = drogon::HttpResponse::newFileResponse(
-		path.string(), attachment, drogon::CT_NONE, "", req);
+	/*
+	 * Honour a Range request so media can be sought/skipped and downloads
+	 * resumed. This Drogon's newFileResponse(..., req) does not itself read
+	 * the Range header, so parse it and use the offset/length overload for
+	 * a partial (206). The on-disk extension drives the Content-Type.
+	 */
+	std::error_code sizeEc;
+	uint64_t filesize = std::filesystem::file_size(path, sizeEc);
+	ByteRange rng = parseRange(req->getHeader("range"), filesize);
 
-	/* A token maps to one immutable, content-addressed file, so it can be
-	 * cached indefinitely. */
+	drogon::HttpResponsePtr resp;
+	if (rng.present && !rng.satisfiable) {
+		resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::k416RequestedRangeNotSatisfiable);
+		resp->addHeader("Content-Range",
+				"bytes */" + std::to_string(filesize));
+	} else if (rng.satisfiable && rng.length < filesize) {
+		resp = drogon::HttpResponse::newFileResponse(
+			path.string(), rng.offset, rng.length,
+			/*setContentRange=*/true, attachment, drogon::CT_NONE,
+			"", req);
+	} else {
+		resp = drogon::HttpResponse::newFileResponse(
+			path.string(), attachment, drogon::CT_NONE, "", req);
+	}
+
+	/* Advertise range support on every response; a token maps to one
+	 * immutable, content-addressed file, so it stays cacheable. */
+	resp->addHeader("Accept-Ranges", "bytes");
 	resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
 	co_return resp;
 }
