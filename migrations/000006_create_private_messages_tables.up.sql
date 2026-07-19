@@ -58,6 +58,12 @@ CREATE TABLE private_messages (
 	-- of forward info (a private_message_fwd_info row) for quick filtering.
 	is_forwarded TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Message is a forwarded message.',
 
+	-- Album / media group. Messages sent together as one album (multiple
+	-- photos, documents, ...) share this non-NULL id
+	-- (td_api::message.media_album_id_, the server grouped_id). Each item
+	-- stays its own message row; NULL when the message is not in an album.
+	media_album_id BIGINT        NULL DEFAULT NULL COMMENT 'Album id shared by grouped messages; NULL if none.',
+
 	-- The message this one replies to. reply_to_chat_id/reply_to_msg_id
 	-- identify it universally (works across chats and tables, e.g. a reply
 	-- to a group message). reply_to_id is the surrogate-id FK, set only
@@ -79,6 +85,7 @@ CREATE TABLE private_messages (
 	KEY idx_private_messages_deleted_at (deleted_at),
 	KEY idx_private_messages_reply (reply_to_id),
 	KEY idx_private_messages_reply_target (reply_to_chat_id, reply_to_msg_id),
+	KEY idx_private_messages_album (chat_id, media_album_id),
 	CONSTRAINT fk_private_messages_chat_user
 		FOREIGN KEY (chat_id) REFERENCES users (id)
 		ON DELETE CASCADE ON UPDATE CASCADE,

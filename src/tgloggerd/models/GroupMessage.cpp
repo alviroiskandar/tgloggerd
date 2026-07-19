@@ -39,9 +39,9 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		" chat_id, message_id, sender_user_id, sender_chat_id,"
 		" is_outgoing, is_channel_post, author_signature, date,"
 		" edit_date, content_type, text, entities, service_type,"
-		" is_forwarded"
+		" is_forwarded, media_album_id"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_user_id = new.sender_user_id,"
 		" sender_chat_id = new.sender_chat_id,"
@@ -54,7 +54,8 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		" text = new.text,"
 		" entities = new.entities,"
 		" service_type = new.service_type,"
-		" is_forwarded = new.is_forwarded";
+		" is_forwarded = new.is_forwarded,"
+		" media_album_id = new.media_album_id";
 		/* deleted_at is deliberately not upserted here: a re-ingested
 		 * message (e.g. fetched to resolve a reply) must not clear an
 		 * existing deletion time. It is set only on the deletion path. */
@@ -91,6 +92,10 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 		if (msg.content.service_type.has_value())
 			service_param = *msg.content.service_type;
 
+		mysql::Param album_param = std::monostate{};
+		if (msg.media_album_id.has_value())
+			album_param = (int64_t)*msg.media_album_id;
+
 		std::string new_ct = models::to_string(msg.content.content_type);
 
 		auto bind_all = [&]() -> std::vector<mysql::Param> {
@@ -109,6 +114,7 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 				entities_param,
 				service_param,
 				b(msg.forward_info.has_value()),
+				album_param,
 			};
 		};
 

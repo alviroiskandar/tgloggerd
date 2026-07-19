@@ -1588,6 +1588,8 @@ void TDLib::Impl::build_private_message(const td_api::message &message,
 	out.date = message.date_;
 	out.edit_date = message.edit_date_;
 	out.is_deleted = false;
+	if (message.media_album_id_ != 0)
+		out.media_album_id = message.media_album_id_;
 
 	/*
 	 * Resolve the sender. Messages sent by the logged-in account are
@@ -1617,6 +1619,8 @@ void TDLib::Impl::build_group_message(const td_api::message &message,
 	out.date = message.date_;
 	out.edit_date = message.edit_date_;
 	out.is_deleted = false;
+	if (message.media_album_id_ != 0)
+		out.media_album_id = message.media_album_id_;
 
 	if (!message.author_signature_.empty())
 		out.author_signature = message.author_signature_;

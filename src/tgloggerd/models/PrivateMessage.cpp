@@ -42,9 +42,9 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		"INSERT INTO private_messages ("
 		" chat_id, message_id, sender_id, is_outgoing, date,"
 		" edit_date, content_type, text, entities, service_type,"
-		" is_forwarded"
+		" is_forwarded, media_album_id"
 		") VALUES ("
-		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+		" ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
 		") AS new ON DUPLICATE KEY UPDATE"
 		" sender_id = new.sender_id,"
 		" is_outgoing = new.is_outgoing,"
@@ -54,7 +54,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		" text = new.text,"
 		" entities = new.entities,"
 		" service_type = new.service_type,"
-		" is_forwarded = new.is_forwarded";
+		" is_forwarded = new.is_forwarded,"
+		" media_album_id = new.media_album_id";
 		/* deleted_at is intentionally not upserted; a re-ingested
 		 * message must not clear an existing deletion time. It is set
 		 * only on the deletion path below. */
@@ -86,6 +87,10 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		if (msg.content.service_type.has_value())
 			service_param = *msg.content.service_type;
 
+		mysql::Param album_param = std::monostate{};
+		if (msg.media_album_id.has_value())
+			album_param = (int64_t)*msg.media_album_id;
+
 		std::string new_ct = models::to_string(msg.content.content_type);
 
 		if (old_rows.empty()) {
@@ -112,6 +117,7 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 				entities_param,
 				service_param,
 				b(msg.forward_info.has_value()),
+				album_param,
 			});
 
 			/*
@@ -190,6 +196,7 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 			entities_param,
 			service_param,
 			b(msg.forward_info.has_value()),
+			album_param,
 		});
 
 		/*

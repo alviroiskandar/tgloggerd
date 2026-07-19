@@ -42,6 +42,10 @@ struct GroupMessage {
 	int64_t		date = 0;
 	int64_t		edit_date = 0;
 
+	/* Album (media group) id shared by messages sent together; nullopt
+	 * when the message is not part of an album. */
+	std::optional<int64_t>	media_album_id;
+
 	/* Content that an edit can change (type, text, file). */
 	MessageContent	content;
 
