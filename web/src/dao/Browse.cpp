@@ -73,6 +73,36 @@ std::string displayName(const drogon::orm::Row &r)
 }
 
 /*
+ * Give a link target an absolute scheme. Telegram auto-detects bare URLs like
+ * "example.com" (and text-link targets can omit the scheme too); without one,
+ * the browser treats the href as a path relative to the current page. Prepend
+ * "http://" when the value has no scheme and is not protocol-relative. Not
+ * escaped here -- the caller escapes for the attribute.
+ */
+std::string ensureUrlScheme(const std::string &url)
+{
+	if (url.empty())
+		return url;
+	/* Protocol-relative ("//host/...") is already absolute. */
+	if (url.size() >= 2 && url[0] == '/' && url[1] == '/')
+		return url;
+	/* A scheme is a letter then [A-Za-z0-9+.-]* then ':'. */
+	auto isSchemeChar = [](char c) {
+		return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		       (c >= '0' && c <= '9') || c == '+' || c == '.' || c == '-';
+	};
+	char c0 = url[0];
+	if ((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z')) {
+		size_t i = 1;
+		while (i < url.size() && isSchemeChar(url[i]))
+			i++;
+		if (i < url.size() && url[i] == ':')
+			return url; /* already has a scheme */
+	}
+	return "http://" + url;
+}
+
+/*
  * Render message text together with its TDLib formatting entities into safe
  * HTML. `text` is UTF-8; `entitiesJson` is the JSON array the daemon stores,
  * whose offset/length are UTF-16 code-unit spans (TDLib's convention). With
@@ -148,11 +178,13 @@ std::string renderFormatted(const std::string &text,
 		else if (type == "block_quote" || type == "expandable_block_quote")
 						{ ev.open = "<blockquote>"; ev.close = "</blockquote>"; }
 		else if (type == "text_url") {
-			ev.open = "<a href=\"" + Render::esc(e.value("url", std::string())) +
+			ev.open = "<a href=\"" +
+				  Render::esc(ensureUrlScheme(e.value("url", std::string()))) +
 				  "\" target=\"_blank\" rel=\"noopener nofollow\">";
 			ev.close = "</a>";
 		} else if (type == "url") {
-			ev.open = "<a href=\"" + Render::esc(text.substr(bs, be - bs)) +
+			ev.open = "<a href=\"" +
+				  Render::esc(ensureUrlScheme(text.substr(bs, be - bs))) +
 				  "\" target=\"_blank\" rel=\"noopener nofollow\">";
 			ev.close = "</a>";
 		} else if (type == "mention_name") {
