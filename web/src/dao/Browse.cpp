@@ -1540,10 +1540,14 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		std::string fk  = group ? "group_message_id" : "private_message_id";
 		std::string tbl = group ? "group_message_edits" : "private_message_edits";
 		std::string eq =
-			"SELECT " + fk + " AS mid, content_type, "
-			"LEFT(text, 4000) AS snippet, entities, file_id, "
-			"IF(edit_date>0, FROM_UNIXTIME(edit_date), NULL) AS edit_date_str "
-			"FROM " + tbl + " WHERE " + fk + " IN (" + idlist + ") ORDER BY id";
+			"SELECT e." + fk + " AS mid, e.content_type, "
+			"LEFT(e.text, 4000) AS snippet, e.entities, e.file_id, "
+			"f.file_ext AS f_ext, f.orig_file_name AS f_name, "
+			"f.file_size AS f_size, "
+			"IF(e.edit_date>0, FROM_UNIXTIME(e.edit_date), NULL) AS edit_date_str "
+			"FROM " + tbl + " e "
+			"LEFT JOIN files f ON f.id = e.file_id "
+			"WHERE e." + fk + " IN (" + idlist + ") ORDER BY e.id DESC";
 		auto er = co_await db->execSqlCoro(eq);
 
 		std::unordered_map<int64_t, nlohmann::json> editMap;
@@ -1552,8 +1556,21 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 			e["content_type"] = row["content_type"].as<std::string>();
 			e["text"]         = renderFormattedCols(row, "snippet", "entities");
 			e["edit_date"]    = escCol(row, "edit_date_str");
-			if (!row["file_id"].isNull())
-				e["file_id"] = row["file_id"].as<int64_t>();
+			/* An edit snapshot can carry media (text -> photo, photo -> other
+			 * photo, ...); render it like the message's own attachment. */
+			if (!row["file_id"].isNull()) {
+				nlohmann::json med;
+				med["file_id"] = row["file_id"].as<int64_t>();
+				std::string ext = row["f_ext"].isNull()
+						? std::string()
+						: row["f_ext"].as<std::string>();
+				med["render"] = mediaRender(
+					e["content_type"].get<std::string>(), ext);
+				med["name"]   = escCol(row, "f_name");
+				if (!row["f_size"].isNull())
+					med["size"] = row["f_size"].as<uint64_t>();
+				e["media"] = std::move(med);
+			}
 			int64_t mid = row["mid"].as<int64_t>();
 			if (!editMap.count(mid))
 				editMap[mid] = nlohmann::json::array();

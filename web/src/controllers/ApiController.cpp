@@ -46,8 +46,9 @@ void enrichUrls(nlohmann::json &m)
 					it["media"]["file_id"].get<int64_t>());
 	if (m.contains("edits"))
 		for (auto &e : m["edits"])
-			if (e.contains("file_id"))
-				e["url"] = fileUrl(e["file_id"].get<int64_t>());
+			if (e.contains("media") && e["media"].contains("file_id"))
+				e["media"]["url"] =
+					fileUrl(e["media"]["file_id"].get<int64_t>());
 }
 
 } /* namespace */

@@ -460,10 +460,30 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 
 .edit-history summary { cursor: pointer; color: var(--accent); }
 .edit-history[open] summary { margin-bottom: 0.3rem; }
-.edit-list { margin: 0.2rem 0 0.2rem 1rem; padding-left: 0.5rem; }
-.edit-list li { margin-bottom: 0.4rem; }
+/* One edit snapshot per row, stacked top-to-bottom (newest first); each bubble
+ * is only as wide as its content. */
+.edit-list {
+	list-style: none; margin: 0.3rem 0 0.2rem 1rem; padding-left: 0.5rem;
+	display: flex; flex-direction: column; align-items: flex-start;
+	gap: 0.4rem;
+}
+.edit-item {
+	display: inline-block; max-width: 100%;
+	padding: 0.4rem 0.55rem; border-radius: 10px;
+	background: var(--bg); border: 1px solid var(--border);
+}
 .edit-when { font-size: 0.72rem; }
 .edit-text { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+/* Media inside an edit snapshot: a compact square-ish preview, sized to the
+ * content up to a bound (a mini chat bubble per edit). */
+.edit-media { display: inline-block; margin: 0.25rem 0; line-height: 0; }
+.edit-media img, .edit-media video {
+	display: block; max-width: 240px; max-height: 240px;
+	width: auto; height: auto; border-radius: 8px;
+	object-fit: contain; cursor: zoom-in;
+}
+.edit-media.tgs-sticker { width: 140px; height: 140px; }
+.edit-media-file { margin: 0.25rem 0; }
 
 /* Highlight a message when navigated to via a reply link. */
 .msg:target .bubble {

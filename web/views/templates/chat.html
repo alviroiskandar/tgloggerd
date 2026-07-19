@@ -126,11 +126,12 @@
 ## else
             <ol class="edit-list">
 ## for e in m.edits
-              <li>
+              <li class="edit-item">
                 <div class="muted edit-when">{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}—{% endif %}</div>
+{% include "_edit_media.html" %}
 ## if e.text != ""
                 <div class="edit-text">{{ e.text }}</div>
-## else
+## else if not existsIn(e, "media")
                 <div class="muted">({{ e.content_type }})</div>
 ## endif
               </li>
@@ -234,12 +235,13 @@
 ## else
             <ol class="edit-list">
 ## for e in m.edits
-              <li>
+              <li class="edit-item">
                 <div class="muted edit-when">{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}—{% endif %}</div>
+{% include "_edit_media.html" %}
 ## if e.text != ""
                 <div class="edit-text">{{ e.text }}</div>
-## else
-                <div class="muted">({{ e.content_type }}{% if existsIn(e, "file_id") %}, <a href="{{ media(e.file_id) }}">file #{{ e.file_id }}</a>{% endif %})</div>
+## else if not existsIn(e, "media")
+                <div class="muted">({{ e.content_type }})</div>
 ## endif
               </li>
 ## endfor

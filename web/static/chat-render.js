@@ -113,7 +113,29 @@
 		}
 	}
 
-	function edits(m, withFile) {
+	/* Media snapshot inside an edit (text -> photo, photo -> other photo, ...);
+	 * mirrors views/templates/_edit_media.html. */
+	function editMedia(e) {
+		if (!e.media)
+			return "";
+		var u = e.media.url;
+		switch (e.media.render) {
+		case "image":
+			return '<a class="edit-media zoomable" data-zoom="image" data-src="' + u + '" href="' + u + '"><img src="' + u + '" alt="' + e.content_type + '" loading="lazy"></a>';
+		case "video":
+			return '<a class="edit-media media-thumb zoomable" data-zoom="video" data-src="' + u + '" href="' + u + '"><video src="' + u + '" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>';
+		case "animation":
+			return '<a class="edit-media media-thumb zoomable" data-zoom="animation" data-src="' + u + '" href="' + u + '"><video src="' + u + '" autoplay loop muted playsinline preload="metadata"></video></a>';
+		case "lottie":
+			return '<div class="edit-media tgs-sticker zoomable" data-zoom="lottie" data-tgs="' + u + '"><a class="msg-file" href="' + u + '">🎞️ ' + (e.media.name !== "" ? e.media.name : "animated sticker") + "</a></div>";
+		case "audio":
+			return '<audio class="msg-audio" src="' + u + '" controls preload="none"></audio>';
+		default:
+			return '<a class="edit-media-file msg-file" href="' + u + '">📎 ' + (e.media.name !== "" ? e.media.name : e.content_type + " file") + (e.media.size !== undefined ? ' <span class="muted">(' + e.media.size + " bytes)</span>" : "") + "</a>";
+		}
+	}
+
+	function edits(m) {
 		if (!m.is_edited)
 			return "";
 		var inner;
@@ -122,15 +144,12 @@
 		} else {
 			inner = '<ol class="edit-list">' + m.edits.map(function (e) {
 				var when = '<div class="muted edit-when">' + (e.edit_date !== "" ? e.edit_date : "—") + "</div>";
-				var body;
-				if (e.text !== "") {
-					body = '<div class="edit-text">' + e.text + "</div>";
-				} else {
-					var file = (withFile && e.file_id !== undefined)
-						? ', <a href="' + e.url + '">file #' + e.file_id + "</a>" : "";
-					body = '<div class="muted">(' + e.content_type + file + ")</div>";
-				}
-				return "<li>" + when + body + "</li>";
+				var body = editMedia(e);
+				if (e.text !== "")
+					body += '<div class="edit-text">' + e.text + "</div>";
+				else if (!e.media)
+					body += '<div class="muted">(' + e.content_type + ")</div>";
+				return '<li class="edit-item">' + when + body + "</li>";
 			}).join("") + "</ol>";
 		}
 		return '<details class="edit-history"><summary>edited</summary>' + inner + "</details>";
@@ -159,7 +178,7 @@
 		var text = m.text !== "" ? '<div class="msg-text">' + m.text + "</div>" : "";
 		var badge = m.any_deleted ? ' <span class="badge warn">contains deleted</span>' : "";
 		var meta = '<div class="msg-meta"><span class="msg-time">' + (m.date !== "" ? m.date : "—") +
-			'</span><span class="muted">· album · ' + m.items.length + " items</span>" + edits(m, false) + badge + "</div>";
+			'</span><span class="muted">· album · ' + m.items.length + " items</span>" + edits(m) + badge + "</div>";
 		return '<div class="msg ' + (m.is_outgoing ? "out" : "in") + '" data-day="' + m.day + '">' + av +
 			'<div class="bubble">' + senderLine(m) + forward(m) + reply(m) +
 			'<div class="album">' + items + "</div>" + text + meta + "</div></div>";
@@ -172,7 +191,7 @@
 		var text = m.text !== "" ? '<div class="msg-text">' + m.text + "</div>" : "";
 		var del = m.is_deleted
 			? ' <span class="badge warn">deleted' + (m.deleted_at !== undefined ? " · " + m.deleted_at : "") + "</span>" : "";
-		var meta = '<div class="msg-meta"><span class="msg-time">' + (m.date !== "" ? m.date : "—") + "</span>" + edits(m, true) + del + "</div>";
+		var meta = '<div class="msg-meta"><span class="msg-time">' + (m.date !== "" ? m.date : "—") + "</span>" + edits(m) + del + "</div>";
 		return '<div class="' + cls + '" id="msg-' + m.msg_id + '" data-day="' + m.day + '">' + av +
 			'<div class="bubble">' + senderLine(m) + forward(m) + reply(m) + singleMedia(m) + text + sig + meta + "</div></div>";
 	}
