@@ -111,6 +111,8 @@ UsersController::chat(drogon::HttpRequestPtr req, std::string id)
 	data["has_newer"]   = hist.contains("newer_after");
 	data["newer_after"] = hist.contains("newer_after") ? hist["newer_after"]
 							   : nlohmann::json(0);
+	data["oldest_msg_id"] = hist.value("oldest_msg_id", (int64_t)0);
+	data["newest_msg_id"] = hist.value("newest_msg_id", (int64_t)0);
 
 	co_return htmlPage(views::Render::page("chat.html", data));
 }

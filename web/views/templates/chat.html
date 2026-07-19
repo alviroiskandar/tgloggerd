@@ -1,8 +1,11 @@
 <link rel="stylesheet" href="/flatpickr.min.css">
-<section class="chat" data-limit="{{ limit }}">
+<section class="chat" data-limit="{{ limit }}" data-scope="{{ scope }}" data-chat-id="{{ chat.id }}"
+         data-older-after="{% if has_older %}{{ older_after }}{% endif %}" data-newer-after="{% if has_newer %}{{ newer_after }}{% endif %}"
+         data-oldest="{{ oldest_msg_id }}" data-newest="{{ newest_msg_id }}">
   <div class="chat-jump">
     <input type="text" id="chat-date" class="chat-date-input" placeholder="Jump to date &amp; time…" autocomplete="off">
     <button type="button" id="chat-date-go" class="pager-btn">Go</button>
+    <label class="chat-auto"><input type="checkbox" id="chat-auto"> Auto-load &amp; live</label>
   </div>
   <header class="chat-head">
 ## if chat.kind == "group"
@@ -29,6 +32,7 @@
       <a class="pager-btn" href="?limit={{ limit }}&amp;after=0#top">⤒ Oldest</a>
     </div>
 ## endif
+    <div class="chat-msgs" id="chat-msgs">
 ## if length(messages) == 0
     <p class="chat-empty muted">No messages recorded for this chat.</p>
 ## else
@@ -252,6 +256,7 @@
 ## endif
 ## endfor
 ## endif
+    </div>
 ## if has_newer
     <div class="chat-pager bottom">
       <a class="pager-btn" href="?limit={{ limit }}&amp;after={{ newer_after }}">↓ Load newer messages</a>
@@ -259,6 +264,9 @@
     </div>
 ## endif
   </div>
+  <button class="chat-scrolldown" id="chat-scrolldown" type="button" aria-label="Jump to newest message">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
 </section>
 
 <div class="media-modal" id="media-modal" hidden>
@@ -266,4 +274,5 @@
   <div class="media-modal-body" id="media-modal-body"></div>
 </div>
 <script src="/flatpickr.min.js" defer></script>
+<script src="/chat-render.js" defer></script>
 <script src="/chat.js" defer></script>

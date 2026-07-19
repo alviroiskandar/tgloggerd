@@ -1662,6 +1662,8 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		auto mm = std::minmax_element(pageIds.begin(), pageIds.end());
 		int64_t mFirst = *mm.first;	/* oldest id on the page */
 		int64_t mLast  = *mm.second;	/* newest id on the page */
+		j["oldest_msg_id"] = mFirst;
+		j["newest_msg_id"] = mLast;
 
 		/*
 		 * Older cursor: the `limit` messages just below mFirst. The

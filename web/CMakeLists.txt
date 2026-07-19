@@ -96,6 +96,7 @@ add_executable(tgloggerd_web
 	src/controllers/GroupsController.cpp
 	src/controllers/MessagesController.cpp
 	src/controllers/FilesController.cpp
+	src/controllers/ApiController.cpp
 	src/controllers/MediaController.cpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
