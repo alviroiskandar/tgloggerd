@@ -25,6 +25,110 @@
     <div class="msg-service" id="msg-{{ m.msg_id }}">
       <span class="service-bubble">{% if existsIn(m.sender, "name") and m.sender.name != "" %}{% if m.sender.kind == "user" %}<a class="service-who" href="/users/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else if m.sender.kind == "group" %}<a class="service-who" href="/groups/{{ m.sender.id }}">{{ m.sender.name }}</a>{% else %}<span class="service-who">{{ m.sender.name }}</span>{% endif %} {% endif %}{% if m.text != "" %}{{ m.text }}{% else %}{{ m.service_type }}{% endif %}<span class="service-time muted"> · {% if m.date != "" %}{{ m.date }}{% else %}—{% endif %}</span>{% if m.is_deleted %} <span class="badge warn">deleted</span>{% endif %}</span>
     </div>
+## else if existsIn(m, "is_album") and m.is_album
+    <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}">
+## if not m.is_outgoing
+## if existsIn(m.sender, "photo_file_id")
+## if m.sender.kind == "user"
+      <a href="/users/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+## else if m.sender.kind == "group"
+      <a href="/groups/{{ m.sender.id }}"><img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt=""></a>
+## else
+      <img class="avatar-sm msg-avatar" src="/media/{{ m.sender.photo_file_id }}" alt="">
+## endif
+## else
+      <span class="avatar-sm placeholder msg-avatar"></span>
+## endif
+## endif
+      <div class="bubble">
+## if m.show_sender
+        <div class="msg-sender">
+## if m.sender.kind == "user"
+          <a href="/users/{{ m.sender.id }}">{{ m.sender.name }}</a>{% if existsIn(m.sender, "username") and m.sender.username != "" %} <span class="muted">@{{ m.sender.username }}</span>{% endif %}
+## else if m.sender.kind == "group"
+          <a href="/groups/{{ m.sender.id }}">{{ m.sender.name }}</a>
+## else
+          {{ m.sender.name }}
+## endif
+        </div>
+## endif
+## if existsIn(m, "forward")
+        <div class="fwd">
+          <span class="fwd-label muted">Forwarded from</span>
+## if existsIn(m.forward, "user_id")
+          <a href="/users/{{ m.forward.user_id }}">{% if m.forward.sender_name != "" %}{{ m.forward.sender_name }}{% else %}user #{{ m.forward.user_id }}{% endif %}</a>
+## else if existsIn(m.forward, "chat_id")
+          <a href="/groups/{{ m.forward.chat_id }}">{% if m.forward.sender_name != "" %}{{ m.forward.sender_name }}{% else %}chat #{{ m.forward.chat_id }}{% endif %}</a>
+## else if m.forward.sender_name != ""
+          <span class="fwd-name">{{ m.forward.sender_name }}</span>
+## else
+          <span class="fwd-name">{{ m.forward.type }}</span>
+## endif
+        </div>
+## endif
+## if existsIn(m, "reply")
+        <a class="reply-quote" href="#msg-{{ m.reply.msg_id }}">
+## if m.reply.in_chat
+          <span class="reply-name">{% if m.reply.sender_name != "" %}{{ m.reply.sender_name }}{% else %}In reply to{% endif %}</span>
+          <span class="reply-text">{% if m.reply.deleted %}<span class="muted">(deleted message)</span>{% else if m.reply.snippet != "" %}{{ m.reply.snippet }}{% else %}<span class="muted">{{ m.reply.content_type }}</span>{% endif %}</span>
+## else
+          <span class="reply-name">In reply to</span>
+          <span class="reply-text muted">message #{{ m.reply.msg_id }}</span>
+## endif
+        </a>
+## endif
+        <div class="album">
+## for it in m.items
+## if it.is_deleted
+          <span class="album-item wide deleted" id="msg-{{ it.msg_id }}"><span class="muted">(deleted)</span></span>
+## else if existsIn(it, "media")
+## if it.media.render == "image"
+          <a class="album-item" id="msg-{{ it.msg_id }}" href="/media/{{ it.media.file_id }}" target="_blank" rel="noopener"><img src="/media/{{ it.media.file_id }}" alt="{{ it.content_type }}" loading="lazy"></a>
+## else if it.media.render == "video"
+          <video class="album-item" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" controls preload="metadata"></video>
+## else if it.media.render == "animation"
+          <video class="album-item" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" autoplay loop muted playsinline preload="metadata"></video>
+## else if it.media.render == "audio"
+          <audio class="album-item wide" id="msg-{{ it.msg_id }}" src="/media/{{ it.media.file_id }}" controls preload="none"></audio>
+## else
+          <a class="album-item wide msg-file" id="msg-{{ it.msg_id }}" href="/media/{{ it.media.file_id }}">📎 {% if it.media.name != "" %}{{ it.media.name }}{% else %}{{ it.content_type }} file{% endif %}</a>
+## endif
+## endif
+## endfor
+        </div>
+## if m.text != ""
+        <div class="msg-text">{{ m.text }}</div>
+## endif
+        <div class="msg-meta">
+          <span class="msg-time">{% if m.date != "" %}{{ m.date }}{% else %}—{% endif %}</span>
+          <span class="muted">· album · {{ length(m.items) }} items</span>
+## if m.is_edited
+          <details class="edit-history">
+            <summary>edited</summary>
+## if length(m.edits) == 0
+            <p class="muted">No prior versions recorded.</p>
+## else
+            <ol class="edit-list">
+## for e in m.edits
+              <li>
+                <div class="muted edit-when">{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}—{% endif %}</div>
+## if e.text != ""
+                <div class="edit-text">{{ e.text }}</div>
+## else
+                <div class="muted">({{ e.content_type }})</div>
+## endif
+              </li>
+## endfor
+            </ol>
+## endif
+          </details>
+## endif
+## if existsIn(m, "any_deleted") and m.any_deleted
+          <span class="badge warn">contains deleted</span>
+## endif
+        </div>
+      </div>
+    </div>
 ## else
     <div class="msg {% if m.is_outgoing %}out{% else %}in{% endif %}{% if m.is_deleted %} deleted{% endif %}" id="msg-{{ m.msg_id }}">
 ## if not m.is_outgoing

@@ -1240,6 +1240,11 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 	if (!r["service_type"].isNull())
 		m["service_type"] = r["service_type"].as<std::string>();
 
+	/* Album membership: messages sent together share this id. The grouping
+	 * into one bubble happens after the per-message build (see chatHistory). */
+	if (!r["media_album_id"].isNull())
+		m["album_id"] = r["media_album_id"].as<int64_t>();
+
 	/* Sender: a chat/channel, a user, the logged-in account, or unknown. */
 	nlohmann::json s;
 	if (!r["sender_chat_id"].isNull()) {
@@ -1371,7 +1376,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
 		"m.file_id, m.deleted_at, "
-		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
+		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_user_id "
@@ -1400,7 +1405,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, m.text, m.entities, m.service_type, "
 		"m.file_id, m.deleted_at, "
-		"m.is_forwarded, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
+		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_id "
@@ -1475,9 +1480,86 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 	}
 
 	/* Reverse to oldest-first for rendering; front() is then the oldest. */
-	nlohmann::json out = nlohmann::json::array();
+	nlohmann::json ordered = nlohmann::json::array();
 	for (auto it = msgs.rbegin(); it != msgs.rend(); ++it)
-		out.push_back(std::move(*it));
+		ordered.push_back(std::move(*it));
+
+	/*
+	 * Collapse albums (media groups). Messages sent together share an
+	 * album_id and arrive as consecutive rows; fold each run of two or more
+	 * into a single bubble that carries the shared caption, reply and
+	 * forward, plus one entry per media item (each keeping its own msg_id so
+	 * replies can still anchor to it). A lone album item -- the rest fell
+	 * outside the window -- is left as an ordinary message.
+	 */
+	nlohmann::json out = nlohmann::json::array();
+	for (size_t i = 0; i < ordered.size();) {
+		if (!ordered[i].contains("album_id")) {
+			out.push_back(std::move(ordered[i]));
+			i++;
+			continue;
+		}
+
+		int64_t album = ordered[i]["album_id"].get<int64_t>();
+		size_t k = i;
+		while (k < ordered.size() && ordered[k].contains("album_id") &&
+		       ordered[k]["album_id"].get<int64_t>() == album)
+			k++;
+
+		if (k - i == 1) {
+			out.push_back(std::move(ordered[i]));
+			i = k;
+			continue;
+		}
+
+		nlohmann::json a;
+		const nlohmann::json &first = ordered[i];
+		a["is_album"]    = true;
+		a["is_service"]  = false;
+		a["album_id"]    = album;
+		a["msg_id"]      = first["msg_id"];
+		a["date"]        = first["date"];
+		a["is_outgoing"] = first["is_outgoing"];
+		a["show_sender"] = first["show_sender"];
+		a["sender"]      = first["sender"];
+		a["text"]        = std::string();
+		a["is_edited"]   = false;
+		a["edits"]       = nlohmann::json::array();
+
+		nlohmann::json items = nlohmann::json::array();
+		bool anyDeleted = false;
+		for (size_t j = i; j < k; j++) {
+			nlohmann::json &m = ordered[j];
+			/* Shared attributes: take the first that carries them. */
+			if (!a.contains("reply") && m.contains("reply"))
+				a["reply"] = m["reply"];
+			if (!a.contains("forward") && m.contains("forward"))
+				a["forward"] = m["forward"];
+			/* The caption lives on one item; keep its edit history too. */
+			if (a["text"].get<std::string>().empty() &&
+			    m.contains("text") &&
+			    !m["text"].get<std::string>().empty()) {
+				a["text"]      = m["text"];
+				a["is_edited"] = m.value("is_edited", false);
+				if (m.contains("edits"))
+					a["edits"] = m["edits"];
+			}
+
+			nlohmann::json it;
+			it["msg_id"]       = m["msg_id"];
+			it["content_type"] = m["content_type"];
+			it["is_deleted"]   = m.value("is_deleted", false);
+			if (m["is_deleted"].get<bool>())
+				anyDeleted = true;
+			if (m.contains("media"))
+				it["media"] = m["media"];
+			items.push_back(std::move(it));
+		}
+		a["items"]       = std::move(items);
+		a["any_deleted"] = anyDeleted;
+		out.push_back(std::move(a));
+		i = k;
+	}
 
 	nlohmann::json j;
 	j["oldest_msg_id"] = out.empty() ? 0 : out.front()["msg_id"].get<int64_t>();

@@ -306,6 +306,28 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 	align-items: center; justify-content: center; }
 .tgs-sticker svg { width: 100%; height: 100%; }
 .msg-audio { display: block; margin: 0.2rem 0; max-width: 100%; }
+
+/* Album (media group): several attachments sent together, shown as a grid. */
+.album {
+	display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+	max-width: 380px; margin: 0.15rem 0;
+	border-radius: 8px; overflow: hidden;
+}
+.album .album-item { margin: 0; min-width: 0; }
+.album .album-item img, .album .album-item video {
+	display: block; width: 100%; height: 100%;
+	aspect-ratio: 1 / 1; object-fit: cover; cursor: zoom-in;
+}
+/* Full-width rows for non-grid items (audio, files, deleted placeholders). */
+.album .album-item.wide { grid-column: 1 / -1; }
+.album .album-item.wide.msg-file, .album .album-item.wide audio { width: 100%; }
+.album .album-item.deleted {
+	display: flex; align-items: center; justify-content: center;
+	min-height: 48px; background: var(--bg); border: 1px dashed var(--border);
+	text-decoration: line-through;
+}
+.album .album-item:target img, .album .album-item:target video,
+.album .album-item:target { outline: 2px solid var(--accent); outline-offset: -2px; }
 .msg-file {
 	display: inline-block; margin: 0.2rem 0; padding: 0.4rem 0.6rem;
 	background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
