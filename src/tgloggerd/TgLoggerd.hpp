@@ -43,6 +43,12 @@ private:
 	std::string storage_dir_;
 	/* Delete TDLib's own cached copy after storing our own (avoid dup). */
 	bool prune_tdlib_files_ = true;
+	/*
+	 * Files whose size is >= this many bytes are not copied into the store
+	 * (only their metadata is recorded, so they stay identifiable/
+	 * re-downloadable by tg_file_id); 0 disables the limit. Default 1 GiB.
+	 */
+	uint64_t max_store_file_size_ = 1073741824ULL;
 	log_hd_t *l_ = nullptr;
 	std::unique_ptr<TDLib> tdlib_;
 	std::unique_ptr<DB> db_;

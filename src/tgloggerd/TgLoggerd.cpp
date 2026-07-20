@@ -190,6 +190,17 @@ int TgLoggerd::start(void)
 	pr_debug(l_, "prune_tdlib_files: %d", (int)prune_tdlib_files_);
 
 	/*
+	 * Storage is limited: files at or above this size are not copied into
+	 * the store; only their metadata (tg_file_id, sha256, size, ...) is
+	 * recorded so they remain identifiable and re-downloadable later. 0
+	 * disables the cap.
+	 */
+	max_store_file_size_ = strtoull(
+		env("TG_MAX_STORE_FILE_SIZE", "1073741824").c_str(), nullptr, 10);
+	pr_debug(l_, "max_store_file_size: %llu bytes",
+		 (unsigned long long)max_store_file_size_);
+
+	/*
 	 * Construct the workers only past the early-return points above, so a
 	 * failed startup never leaves threads to join. serial_ = 1 thread
 	 * (strict FIFO); files_ = file_threads.
@@ -533,32 +544,56 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 		name += "." + ext;
 
 	/*
-	 * Fan out into 5 levels of two-hex-digit directories based on the
-	 * first 5 octets of the digest, e.g. for 0a533d97ed... the file is
-	 * stored as 0a/53/3d/97/ed/<sha256>[.ext].
+	 * Storage is limited. Files at or above max_store_file_size_ are not
+	 * copied into the store -- only their metadata is recorded below, so
+	 * they stay identifiable and re-downloadable by tg_file_id. Decide on
+	 * the actual on-disk size, falling back to TDLib's reported size.
 	 */
-	fs::path dir = storage_dir_;
-	for (int i = 0; i < 5; i++)
-		dir /= hex->substr((size_t)i * 2, 2);
-	fs::path dest = dir / name;
+	std::error_code szec;
+	uintmax_t on_disk_size = fs::file_size(local_path, szec);
+	uint64_t size_for_policy = szec
+		? (uint64_t)(file_size < 0 ? 0 : file_size)
+		: (uint64_t)on_disk_size;
+	bool store_bytes = (max_store_file_size_ == 0) ||
+			   (size_for_policy < max_store_file_size_);
 
-	std::error_code ec;
-	fs::create_directories(dir, ec);
-	if (ec) {
-		pr_error(l_, "Failed to create storage directory %s: %s",
-			 dir.c_str(), ec.message().c_str());
-		return std::nullopt;
-	}
-	/*
-	 * skip_existing makes the copy a no-op (no error) when the
-	 * content-addressed destination is already present, which also makes
-	 * concurrent file-pool workers copying identical content race-free.
-	 */
-	fs::copy_file(local_path, dest, fs::copy_options::skip_existing, ec);
-	if (ec) {
-		pr_error(l_, "Failed to copy file to %s: %s",
-			 dest.c_str(), ec.message().c_str());
-		return std::nullopt;
+	if (store_bytes) {
+		/*
+		 * Fan out into 5 levels of two-hex-digit directories based on
+		 * the first 5 octets of the digest, e.g. for 0a533d97ed... the
+		 * file is stored as 0a/53/3d/97/ed/<sha256>[.ext].
+		 */
+		fs::path dir = storage_dir_;
+		for (int i = 0; i < 5; i++)
+			dir /= hex->substr((size_t)i * 2, 2);
+		fs::path dest = dir / name;
+
+		std::error_code ec;
+		fs::create_directories(dir, ec);
+		if (ec) {
+			pr_error(l_, "Failed to create storage directory %s: %s",
+				 dir.c_str(), ec.message().c_str());
+			return std::nullopt;
+		}
+		/*
+		 * skip_existing makes the copy a no-op (no error) when the
+		 * content-addressed destination is already present, which also
+		 * makes concurrent file-pool workers copying identical content
+		 * race-free.
+		 */
+		fs::copy_file(local_path, dest, fs::copy_options::skip_existing,
+			      ec);
+		if (ec) {
+			pr_error(l_, "Failed to copy file to %s: %s",
+				 dest.c_str(), ec.message().c_str());
+			return std::nullopt;
+		}
+	} else {
+		pr_info(l_, "File too large to store (%llu bytes >= %llu limit);"
+			" recording metadata only | tg_file_id=%s sha256=%s",
+			(unsigned long long)size_for_policy,
+			(unsigned long long)max_store_file_size_,
+			tg_file_id.c_str(), hex->c_str());
 	}
 
 	models::File f;
