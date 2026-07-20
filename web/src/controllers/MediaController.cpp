@@ -159,6 +159,13 @@ MediaController::serve(drogon::HttpRequestPtr req, std::string token)
 		co_return renderStatus(req, drogon::k404NotFound, "File not found",
 				       "No file exists with that id.");
 
+	/* Too large to keep: only the metadata was recorded. */
+	if (!meta->onDisk)
+		co_return renderStatus(req, drogon::k404NotFound,
+				       "File not stored",
+				       "This file was too large to keep in "
+				       "storage; only its metadata was recorded.");
+
 	/* DB-derived path only: <dir>/aa/bb/cc/dd/ee/<hex>[.ext]. */
 	std::string ext = safeExt(meta->ext);
 	std::filesystem::path path = storageDir();

@@ -484,6 +484,14 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 }
 .edit-media.tgs-sticker { width: 140px; height: 140px; }
 .edit-media-file { margin: 0.25rem 0; }
+/* A file too large to keep in storage: only its metadata was recorded. */
+.media-missing {
+	display: inline-block; margin: 0.25rem 0; padding: 0.5rem 0.7rem;
+	border-radius: 8px; background: var(--bg);
+	border: 1px dashed var(--border); color: var(--fg);
+	font-size: 0.92rem; line-height: 1.35; max-width: 100%;
+	word-break: break-word;
+}
 
 /* Highlight a message when navigated to via a reply link. */
 .msg:target .bubble {

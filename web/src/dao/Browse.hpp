@@ -118,6 +118,7 @@ struct FileMeta {
 	std::string fileType;  /* "photo", "video", "document", ...          */
 	std::string origName;  /* original Telegram file name, or empty.     */
 	uint64_t    size;      /* file size in bytes.                        */
+	bool        onDisk;    /* false = metadata-only (too large to store).*/
 };
 
 /*

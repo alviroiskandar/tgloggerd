@@ -1120,7 +1120,7 @@ drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 {
 	std::string q =
 		"SELECT LOWER(HEX(sha256)) AS hex, file_ext, file_type, "
-		"orig_file_name, file_size FROM files WHERE id = ?";
+		"orig_file_name, file_size, on_disk FROM files WHERE id = ?";
 	auto r = co_await db->execSqlCoro(q, id);
 	if (r.empty())
 		co_return std::nullopt;
@@ -1133,6 +1133,7 @@ drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 	f.origName = row["orig_file_name"].isNull()
 			     ? "" : row["orig_file_name"].as<std::string>();
 	f.size     = row["file_size"].as<uint64_t>();
+	f.onDisk   = row["on_disk"].as<int>() != 0;
 	co_return f;
 }
 
@@ -1176,7 +1177,7 @@ drogon::Task<nlohmann::json> listFiles(drogon::orm::DbClientPtr db,
 	 * The SQL string lives in a named local so it outlives the suspension. */
 	std::string q =
 		"SELECT id, file_type, file_ext, orig_file_name, file_size, "
-		"hit_count, created_at FROM files "
+		"hit_count, created_at, on_disk FROM files "
 		"WHERE (? = 0 OR id < ?)";
 	if (filter)
 		q += " AND file_type = ?";
@@ -1209,6 +1210,7 @@ drogon::Task<nlohmann::json> listFiles(drogon::orm::DbClientPtr db,
 		f["size_h"]     = humanSize(r["file_size"].as<uint64_t>());
 		f["hits"]       = r["hit_count"].as<uint64_t>();
 		f["created_at"] = escCol(r, "created_at");
+		f["stored"]     = r["on_disk"].as<int>() != 0;
 		files.push_back(std::move(f));
 	}
 
@@ -1331,6 +1333,9 @@ nlohmann::json buildChatMessage(const drogon::orm::Row &r, int64_t &rowId,
 		med["name"]    = escCol(r, "f_name");
 		if (!r["f_size"].isNull())
 			med["size"] = r["f_size"].as<uint64_t>();
+		/* false = too large, only metadata kept (bytes not in store). */
+		med["stored"]  = r["f_on_disk"].isNull() ||
+				 r["f_on_disk"].as<int>() != 0;
 		m["media"] = std::move(med);
 	}
 
@@ -1451,7 +1456,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_user_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"sg.title AS sg_title, sg.photo_file_id AS sg_photo, "
-		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, "
+		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, f.on_disk AS f_on_disk, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
 		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
@@ -1480,7 +1485,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"NULL AS sg_title, NULL AS sg_photo, "
-		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, "
+		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, f.on_disk AS f_on_disk, "
 		"fw.origin_type, fw.origin_sender_user_id, fw.origin_sender_name, "
 		"fw.origin_chat_id, fw.origin_message_id, "
 		"rm.message_id AS r_msg_id, rm.deleted_at AS r_deleted_at, "
@@ -1543,7 +1548,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 			"SELECT e." + fk + " AS mid, e.content_type, "
 			"LEFT(e.text, 4000) AS snippet, e.entities, e.file_id, "
 			"f.file_ext AS f_ext, f.orig_file_name AS f_name, "
-			"f.file_size AS f_size, "
+			"f.file_size AS f_size, f.on_disk AS f_on_disk, "
 			"IF(e.edit_date>0, FROM_UNIXTIME(e.edit_date), NULL) AS edit_date_str "
 			"FROM " + tbl + " e "
 			"LEFT JOIN files f ON f.id = e.file_id "
@@ -1569,6 +1574,8 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 				med["name"]   = escCol(row, "f_name");
 				if (!row["f_size"].isNull())
 					med["size"] = row["f_size"].as<uint64_t>();
+				med["stored"] = row["f_on_disk"].isNull() ||
+						row["f_on_disk"].as<int>() != 0;
 				e["media"] = std::move(med);
 			}
 			int64_t mid = row["mid"].as<int64_t>();

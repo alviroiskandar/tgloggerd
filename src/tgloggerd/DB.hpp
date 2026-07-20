@@ -15,6 +15,9 @@
 #include <tgloggerd/models/Backfill.hpp>
 
 #include <vector>
+#include <string>
+#include <cstdint>
+#include <unordered_map>
 
 namespace tgloggerd {
 
@@ -50,6 +53,12 @@ public:
 	 * bump its hit_count. Returns the files.id in both cases.
 	 */
 	uint64_t upsertFile(const models::File &f);
+
+	/*
+	 * Load the full tg_file_id -> files.id index, so the daemon can link a
+	 * message to a file it already recorded without re-downloading it.
+	 */
+	std::unordered_map<std::string, uint64_t> loadFileIndex(void);
 
 	/* Point a user's profile_photo_file_id at a files row. */
 	void setUserProfilePhoto(int64_t user_id, uint64_t file_id);

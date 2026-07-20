@@ -201,6 +201,17 @@ int TgLoggerd::start(void)
 		 (unsigned long long)max_store_file_size_);
 
 	/*
+	 * Seed the tg_file_id -> files.id index so the loop thread can link a
+	 * message to a file we already recorded instead of re-downloading it.
+	 */
+	try {
+		known_files_ = db_->loadFileIndex();
+		pr_debug(l_, "file index: %zu known files", known_files_.size());
+	} catch (const std::exception &e) {
+		pr_error(l_, "Failed to load file index: %s", e.what());
+	}
+
+	/*
 	 * Construct the workers only past the early-return points above, so a
 	 * failed startup never leaves threads to join. serial_ = 1 thread
 	 * (strict FIFO); files_ = file_threads.
@@ -327,6 +338,28 @@ int TgLoggerd::start(void)
 					 " chat_id=%lld msg_id=%lld: %s",
 					 (long long)mf.chat_id,
 					 (long long)mf.message_id, e.what());
+			}
+		});
+	});
+	/* Loop-thread predicate: is this file already recorded? */
+	tdlib_->setFileLookup([this](const std::string &tg_file_id)
+			      -> std::optional<uint64_t> {
+		std::lock_guard<std::mutex> lk(known_files_mtx_);
+		auto it = known_files_.find(tg_file_id);
+		if (it == known_files_.end())
+			return std::nullopt;
+		return it->second;
+	});
+	/* Link a message to an already-recorded file (no re-download). */
+	tdlib_->setMessageFileLinkHandler([this](const MessageFileLink &lk) {
+		serial_->post([this, lk] {
+			try {
+				onMessageFileLink(lk);
+			} catch (const std::exception &e) {
+				pr_error(l_, "Failed to link message file"
+					 " chat_id=%lld msg_id=%lld: %s",
+					 (long long)lk.chat_id,
+					 (long long)lk.message_id, e.what());
 			}
 		});
 	});
@@ -520,6 +553,24 @@ void TgLoggerd::onMessageFile(const MessageFile &m)
 	});
 }
 
+/*
+ * Link a message to a file we already recorded, looked up by remote id on the
+ * loop thread (see setFileLookup). Runs on serial_, after the message row was
+ * written, so the FK update lands in order -- exactly like onMessageFile's link
+ * step, but without downloading, hashing or storing the file again.
+ */
+void TgLoggerd::onMessageFileLink(const MessageFileLink &lk)
+{
+	if (lk.is_group)
+		db_->setGroupMessageFile(lk.chat_id, lk.message_id, lk.file_id);
+	else
+		db_->setPrivateMessageFile(lk.chat_id, lk.message_id, lk.file_id);
+	pr_info(l_, "Linked message file (already recorded) | %s chat_id=%lld"
+		" msg_id=%lld file_id=%llu", lk.is_group ? "group" : "private",
+		(long long)lk.chat_id, (long long)lk.message_id,
+		(unsigned long long)lk.file_id);
+}
+
 std::optional<uint64_t>
 TgLoggerd::storeDownloadedFile(const std::string &local_path,
 			       const std::string &tg_file_id,
@@ -604,8 +655,15 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 	if (!ext.empty())
 		f.file_ext = ext;
 	f.orig_file_name = orig_file_name;
+	f.on_disk = store_bytes;
 
-	return db_->upsertFile(f);
+	uint64_t id = db_->upsertFile(f);
+	/* Remember it so later references link instead of re-downloading. */
+	{
+		std::lock_guard<std::mutex> lk(known_files_mtx_);
+		known_files_[tg_file_id] = id;
+	}
+	return id;
 }
 
 void TgLoggerd::setLogger(log_hd_t *h) noexcept

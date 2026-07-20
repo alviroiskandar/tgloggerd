@@ -28,6 +28,11 @@ struct File {
 	std::optional<std::string>	file_ext;
 	/* Original Telegram file name; empty if the file carries none. */
 	std::string	orig_file_name;
+	/*
+	 * Whether the file's bytes are kept in the store. false = metadata-only
+	 * (too large per TG_MAX_STORE_FILE_SIZE), re-downloadable by tg_file_id.
+	 */
+	bool		on_disk = true;
 };
 
 } /* namespace models */

@@ -73,9 +73,21 @@
 		return '<a class="reply-quote" href="' + r.href + '">' + body + "</a>";
 	}
 
+	/* Placeholder for a file whose bytes were too large to keep (only its
+	 * metadata is recorded); mirrors the .media-missing template branch. */
+	function missing(md, ctype, cls) {
+		var label = md.name !== "" ? md.name : ctype;
+		var size = md.size !== undefined
+			? ' <span class="muted">(' + md.size + " bytes)</span>" : "";
+		return '<div class="' + cls + ' media-missing">📄 ' + label + size +
+			' <span class="muted">— too large, not stored</span></div>';
+	}
+
 	function singleMedia(m) {
 		if (!m.media)
 			return "";
+		if (m.media.stored === false)
+			return missing(m.media, m.content_type + " file", "msg-media");
 		var md = m.media, u = md.url;
 		switch (md.render) {
 		case "image":
@@ -98,6 +110,8 @@
 			return '<span class="album-item wide deleted" id="msg-' + it.msg_id + '"><span class="muted">(deleted)</span></span>';
 		if (!it.media)
 			return "";
+		if (it.media.stored === false)
+			return missing(it.media, it.content_type, "album-item wide");
 		var u = it.media.url;
 		switch (it.media.render) {
 		case "image":
@@ -118,6 +132,8 @@
 	function editMedia(e) {
 		if (!e.media)
 			return "";
+		if (e.media.stored === false)
+			return missing(e.media, e.content_type, "edit-media");
 		var u = e.media.url;
 		switch (e.media.render) {
 		case "image":

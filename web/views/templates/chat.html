@@ -98,7 +98,9 @@
 ## if it.is_deleted
           <span class="album-item wide deleted" id="msg-{{ it.msg_id }}"><span class="muted">(deleted)</span></span>
 ## else if existsIn(it, "media")
-## if it.media.render == "image"
+## if existsIn(it.media, "stored") and not it.media.stored
+          <span class="album-item wide media-missing" id="msg-{{ it.msg_id }}">📄 {% if it.media.name != "" %}{{ it.media.name }}{% else %}{{ it.content_type }}{% endif %}{% if existsIn(it.media, "size") %} <span class="muted">({{ it.media.size }} bytes)</span>{% endif %} <span class="muted">— too large, not stored</span></span>
+## else if it.media.render == "image"
           <a class="album-item zoomable" id="msg-{{ it.msg_id }}" data-zoom="image" data-src="{{ media(it.media.file_id) }}" href="{{ media(it.media.file_id) }}"><img src="{{ media(it.media.file_id) }}" alt="{{ it.content_type }}" loading="lazy"></a>
 ## else if it.media.render == "video"
           <a class="album-item media-thumb zoomable" id="msg-{{ it.msg_id }}" data-zoom="video" data-src="{{ media(it.media.file_id) }}" href="{{ media(it.media.file_id) }}"><video src="{{ media(it.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>
@@ -202,7 +204,9 @@
 ## endif
 
 ## if existsIn(m, "media")
-## if m.media.render == "image"
+## if existsIn(m.media, "stored") and not m.media.stored
+        <div class="msg-media media-missing">📄 {% if m.media.name != "" %}{{ m.media.name }}{% else %}{{ m.content_type }} file{% endif %}{% if existsIn(m.media, "size") %} <span class="muted">({{ m.media.size }} bytes)</span>{% endif %}<br><span class="muted">too large — not stored, only metadata kept</span></div>
+## else if m.media.render == "image"
         <a class="msg-media-link zoomable" data-zoom="image" data-src="{{ media(m.media.file_id) }}" href="{{ media(m.media.file_id) }}"><img class="msg-media" src="{{ media(m.media.file_id) }}" alt="{{ m.content_type }}" loading="lazy"></a>
 ## else if m.media.render == "video"
         <a class="media-thumb zoomable" data-zoom="video" data-src="{{ media(m.media.file_id) }}" href="{{ media(m.media.file_id) }}"><video class="msg-media" src="{{ media(m.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>

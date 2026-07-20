@@ -1,5 +1,7 @@
 ## if existsIn(e, "media")
-## if e.media.render == "image"
+## if existsIn(e.media, "stored") and not e.media.stored
+                <div class="edit-media media-missing">📄 {% if e.media.name != "" %}{{ e.media.name }}{% else %}{{ e.content_type }}{% endif %}{% if existsIn(e.media, "size") %} <span class="muted">({{ e.media.size }} bytes)</span>{% endif %} <span class="muted">— too large, not stored</span></div>
+## else if e.media.render == "image"
                 <a class="edit-media zoomable" data-zoom="image" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><img src="{{ media(e.media.file_id) }}" alt="{{ e.content_type }}" loading="lazy"></a>
 ## else if e.media.render == "video"
                 <a class="edit-media media-thumb zoomable" data-zoom="video" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><video src="{{ media(e.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>

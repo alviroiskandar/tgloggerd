@@ -9,6 +9,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <optional>
 
 #include <tgloggerd/models/User.hpp>
 #include <tgloggerd/models/Group.hpp>
@@ -75,6 +76,18 @@ struct MessageFile {
 };
 
 /*
+ * A message whose media attachment is already recorded in the files table
+ * (looked up by its remote id): link the message to the existing files row
+ * without re-downloading the file.
+ */
+struct MessageFileLink {
+	int64_t		chat_id;
+	int64_t		message_id;
+	bool		is_group;
+	uint64_t	file_id;	/* existing files.id */
+};
+
+/*
  * A reply relationship: message (chat_id, message_id) replies to
  * message reply_to_msg_id in the same chat. is_group selects the table.
  * Emitted only after the replied message has been saved.
@@ -130,6 +143,21 @@ public:
 	 * finished downloading, so it can be stored and linked.
 	 */
 	void setMessageFileHandler(std::function<void(const MessageFile &)> cb);
+
+	/*
+	 * Predicate used before downloading a message's media: given the file's
+	 * remote id, return the existing files.id if it is already recorded, so
+	 * the file can be linked without a re-download. Runs on the loop thread.
+	 */
+	void setFileLookup(
+		std::function<std::optional<uint64_t>(const std::string &)> cb);
+
+	/*
+	 * Set the callback invoked to link a message to a file that is already
+	 * recorded (see setFileLookup), instead of downloading it again.
+	 */
+	void setMessageFileLinkHandler(
+		std::function<void(const MessageFileLink &)> cb);
 
 	/*
 	 * Set the callback invoked to link a message to the one it replies

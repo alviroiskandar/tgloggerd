@@ -19,7 +19,7 @@
 ## for f in files
       <tr>
         <td class="col-photo">
-## if f.type == "photo"
+## if f.type == "photo" and f.stored
           <a href="{{ media(f.id) }}"><img class="avatar-sm" src="{{ media(f.id) }}" alt="" loading="lazy"></a>
 ## else
           <span class="file-icon">{% if f.type == "video" %}🎬{% else if f.type == "animation" %}🎞️{% else if f.type == "sticker" %}🌟{% else if f.type == "document" %}📄{% else if f.type == "audio" %}🎵{% else if f.type == "voice" %}🎤{% else %}📎{% endif %}</span>
@@ -29,7 +29,7 @@
         <td>{{ f.type }}</td>
         <td>{% if f.name != "" %}{{ f.name }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{% if f.ext != "" %}{{ f.ext }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{{ f.size_h }}</td>
+        <td>{{ f.size_h }}{% if not f.stored %} <span class="badge warn">not stored</span>{% endif %}</td>
         <td>{{ f.hits }}</td>
         <td>{{ f.created_at }}</td>
       </tr>

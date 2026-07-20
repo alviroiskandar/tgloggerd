@@ -9,6 +9,8 @@
 #include <memory>
 #include <string>
 #include <optional>
+#include <unordered_map>
+#include <mutex>
 #include "helpers/log.h"
 #include "TDLib.hpp"
 #include "DB.hpp"
@@ -36,6 +38,7 @@ private:
 	void onProfilePhoto(const ProfilePhoto &p);
 	void onGroupPhoto(const GroupPhoto &p);
 	void onMessageFile(const MessageFile &m);
+	void onMessageFileLink(const MessageFileLink &lk);
 
 	uint32_t api_id_;
 	char api_hash_[64];
@@ -49,6 +52,15 @@ private:
 	 * re-downloadable by tg_file_id); 0 disables the limit. Default 1 GiB.
 	 */
 	uint64_t max_store_file_size_ = 1073741824ULL;
+	/*
+	 * In-memory tg_file_id -> files.id index. Lets the loop thread decide,
+	 * without a DB round-trip, that a message's file is already recorded
+	 * and can be linked instead of re-downloaded. Seeded at startup and
+	 * updated on each store; guarded because file-pool workers write it
+	 * while the loop thread reads it.
+	 */
+	std::unordered_map<std::string, uint64_t> known_files_;
+	std::mutex known_files_mtx_;
 	log_hd_t *l_ = nullptr;
 	std::unique_ptr<TDLib> tdlib_;
 	std::unique_ptr<DB> db_;

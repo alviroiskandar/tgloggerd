@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 #include <atomic>
+#include <optional>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -831,6 +832,8 @@ struct TDLib::Impl {
 	std::function<void(const models::PrivateMessage &)> private_msg_handler_;
 	std::function<void(const models::GroupMessage &)> group_msg_handler_;
 	std::function<void(const MessageFile &)>	message_file_handler_;
+	std::function<std::optional<uint64_t>(const std::string &)> file_lookup_;
+	std::function<void(const MessageFileLink &)>	message_file_link_handler_;
 	std::function<void(const MessageReply &)>	message_reply_handler_;
 	std::function<void(const models::User &)>	user_handler_;
 	std::function<void(const models::UserFullInfo &)> user_full_info_handler_;
@@ -1804,6 +1807,24 @@ void TDLib::Impl::maybe_download_message_file(const td_api::message &message,
 	PendingMsgFile ref{ message.chat_id_, to_server_msg_id(message.id_),
 			    is_group, category, file_name };
 
+	/*
+	 * Already recorded from an earlier download: link the existing files
+	 * row by its remote id instead of downloading (and hashing) it again.
+	 * This is what keeps the backfiller from re-fetching the whole history,
+	 * and in particular from re-downloading oversized files that are only
+	 * kept as metadata.
+	 */
+	if (file_lookup_ && message_file_link_handler_ && f->remote_ &&
+	    !f->remote_->id_.empty()) {
+		auto fid = file_lookup_(f->remote_->id_);
+		if (fid.has_value()) {
+			message_file_link_handler_(MessageFileLink{
+				ref.chat_id, ref.message_id, ref.is_group,
+				*fid });
+			return;
+		}
+	}
+
 	/* Already downloaded: link it immediately. */
 	if (f->local_ && f->local_->is_downloading_completed_) {
 		emit_message_file(ref, *f);
@@ -2421,6 +2442,18 @@ void TDLib::setGroupMessageHandler(
 void TDLib::setMessageFileHandler(std::function<void(const MessageFile &)> cb)
 {
 	impl_->message_file_handler_ = std::move(cb);
+}
+
+void TDLib::setFileLookup(
+	std::function<std::optional<uint64_t>(const std::string &)> cb)
+{
+	impl_->file_lookup_ = std::move(cb);
+}
+
+void TDLib::setMessageFileLinkHandler(
+	std::function<void(const MessageFileLink &)> cb)
+{
+	impl_->message_file_link_handler_ = std::move(cb);
 }
 
 void TDLib::setMessageReplyHandler(std::function<void(const MessageReply &)> cb)
