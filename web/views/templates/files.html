@@ -1,47 +1,47 @@
 <section class="files">
-  <h1>{{ title }}</h1>
-  <nav class="subnav">
-    <a href="/files"{% if type == "all" %} class="active"{% endif %}>All</a>
-    <a href="/files?type=photo"{% if type == "photo" %} class="active"{% endif %}>Photo</a>
-    <a href="/files?type=video"{% if type == "video" %} class="active"{% endif %}>Video</a>
-    <a href="/files?type=animation"{% if type == "animation" %} class="active"{% endif %}>Animation</a>
-    <a href="/files?type=sticker"{% if type == "sticker" %} class="active"{% endif %}>Sticker</a>
-    <a href="/files?type=document"{% if type == "document" %} class="active"{% endif %}>Document</a>
-    <a href="/files?type=audio"{% if type == "audio" %} class="active"{% endif %}>Audio</a>
-    <a href="/files?type=voice"{% if type == "voice" %} class="active"{% endif %}>Voice</a>
-    <a href="/files?type=unknown"{% if type == "unknown" %} class="active"{% endif %}>Unknown</a>
-  </nav>
-  <table>
-    <thead>
-      <tr><th class="col-photo"></th><th>ID</th><th>Type</th><th>Name</th><th>Ext</th><th>Size</th><th>Hits</th><th>First seen</th></tr>
-    </thead>
-    <tbody>
+	<h1>{{ title }}</h1>
+	<nav class="subnav">
+		<a href="/files"{% if type == "all" %} class="active"{% endif %}>All</a>
+		<a href="/files?type=photo"{% if type == "photo" %} class="active"{% endif %}>Photo</a>
+		<a href="/files?type=video"{% if type == "video" %} class="active"{% endif %}>Video</a>
+		<a href="/files?type=animation"{% if type == "animation" %} class="active"{% endif %}>Animation</a>
+		<a href="/files?type=sticker"{% if type == "sticker" %} class="active"{% endif %}>Sticker</a>
+		<a href="/files?type=document"{% if type == "document" %} class="active"{% endif %}>Document</a>
+		<a href="/files?type=audio"{% if type == "audio" %} class="active"{% endif %}>Audio</a>
+		<a href="/files?type=voice"{% if type == "voice" %} class="active"{% endif %}>Voice</a>
+		<a href="/files?type=unknown"{% if type == "unknown" %} class="active"{% endif %}>Unknown</a>
+	</nav>
+	<table>
+		<thead>
+			<tr><th class="col-photo"></th><th>ID</th><th>Type</th><th>Name</th><th>Ext</th><th>Size</th><th>Hits</th><th>First seen</th></tr>
+		</thead>
+		<tbody>
 ## for f in files
-      <tr>
-        <td class="col-photo">
+			<tr>
+				<td class="col-photo">
 ## if f.type == "photo" and f.stored
-          <a href="{{ media(f.id) }}"><img class="avatar-sm" src="{{ media(f.id) }}" alt="" loading="lazy"></a>
+					<a href="{{ media(f.id) }}"><img class="avatar-sm" src="{{ media(f.id) }}" alt="" loading="lazy"></a>
 ## else
-          <span class="file-icon">{% if f.type == "video" %}🎬{% else if f.type == "animation" %}🎞️{% else if f.type == "sticker" %}🌟{% else if f.type == "document" %}📄{% else if f.type == "audio" %}🎵{% else if f.type == "voice" %}🎤{% else %}📎{% endif %}</span>
+					<span class="file-icon">{% if f.type == "video" %}🎬{% else if f.type == "animation" %}🎞️{% else if f.type == "sticker" %}🌟{% else if f.type == "document" %}📄{% else if f.type == "audio" %}🎵{% else if f.type == "voice" %}🎤{% else %}📎{% endif %}</span>
 ## endif
-        </td>
-        <td><a href="{{ media(f.id) }}">{{ f.id }}</a></td>
-        <td>{{ f.type }}</td>
-        <td>{% if f.name != "" %}{{ f.name }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{% if f.ext != "" %}{{ f.ext }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{{ f.size_h }}{% if not f.stored %} <span class="badge warn">not stored</span>{% endif %}</td>
-        <td>{{ f.hits }}</td>
-        <td>{{ f.created_at }}</td>
-      </tr>
+				</td>
+				<td><a href="{{ media(f.id) }}">{{ f.id }}</a></td>
+				<td>{{ f.type }}</td>
+				<td>{% if f.name != "" %}{{ f.name }}{% else %}<span class="muted">—</span>{% endif %}</td>
+				<td>{% if f.ext != "" %}{{ f.ext }}{% else %}<span class="muted">—</span>{% endif %}</td>
+				<td>{{ f.size_h }}{% if not f.stored %} <span class="badge warn">not stored</span>{% endif %}</td>
+				<td>{{ f.hits }}</td>
+				<td>{{ f.created_at }}</td>
+			</tr>
 ## endfor
 ## if length(files) == 0
-      <tr><td colspan="8" class="muted">No files.</td></tr>
+			<tr><td colspan="8" class="muted">No files.</td></tr>
 ## endif
-    </tbody>
-  </table>
+		</tbody>
+	</table>
 ## if next_cursor
-  <p class="pager">
-    <a href="/files?before={{ next_cursor }}&limit={{ limit }}{% if type != "all" %}&type={{ type }}{% endif %}">Next →</a>
-  </p>
+	<p class="pager">
+		<a href="/files?before={{ next_cursor }}&limit={{ limit }}{% if type != "all" %}&type={{ type }}{% endif %}">Next →</a>
+	</p>
 ## endif
 </section>

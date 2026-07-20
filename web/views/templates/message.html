@@ -1,93 +1,93 @@
 <section class="detail message-detail">
-  <p class="crumb"><a href="/messages/{{ scope }}">← Messages</a></p>
-  <h1>Message {{ message.message_id }}
-    <span class="muted">in <a href="/messages/{{ scope }}?chat_id={{ message.chat_id }}">{{ message.chat_name }}</a></span>
-  </h1>
+	<p class="crumb"><a href="/messages/{{ scope }}">← Messages</a></p>
+	<h1>Message {{ message.message_id }}
+		<span class="muted">in <a href="/messages/{{ scope }}?chat_id={{ message.chat_id }}">{{ message.chat_name }}</a></span>
+	</h1>
 
-  <div class="badges">
+	<div class="badges">
 ## if message.is_deleted
-    <span class="badge warn">deleted</span>
+		<span class="badge warn">deleted</span>
 ## endif
 ## if message.is_edited
-    <span class="badge">edited</span>
+		<span class="badge">edited</span>
 ## endif
 ## if message.is_forwarded
-    <span class="badge">forwarded</span>
+		<span class="badge">forwarded</span>
 ## endif
 ## if message.is_outgoing
-    <span class="badge">outgoing</span>
+		<span class="badge">outgoing</span>
 ## endif
 ## if existsIn(message, "is_channel_post") and message.is_channel_post
-    <span class="badge">channel post</span>
+		<span class="badge">channel post</span>
 ## endif
-  </div>
+	</div>
 
 ## if exists("reply_to")
-  <div class="reply-box">
-    <span class="muted">Reply to</span>
-    <a href="/messages/{{ scope }}/{{ reply_to.id }}">#{{ reply_to.message_id }}</a>
-    — {{ reply_to.sender_name }}:
-    {% if reply_to.snippet != "" %}{{ reply_to.snippet }}{% else %}<span class="muted">(no text)</span>{% endif %}
-  </div>
+	<div class="reply-box">
+		<span class="muted">Reply to</span>
+		<a href="/messages/{{ scope }}/{{ reply_to.id }}">#{{ reply_to.message_id }}</a>
+		— {{ reply_to.sender_name }}:
+		{% if reply_to.snippet != "" %}{{ reply_to.snippet }}{% else %}<span class="muted">(no text)</span>{% endif %}
+	</div>
 ## endif
 
-  <table class="kv">
-    <tr><th>Chat</th><td><a href="/messages/{{ scope }}?chat_id={{ message.chat_id }}">{{ message.chat_name }}</a> <span class="muted">({{ message.chat_id }})</span></td></tr>
-    <tr><th>Sender</th><td>{{ message.sender_name }}</td></tr>
-    <tr><th>Type</th><td>{{ message.content_type }}</td></tr>
-    <tr><th>Date</th><td>{% if message.date != "" %}{{ message.date }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+	<table class="kv">
+		<tr><th>Chat</th><td><a href="/messages/{{ scope }}?chat_id={{ message.chat_id }}">{{ message.chat_name }}</a> <span class="muted">({{ message.chat_id }})</span></td></tr>
+		<tr><th>Sender</th><td>{{ message.sender_name }}</td></tr>
+		<tr><th>Type</th><td>{{ message.content_type }}</td></tr>
+		<tr><th>Date</th><td>{% if message.date != "" %}{{ message.date }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
 ## if message.is_deleted
-    <tr><th>Deleted</th><td>{% if existsIn(message, "deleted_at") %}{{ message.deleted_at }}{% else %}<span class="muted">(time unknown)</span>{% endif %}</td></tr>
+		<tr><th>Deleted</th><td>{% if existsIn(message, "deleted_at") %}{{ message.deleted_at }}{% else %}<span class="muted">(time unknown)</span>{% endif %}</td></tr>
 ## endif
 ## if existsIn(message, "file_id")
-    <tr><th>File</th><td><a href="{{ media(message.file_id) }}">file #{{ message.file_id }}</a></td></tr>
+		<tr><th>File</th><td><a href="{{ media(message.file_id) }}">file #{{ message.file_id }}</a></td></tr>
 ## endif
 ## if existsIn(message, "author_signature") and message.author_signature != ""
-    <tr><th>Signature</th><td>{{ message.author_signature }}</td></tr>
+		<tr><th>Signature</th><td>{{ message.author_signature }}</td></tr>
 ## endif
-  </table>
+	</table>
 
-  <h2>Text</h2>
+	<h2>Text</h2>
 ## if message.text != ""
-  <pre class="msgtext">{{ message.text }}</pre>
+	<pre class="msgtext">{{ message.text }}</pre>
 ## else
-  <p class="muted">(no text)</p>
+	<p class="muted">(no text)</p>
 ## endif
 
 ## if exists("fwd_info")
-  <h2>Forwarded from</h2>
-  <table class="kv">
-    <tr><th>Origin</th><td>{{ fwd_info.origin_type }}</td></tr>
+	<h2>Forwarded from</h2>
+	<table class="kv">
+		<tr><th>Origin</th><td>{{ fwd_info.origin_type }}</td></tr>
 ## if fwd_info.origin_sender_name != ""
-    <tr><th>Sender</th><td>{{ fwd_info.origin_sender_name }}</td></tr>
+		<tr><th>Sender</th><td>{{ fwd_info.origin_sender_name }}</td></tr>
 ## endif
 ## if existsIn(fwd_info, "origin_sender_user_id")
-    <tr><th>Sender user</th><td><a href="/users/{{ fwd_info.origin_sender_user_id }}">#{{ fwd_info.origin_sender_user_id }}</a></td></tr>
+		<tr><th>Sender user</th><td><a href="/users/{{ fwd_info.origin_sender_user_id }}">#{{ fwd_info.origin_sender_user_id }}</a></td></tr>
 ## endif
 ## if existsIn(fwd_info, "origin_chat_id")
-    <tr><th>Origin chat</th><td>{{ fwd_info.origin_chat_id }}</td></tr>
+		<tr><th>Origin chat</th><td>{{ fwd_info.origin_chat_id }}</td></tr>
 ## endif
 ## if fwd_info.origin_date != ""
-    <tr><th>Origin date</th><td>{{ fwd_info.origin_date }}</td></tr>
+		<tr><th>Origin date</th><td>{{ fwd_info.origin_date }}</td></tr>
 ## endif
-  </table>
+	</table>
 ## endif
 
-  <h2>Edit history</h2>
+	<h2>Edit history</h2>
 ## if length(edits) == 0
-  <p class="muted">None recorded.</p>
+	<p class="muted">None recorded.</p>
 ## else
-  <table>
-    <thead><tr><th>Edited</th><th>Type</th><th>Text</th></tr></thead>
-    <tbody>
+	<table>
+		<thead><tr><th>Edited</th><th>Type</th><th>Text</th></tr></thead>
+		<tbody>
 ## for e in edits
-      <tr>
-        <td>{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>{{ e.content_type }}</td>
-        <td>{% if e.snippet != "" %}{{ e.snippet }}{% else if existsIn(e, "file_id") %}<a href="{{ media(e.file_id) }}">[{{ e.content_type }}]</a>{% else %}<span class="muted">—</span>{% endif %}</td>
-      </tr>
+			<tr>
+				<td>{% if e.edit_date != "" %}{{ e.edit_date }}{% else %}<span class="muted">—</span>{% endif %}</td>
+				<td>{{ e.content_type }}</td>
+				<td>{% if e.snippet != "" %}{{ e.snippet }}{% else if existsIn(e, "file_id") %}<a href="{{ media(e.file_id) }}">[{{ e.content_type }}]</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+			</tr>
 ## endfor
-    </tbody>
-  </table>
+		</tbody>
+	</table>
 ## endif
 </section>

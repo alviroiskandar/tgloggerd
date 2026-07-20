@@ -1,50 +1,50 @@
 <section class="users">
-  <h1>Users</h1>
+	<h1>Users</h1>
 {% include "search.html" %}
-  <table>
-    <thead>
-      <tr><th class="col-photo"></th><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th><th>First seen</th><th>Last updated</th></tr>
-    </thead>
-    <tbody>
+	<table>
+		<thead>
+			<tr><th class="col-photo"></th><th>ID</th><th>Name</th><th>Username</th><th>Type</th><th>Flags</th><th>First seen</th><th>Last updated</th></tr>
+		</thead>
+		<tbody>
 ## for u in users
-      <tr>
-        <td class="col-photo">{% if existsIn(u, "photo_file_id") %}<a href="/users/{{ u.id }}"><img class="avatar-sm" src="{{ media(u.photo_file_id) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
-        <td><a href="/users/{{ u.id }}">{{ u.id }}</a></td>
-        <td>{{ u.name }}</td>
-        <td>
+			<tr>
+				<td class="col-photo">{% if existsIn(u, "photo_file_id") %}<a href="/users/{{ u.id }}"><img class="avatar-sm" src="{{ media(u.photo_file_id) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
+				<td><a href="/users/{{ u.id }}">{{ u.id }}</a></td>
+				<td>{{ u.name }}</td>
+				<td>
 ## if u.username != ""
-          @{{ u.username }}
+					@{{ u.username }}
 ## else
-          <span class="muted">—</span>
+					<span class="muted">—</span>
 ## endif
-        </td>
-        <td>{{ u.type }}</td>
-        <td>
+				</td>
+				<td>{{ u.type }}</td>
+				<td>
 ## if u.is_premium
-          <span class="badge">premium</span>
+					<span class="badge">premium</span>
 ## endif
 ## if u.is_verified
-          <span class="badge">verified</span>
+					<span class="badge">verified</span>
 ## endif
 ## if u.is_scam
-          <span class="badge warn">scam</span>
+					<span class="badge warn">scam</span>
 ## endif
 ## if u.is_fake
-          <span class="badge warn">fake</span>
+					<span class="badge warn">fake</span>
 ## endif
-        </td>
-        <td class="nowrap">{{ u.created_at }}</td>
-        <td class="nowrap">{{ u.updated_at }}</td>
-      </tr>
+				</td>
+				<td class="nowrap">{{ u.created_at }}</td>
+				<td class="nowrap">{{ u.updated_at }}</td>
+			</tr>
 ## endfor
 ## if length(users) == 0
-      <tr><td colspan="8" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
+			<tr><td colspan="8" class="muted">No users{% if search.q != "" %} match “{{ search.q }}”{% endif %}.</td></tr>
 ## endif
-    </tbody>
-  </table>
+		</tbody>
+	</table>
 ## if next_cursor
-  <p class="pager">
-    <a href="/users?before={{ next_cursor }}&limit={{ limit }}&q={{ q_url }}&field={{ field_url }}">Next →</a>
-  </p>
+	<p class="pager">
+		<a href="/users?before={{ next_cursor }}&limit={{ limit }}&q={{ q_url }}&field={{ field_url }}">Next →</a>
+	</p>
 ## endif
 </section>

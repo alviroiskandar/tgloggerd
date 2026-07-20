@@ -1,17 +1,17 @@
 ## if existsIn(e, "media")
 ## if existsIn(e.media, "stored") and not e.media.stored
-                <div class="edit-media media-missing">📄 {% if e.media.name != "" %}{{ e.media.name }}{% else %}{{ e.content_type }}{% endif %}{% if existsIn(e.media, "size") %} <span class="muted">({{ e.media.size }} bytes)</span>{% endif %} <span class="muted">— too large, not stored</span></div>
+								<div class="edit-media media-missing">📄 {% if e.media.name != "" %}{{ e.media.name }}{% else %}{{ e.content_type }}{% endif %}{% if existsIn(e.media, "size") %} <span class="muted">({{ e.media.size }} bytes)</span>{% endif %} <span class="muted">— too large, not stored</span></div>
 ## else if e.media.render == "image"
-                <a class="edit-media zoomable" data-zoom="image" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><img src="{{ media(e.media.file_id) }}" alt="{{ e.content_type }}" loading="lazy"></a>
+								<a class="edit-media zoomable" data-zoom="image" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><img src="{{ media(e.media.file_id) }}" alt="{{ e.content_type }}" loading="lazy"></a>
 ## else if e.media.render == "video"
-                <a class="edit-media media-thumb zoomable" data-zoom="video" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><video src="{{ media(e.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>
+								<a class="edit-media media-thumb zoomable" data-zoom="video" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><video src="{{ media(e.media.file_id) }}" preload="metadata" muted playsinline></video><span class="play-badge" aria-hidden="true"></span></a>
 ## else if e.media.render == "animation"
-                <a class="edit-media media-thumb zoomable" data-zoom="animation" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><video src="{{ media(e.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video></a>
+								<a class="edit-media media-thumb zoomable" data-zoom="animation" data-src="{{ media(e.media.file_id) }}" href="{{ media(e.media.file_id) }}"><video src="{{ media(e.media.file_id) }}" autoplay loop muted playsinline preload="metadata"></video></a>
 ## else if e.media.render == "lottie"
-                <div class="edit-media tgs-sticker zoomable" data-zoom="lottie" data-tgs="{{ media(e.media.file_id) }}"><a class="msg-file" href="{{ media(e.media.file_id) }}">🎞️ {% if e.media.name != "" %}{{ e.media.name }}{% else %}animated sticker{% endif %}</a></div>
+								<div class="edit-media tgs-sticker zoomable" data-zoom="lottie" data-tgs="{{ media(e.media.file_id) }}"><a class="msg-file" href="{{ media(e.media.file_id) }}">🎞️ {% if e.media.name != "" %}{{ e.media.name }}{% else %}animated sticker{% endif %}</a></div>
 ## else if e.media.render == "audio"
-                <audio class="msg-audio" src="{{ media(e.media.file_id) }}" controls preload="none"></audio>
+								<audio class="msg-audio" src="{{ media(e.media.file_id) }}" controls preload="none"></audio>
 ## else
-                <a class="edit-media-file msg-file" href="{{ media(e.media.file_id) }}">📎 {% if e.media.name != "" %}{{ e.media.name }}{% else %}{{ e.content_type }} file{% endif %}{% if existsIn(e.media, "size") %} <span class="muted">({{ e.media.size }} bytes)</span>{% endif %}</a>
+								<a class="edit-media-file msg-file" href="{{ media(e.media.file_id) }}">📎 {% if e.media.name != "" %}{{ e.media.name }}{% else %}{{ e.content_type }} file{% endif %}{% if existsIn(e.media, "size") %} <span class="muted">({{ e.media.size }} bytes)</span>{% endif %}</a>
 ## endif
 ## endif

@@ -9,19 +9,19 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">{{ app }}</a>
+	<a class="brand" href="/">{{ app }}</a>
 ## if logged_in
-  <nav class="mainnav">
-    <a href="/users">Users</a>
-    <a href="/groups">Groups</a>
-    <a href="/messages/group">Messages</a>
-    <a href="/files">Files</a>
-  </nav>
-  <form class="signout" method="post" action="/logout">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <span class="who">{{ username }}</span>
-    <button type="submit">Sign out</button>
-  </form>
+	<nav class="mainnav">
+		<a href="/users">Users</a>
+		<a href="/groups">Groups</a>
+		<a href="/messages/group">Messages</a>
+		<a href="/files">Files</a>
+	</nav>
+	<form class="signout" method="post" action="/logout">
+		<input type="hidden" name="csrf" value="{{ csrf }}">
+		<span class="who">{{ username }}</span>
+		<button type="submit">Sign out</button>
+	</form>
 ## endif
 </header>
 <main class="content">

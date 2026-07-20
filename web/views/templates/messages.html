@@ -1,54 +1,54 @@
 <section class="messages">
-  <h1>{{ title }}</h1>
-  <nav class="subnav">
-    <a href="/messages/private">Private</a>
-    <a href="/messages/group">Group</a>
-  </nav>
+	<h1>{{ title }}</h1>
+	<nav class="subnav">
+		<a href="/messages/private">Private</a>
+		<a href="/messages/group">Group</a>
+	</nav>
 ## if has_chat
-  <p class="muted">Filtered to chat <code>{{ chat_id }}</code> — <a href="/messages/{{ scope }}">clear</a></p>
+	<p class="muted">Filtered to chat <code>{{ chat_id }}</code> — <a href="/messages/{{ scope }}">clear</a></p>
 ## endif
-  <table>
-    <thead>
-      <tr><th>Msg</th><th>Date</th><th>Chat</th><th>Sender</th><th>Type</th><th>Text</th><th></th></tr>
-    </thead>
-    <tbody>
+	<table>
+		<thead>
+			<tr><th>Msg</th><th>Date</th><th>Chat</th><th>Sender</th><th>Type</th><th>Text</th><th></th></tr>
+		</thead>
+		<tbody>
 ## for m in messages
-      <tr{% if m.is_deleted %} class="deleted"{% endif %}>
-        <td><a href="/messages/{{ scope }}/{{ m.id }}">{{ m.message_id }}</a></td>
-        <td>{% if m.date != "" %}{{ m.date }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td><a href="/messages/{{ scope }}?chat_id={{ m.chat_id }}">{{ m.chat_name }}</a></td>
-        <td>{{ m.sender_name }}</td>
-        <td>{{ m.content_type }}</td>
-        <td>
+			<tr{% if m.is_deleted %} class="deleted"{% endif %}>
+				<td><a href="/messages/{{ scope }}/{{ m.id }}">{{ m.message_id }}</a></td>
+				<td>{% if m.date != "" %}{{ m.date }}{% else %}<span class="muted">—</span>{% endif %}</td>
+				<td><a href="/messages/{{ scope }}?chat_id={{ m.chat_id }}">{{ m.chat_name }}</a></td>
+				<td>{{ m.sender_name }}</td>
+				<td>{{ m.content_type }}</td>
+				<td>
 ## if m.snippet != ""
-          {{ m.snippet }}{% if m.text_truncated %}<span class="muted">…</span>{% endif %}
+					{{ m.snippet }}{% if m.text_truncated %}<span class="muted">…</span>{% endif %}
 ## else if existsIn(m, "file_id")
-          <a href="{{ media(m.file_id) }}">[{{ m.content_type }}]</a>
+					<a href="{{ media(m.file_id) }}">[{{ m.content_type }}]</a>
 ## else
-          <span class="muted">—</span>
+					<span class="muted">—</span>
 ## endif
-        </td>
-        <td>
+				</td>
+				<td>
 ## if m.is_deleted
-          <span class="badge warn">deleted</span>
+					<span class="badge warn">deleted</span>
 ## endif
 ## if m.is_edited
-          <span class="badge">edited</span>
+					<span class="badge">edited</span>
 ## endif
 ## if m.is_forwarded
-          <span class="badge">fwd</span>
+					<span class="badge">fwd</span>
 ## endif
-        </td>
-      </tr>
+				</td>
+			</tr>
 ## endfor
 ## if length(messages) == 0
-      <tr><td colspan="7" class="muted">No messages.</td></tr>
+			<tr><td colspan="7" class="muted">No messages.</td></tr>
 ## endif
-    </tbody>
-  </table>
+		</tbody>
+	</table>
 ## if next_cursor
-  <p class="pager">
-    <a href="/messages/{{ scope }}?before={{ next_cursor }}&limit={{ limit }}{% if has_chat %}&chat_id={{ chat_id }}{% endif %}">Next →</a>
-  </p>
+	<p class="pager">
+		<a href="/messages/{{ scope }}?before={{ next_cursor }}&limit={{ limit }}{% if has_chat %}&chat_id={{ chat_id }}{% endif %}">Next →</a>
+	</p>
 ## endif
 </section>
