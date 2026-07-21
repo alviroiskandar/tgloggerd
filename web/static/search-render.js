@@ -25,10 +25,9 @@
 	function cell(col, val, idVal, base) {
 		switch (col.type) {
 		case "photo":
-			return '<td class="col-photo">' + (val
-				? '<a href="' + base + '/' + idVal + '"><img class="avatar-sm" src="' +
-					val + '" alt=""></a>'
-				: '<span class="avatar-sm placeholder"></span>') + '</td>';
+			return '<td class="col-photo"><a href="' + base + '/' + idVal + '">' + (val
+				? '<img class="avatar-sm" src="' + val + '" alt="">'
+				: '<span class="avatar-sm placeholder"></span>') + '</a></td>';
 		case "id":
 			return '<td><a href="' + base + '/' + val + '">' + val + '</a></td>';
 		case "name":

@@ -76,7 +76,7 @@
 				<tr>
 ## for c in cols
 ## if c.type == "photo"
-					<td class="col-photo">{% if at(r, loop.index) != "" %}<a href="{{ detail_base }}/{{ at(r, id_index) }}"><img class="avatar-sm" src="{{ at(r, loop.index) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
+					<td class="col-photo"><a href="{{ detail_base }}/{{ at(r, id_index) }}">{% if at(r, loop.index) != "" %}<img class="avatar-sm" src="{{ at(r, loop.index) }}" alt="">{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</a></td>
 ## else if c.type == "id"
 					<td><a href="{{ detail_base }}/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a></td>
 ## else if c.type == "name"

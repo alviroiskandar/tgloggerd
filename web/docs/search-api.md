@@ -120,27 +120,47 @@ Datetime values accept MySQL-parseable strings (`2024-03-17`,
 
 ## Response
 
+On success the body is a single JSON object. `cols` describes the displayed
+columns once, and each entry in `rows` is a **positional array aligned to
+`cols`** (api2.php-style — the column keys are not repeated on every row):
+
 ```json
 {
-  "fields":  [ { "key": "...", "label": "...", "type": "...",
-                 "sortable": true, "operators": ["=", "!=", ...],
-                 "enum": "regular,deleted,bot,unknown" } ],
-  "columns": [ { "key": "id", "label": "User ID" }, ... ],
-  "rows":    [ { "id": 123, "name": "...", "username": "...", "type": "bot",
-                 "is_premium": false, ..., "created_at": "2026-07-19 12:00:00",
-                 "photo_file_id": 176014,
-                 "_photo_url": "/files/<token>", "_href": "/users/123" } ],
-  "total":   3029,
-  "limit":   50, "offset": 0, "sort": "", "order": "desc"
+  "fields": [ { "key": "type", "label": "Type", "type": "enum",
+                "sortable": true, "operators": ["=", "!="],
+                "enum": "regular,deleted,bot,unknown" }, ... ],
+  "cols":   [ { "key": "photo", "label": "",     "type": "photo", "sort": ""           },
+              { "key": "id",    "label": "ID",    "type": "id",    "sort": "id"         },
+              { "key": "name",  "label": "Name",  "type": "name",  "sort": "first_name" },
+              { "key": "msg_count", "label": "Messages", "type": "int", "sort": "msg_count" }, ... ],
+  "rows":   [ [ "/files/<token>", 123, "Ada", "adalove", "regular", "42", false, ... ],
+              [ "",               456, "(no name)", "", "deleted", "0", false, ... ] ],
+  "total":      3029,
+  "limit":      10,
+  "offset":     0,
+  "max_offset": 500000,
+  "sort":       "",
+  "order":      "desc"
 }
 ```
 
-- All string values in `rows` are **already HTML-escaped**; insert them verbatim.
-- `_photo_url` is the tokenized, un-enumerable media URL (the client cannot mint
-  it). `_href` is the entity's detail page.
-- `columns` lists the registry's default display fields; the rows contain more
-  keys than that (e.g. individual flags) for rich rendering.
-- `total` is the full count for the current filter (drives pagination).
+- `fields` is the searchable registry (one entry per field): `key`, `label`,
+  `type`, `sortable`, the allowed `operators`, and — for enum fields — `enum`
+  (the CSV of allowed values). It drives the condition builder.
+- `cols` is the ordered display list: `key`, `label`, the render `type` (`photo`,
+  `id`, `name`, `username`, `bool`, `int`, `datetime`, `text`, `longtext`) and
+  `sort` (the field key to `ORDER BY` when the header is clicked; `""` = not
+  sortable).
+- `rows[i][j]` is the value for column `cols[j]`. Cell shape by column `type`:
+  `id` is a JSON number; `bool` is `true`/`false`; every other type is a string
+  (**already HTML-escaped** — insert verbatim). A `photo` cell is a tokenized,
+  un-enumerable `/files/<token>` media URL, or `""` when the entity has no photo.
+- The **photo, id and name cells link to the entity's detail page**
+  (`<base>/<id>`, where `<base>` is `/users` or `/groups`). The photo cell is a
+  link whether or not a photo exists — a no-photo cell renders a silhouette
+  placeholder that is itself the link.
+- `total` is the full count for the current filter (drives pagination); `offset`
+  is clamped to `max_offset`.
 
 ### Debug (admin, `?debug=1`)
 
