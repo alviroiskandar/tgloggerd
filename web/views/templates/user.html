@@ -3,6 +3,8 @@
 	<div class="detail-head">
 ## if existsIn(user, "profile_photo_file_id")
 		<img class="avatar" src="{{ media(user.profile_photo_file_id) }}" alt="Profile photo">
+## else
+		<span class="avatar placeholder" role="img" aria-label="No profile photo"></span>
 ## endif
 		<h1>{{ user.name }} <span class="muted">#{{ user.id }}</span></h1>
 	</div>
