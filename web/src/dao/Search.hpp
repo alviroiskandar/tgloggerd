@@ -69,6 +69,20 @@ struct SearchField {
 	std::string_view enumVals; /* Enum: CSV of allowed values, else "" */
 };
 
+/*
+ * A displayed table column. `type` picks how the cell is rendered (photo, id,
+ * name, username, bool, int, datetime, text, longtext); `sortKey` is the
+ * registry field key to sort by when the header is clicked ("" = not sortable).
+ * The DAO emits `cols` (this list) plus each row as a positional array aligned
+ * to it -- like api2.php's keys/data -- so field keys are not repeated per row.
+ */
+struct DisplayCol {
+	std::string_view key;
+	std::string_view label;
+	std::string_view type;
+	std::string_view sortKey;
+};
+
 struct SearchSchema {
 	std::string_view fromJoin;     /* "users u LEFT JOIN user_extra_info e ON ..." */
 	std::string_view selectCols;   /* display projection for the page query */
@@ -76,9 +90,12 @@ struct SearchSchema {
 	std::string_view exFk;         /* FK column in Exists tables ("user_id") */
 	std::string_view defaultSort;  /* default ORDER BY expression */
 	std::string_view defaultOrder; /* "ASC" | "DESC" */
-	const SearchField *fields;
+	const SearchField *fields;     /* searchable field registry */
 	size_t            nFields;
-	/* Project one result row to escaped JSON (raw photo id + _href kept). */
+	const DisplayCol *cols;        /* displayed table columns, in order */
+	size_t            nCols;
+	/* Project one result row to a positional, escaped JSON array in `cols`
+	 * order (photo cell = raw file id, later tokenised by the controller). */
 	nlohmann::json (*mapRow)(const drogon::orm::Row &);
 };
 
@@ -102,7 +119,7 @@ constexpr int MAX_CONDS  = 16;
 constexpr int MAX_EXISTS = 4;
 constexpr int MAX_VLEN   = 512;
 constexpr int MAX_LIMIT  = 100;
-constexpr int MAX_OFFSET = 50000;
+constexpr int MAX_OFFSET = 500000;
 
 /* The registered users schema. */
 const SearchSchema &usersSchema(void);

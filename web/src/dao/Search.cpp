@@ -226,27 +226,68 @@ const SearchField kUserFields[] = {
 	{ "hist_phone",      "Phone (ever)",      FType::Text, FKind::Exists, "", "user_hist_phone_num x",        "x.phone_number", "", EXISTS_POS, false, false, "" },
 };
 
+/*
+ * The displayed columns, in order. The mapRow below emits each row's values in
+ * exactly this order. `type` drives cell rendering; `sortKey` names the
+ * searchable field to ORDER BY (must be one of the sortable registry fields).
+ */
+const DisplayCol kUserCols[] = {
+	/* key, label, type, sortKey */
+	{ "photo",              "",                 "photo",    ""           },
+	{ "id",                 "ID",               "id",       "id"         },
+	{ "name",               "Name",             "name",     "first_name" },
+	{ "username",           "Username",         "username", ""           },
+	{ "type",               "Type",             "text",     "type"       },
+	{ "is_verified",        "Verified",         "bool",     ""           },
+	{ "is_premium",         "Premium",          "bool",     ""           },
+	{ "is_scam",            "Scam",             "bool",     ""           },
+	{ "is_fake",            "Fake",             "bool",     ""           },
+	{ "is_support",         "Support",          "bool",     ""           },
+	{ "phone",              "Phone",            "text",     ""           },
+	{ "language",           "Language",         "text",     ""           },
+	{ "restriction_reason", "Restriction",      "longtext", ""           },
+	{ "has_sensitive",      "Sensitive",        "bool",     ""           },
+	{ "restricts_new_chats","Restricts chats",  "bool",     ""           },
+	{ "paid_star_count",    "Paid stars",       "int",      "paid_star_count" },
+	{ "personal_chat_id",   "Personal chat",    "int",      ""           },
+	{ "emoji_status",       "Emoji status",     "int",      ""           },
+	{ "bio",                "Bio",              "longtext", ""           },
+	{ "created_at",         "Created",          "datetime", "created_at" },
+	{ "updated_at",         "Updated",          "datetime", "updated_at" },
+};
+
+/* Positional row aligned to kUserCols. Photo cell is the raw file id (0 = none);
+ * the controller tokenises it to a /files/<token> URL. */
 nlohmann::json mapRowUser(const drogon::orm::Row &r)
 {
-	nlohmann::json j;
-	int64_t id = r["id"].as<int64_t>();
-	j["id"]          = id;
-	j["name"]        = displayName(r);
-	j["first_name"]  = escCol(r, "first_name");
-	j["last_name"]   = escCol(r, "last_name");
-	j["type"]        = r["type"].as<std::string>();
-	j["username"]    = escCol(r, "username");
-	j["is_verified"] = rowBool(r, "is_verified");
-	j["is_premium"]  = rowBool(r, "is_premium");
-	j["is_scam"]     = rowBool(r, "is_scam");
-	j["is_fake"]     = rowBool(r, "is_fake");
-	j["is_support"]  = rowBool(r, "is_support");
-	j["created_at"]  = r["created_at"].as<std::string>();
-	j["updated_at"]  = r["updated_at"].as<std::string>();
-	if (!r["profile_photo_file_id"].isNull())
-		j["photo_file_id"] = r["profile_photo_file_id"].as<int64_t>();
-	j["_href"] = "/users/" + std::to_string(id);
-	return j;
+	auto strOrEmpty = [&](const char *c) -> std::string {
+		return r[c].isNull() ? std::string() : r[c].as<std::string>();
+	};
+
+	nlohmann::json a = nlohmann::json::array();
+	a.push_back(r["profile_photo_file_id"].isNull()
+			    ? (int64_t)0 : r["profile_photo_file_id"].as<int64_t>());
+	a.push_back(r["id"].as<int64_t>());
+	a.push_back(displayName(r));
+	a.push_back(escCol(r, "username"));
+	a.push_back(r["type"].as<std::string>());
+	a.push_back(rowBool(r, "is_verified"));
+	a.push_back(rowBool(r, "is_premium"));
+	a.push_back(rowBool(r, "is_scam"));
+	a.push_back(rowBool(r, "is_fake"));
+	a.push_back(rowBool(r, "is_support"));
+	a.push_back(escCol(r, "phone"));
+	a.push_back(escCol(r, "language"));
+	a.push_back(escCol(r, "restriction_reason"));
+	a.push_back(rowBool(r, "has_sensitive"));
+	a.push_back(rowBool(r, "restricts_new_chats"));
+	a.push_back(strOrEmpty("paid_star_count"));
+	a.push_back(strOrEmpty("personal_chat_id"));
+	a.push_back(strOrEmpty("emoji_status"));
+	a.push_back(escCol(r, "bio"));
+	a.push_back(r["created_at"].as<std::string>());
+	a.push_back(r["updated_at"].as<std::string>());
+	return a;
 }
 
 const SearchSchema kUsersSchema = {
@@ -256,13 +297,24 @@ const SearchSchema kUsersSchema = {
 			 "u.profile_photo_file_id, u.created_at, u.updated_at, "
 			 "(SELECT un.username FROM user_usernames un "
 			 "WHERE un.user_id = u.id AND un.kind='active' "
-			 "ORDER BY un.position LIMIT 1) AS username",
+			 "ORDER BY un.position LIMIT 1) AS username, "
+			 "COALESCE(e.phone_number,'') AS phone, "
+			 "COALESCE(e.language_code,'') AS language, "
+			 "COALESCE(e.restriction_reason,'') AS restriction_reason, "
+			 "COALESCE(e.has_sensitive_content,0) AS has_sensitive, "
+			 "COALESCE(e.restricts_new_chats,0) AS restricts_new_chats, "
+			 "COALESCE(e.paid_message_star_count,0) AS paid_star_count, "
+			 "e.personal_chat_id AS personal_chat_id, "
+			 "e.emoji_status_custom_emoji_id AS emoji_status, "
+			 "COALESCE(e.bio,'') AS bio",
 	/* idCol      */ "u.id",
 	/* exFk       */ "user_id",
 	/* defaultSort*/ "u.id",
 	/* defaultOrder*/ "DESC",
 	/* fields     */ kUserFields,
 	/* nFields    */ sizeof(kUserFields) / sizeof(kUserFields[0]),
+	/* cols       */ kUserCols,
+	/* nCols      */ sizeof(kUserCols) / sizeof(kUserCols[0]),
 	/* mapRow     */ &mapRowUser,
 };
 
@@ -307,15 +359,15 @@ nlohmann::json fieldsJson(const SearchSchema &s)
 	return arr;
 }
 
-nlohmann::json columnsJson(const SearchSchema &s)
+nlohmann::json colsJson(const SearchSchema &s)
 {
 	nlohmann::json arr = nlohmann::json::array();
-	for (size_t i = 0; i < s.nFields; i++) {
-		if (!s.fields[i].display)
-			continue;
+	for (size_t i = 0; i < s.nCols; i++) {
 		nlohmann::json o;
-		o["key"]   = std::string(s.fields[i].key);
-		o["label"] = std::string(s.fields[i].label);
+		o["key"]   = std::string(s.cols[i].key);
+		o["label"] = std::string(s.cols[i].label);
+		o["type"]  = std::string(s.cols[i].type);
+		o["sort"]  = std::string(s.cols[i].sortKey);
 		arr.push_back(std::move(o));
 	}
 	return arr;
@@ -551,10 +603,11 @@ drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 
 	nlohmann::json out;
 	out["fields"]  = fieldsJson(schema);
-	out["columns"] = columnsJson(schema);
-	out["limit"]   = limit;
-	out["offset"]  = offset;
-	out["sort"]    = usedSort;
+	out["cols"]       = colsJson(schema);
+	out["limit"]      = limit;
+	out["offset"]     = offset;
+	out["max_offset"] = MAX_OFFSET; /* deepest reachable offset (pager cap) */
+	out["sort"]       = usedSort;
 	out["order"]   = (usedOrder == "ASC") ? "asc" : "desc";
 
 	/*
@@ -573,30 +626,39 @@ drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 
 	if (req.debug) {
 		nlohmann::json dbg;
-		dbg["sql"]       = pageSql;   /* no user data: values are ? */
-		dbg["count_sql"] = countSql;
+		/* Every debug string is Render::esc()'d (the SQL contains '<'/'>'
+		 * comparison operators, the binds are user input), so the SSR
+		 * template and the JS renderer both insert them verbatim. */
+		dbg["sql"]       = Render::esc(pageSql);
+		dbg["count_sql"] = Render::esc(countSql);
 		nlohmann::json b = nlohmann::json::array();
 		for (const auto &v : binds)
-			b.push_back(Render::esc(v)); /* user data -> escape */
+			b.push_back(Render::esc(v));
 		dbg["bind"] = std::move(b);
 
-		std::string explainSql = "EXPLAIN " + pageSql;
+		/* EXPLAIN as {columns, rows[]} so the UI renders it as a table.
+		 * FORMAT=TRADITIONAL forces the classic multi-column plan (MySQL
+		 * defaults to the single-column tree format here). */
+		std::string explainSql = "EXPLAIN FORMAT=TRADITIONAL " + pageSql;
 		auto eres = co_await db->execSqlCoro(explainSql,
 						     std::as_const(binds));
-		nlohmann::json ex = nlohmann::json::array();
+		nlohmann::json exCols = nlohmann::json::array();
+		for (drogon::orm::Result::SizeType ci = 0; ci < eres.columns(); ci++)
+			exCols.push_back(Render::esc(eres.columnName(ci)));
+		nlohmann::json exRows = nlohmann::json::array();
 		for (const auto &r : eres) {
-			nlohmann::json row = nlohmann::json::object();
+			nlohmann::json row = nlohmann::json::array();
 			for (drogon::orm::Result::SizeType ci = 0;
 			     ci < eres.columns(); ci++) {
 				const char *name = eres.columnName(ci);
-				row[name] = r[name].isNull()
-					? nlohmann::json(nullptr)
-					: nlohmann::json(
-						  Render::esc(r[name].as<std::string>()));
+				row.push_back(r[name].isNull()
+					? std::string()
+					: Render::esc(r[name].as<std::string>()));
 			}
-			ex.push_back(std::move(row));
+			exRows.push_back(std::move(row));
 		}
-		dbg["explain"] = std::move(ex);
+		dbg["explain"] = { { "columns", std::move(exCols) },
+				   { "rows", std::move(exRows) } };
 		out["debug"] = std::move(dbg);
 	}
 

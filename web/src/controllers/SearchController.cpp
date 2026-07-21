@@ -4,7 +4,6 @@
  */
 #include "controllers/SearchController.hpp"
 
-#include "auth/FileToken.hpp"
 #include "auth/Session.hpp"
 #include "controllers/Common.hpp"
 #include "dao/Search.hpp"
@@ -31,22 +30,6 @@ drogon::HttpResponsePtr jsonError(const std::string &msg,
 				  drogon::HttpStatusCode code)
 {
 	return jsonResp(nlohmann::json{ { "error", msg } }, code);
-}
-
-std::string fileUrl(int64_t id)
-{
-	return "/files/" + auth::filetoken::encrypt((uint64_t)id);
-}
-
-/* Add the tokenized photo URLs the browser has no key to compute. */
-void enrichRows(nlohmann::json &result)
-{
-	if (!result.contains("rows"))
-		return;
-	for (auto &row : result["rows"])
-		if (row.contains("photo_file_id"))
-			row["_photo_url"] =
-				fileUrl(row["photo_file_id"].get<int64_t>());
 }
 
 } /* namespace */
@@ -77,7 +60,7 @@ SearchController::users(drogon::HttpRequestPtr req)
 		co_return jsonError(result["error"].get<std::string>(),
 				    drogon::k400BadRequest);
 
-	enrichRows(result);
+	enrichSearchPhotos(result);
 	co_return jsonResp(result, drogon::k200OK);
 }
 

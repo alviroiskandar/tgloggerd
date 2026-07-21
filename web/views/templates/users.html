@@ -1,7 +1,8 @@
 <section class="users search-page" id="users-page"
 	data-total="{{ total }}" data-limit="{{ limit }}" data-offset="{{ offset }}"
+	data-max-offset="{{ max_offset }}"
 	data-sort="{{ sort }}" data-order="{{ order }}"
-	data-q-search="{{ q_search }}">
+	data-id-index="{{ id_index }}" data-photo-index="{{ photo_index }}">
 	<h1>Users</h1>
 
 	<script type="application/json" id="search-schema">{{ schema_json }}</script>
@@ -19,41 +20,31 @@
 		<span class="muted">· page {{ page_current }} / {{ page_count }}</span>
 	</div>
 
-	<div class="table-wrap">
-		<table class="grid">
-			<thead>
-				<tr>
-					<th class="col-photo"></th>
-					<th data-sort-key="id">ID</th>
-					<th data-sort-key="first_name">Name</th>
-					<th>Username</th>
-					<th data-sort-key="type">Type</th>
-					<th>Flags</th>
-					<th data-sort-key="created_at">Created</th>
-					<th></th>
-				</tr>
-			</thead>
-			<tbody id="results-body">
-## for r in rows
-				<tr>
-					<td class="col-photo">{% if existsIn(r, "photo_file_id") %}<a href="/users/{{ r.id }}"><img class="avatar-sm" src="{{ media(r.photo_file_id) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
-					<td><a href="/users/{{ r.id }}">{{ r.id }}</a></td>
-					<td><a href="/users/{{ r.id }}">{{ r.name }}</a></td>
-					<td>{% if r.username != "" %}@{{ r.username }}{% else %}<span class="muted">—</span>{% endif %}</td>
-					<td>{{ r.type }}</td>
-					<td>{% if r.is_premium %}<span class="badge">Premium</span>{% endif %}{% if r.is_verified %}<span class="badge">Verified</span>{% endif %}{% if r.is_scam %}<span class="badge warn">Scam</span>{% endif %}{% if r.is_fake %}<span class="badge warn">Fake</span>{% endif %}</td>
-					<td class="nowrap">{{ r.created_at }}</td>
-					<td class="nowrap"><a class="muted" href="/users/{{ r.id }}/history">History</a></td>
-				</tr>
+	<div id="debug-area">
+## if has_debug
+		<details class="debug-panel" open>
+			<summary>Debug</summary>
+			<table class="kv debug-kv">
+				<tr><th>Fetch query</th><td><code>{{ debug.sql }}</code></td></tr>
+				<tr><th>Count query</th><td><code>{{ debug.count_sql }}</code></td></tr>
+				<tr><th>Total rows</th><td>{{ total }}</td></tr>
+				<tr><th>Bind data</th><td>{% for b in debug.bind %}<span class="bind">{{ b }}</span> {% endfor %}</td></tr>
+			</table>
+			<div class="table-wrap">
+				<table class="grid">
+					<thead><tr>{% for c in debug.explain.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+					<tbody>
+## for r in debug.explain.rows
+						<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>
 ## endfor
-## if length(rows) == 0
-				<tr><td colspan="8" class="muted">No users match this search.</td></tr>
+					</tbody>
+				</table>
+			</div>
+		</details>
 ## endif
-			</tbody>
-		</table>
 	</div>
 
-	<div class="pager grid-pager" id="pager">
+	<div class="pager grid-pager" id="pager-top">
 ## if has_prev
 		<a class="pager-btn" href="?offset={{ prev_offset }}&amp;limit={{ limit }}&amp;sort={{ q_sort }}&amp;order={{ q_order }}&amp;search={{ q_search }}">&laquo; Prev</a>
 ## endif
@@ -63,12 +54,58 @@
 ## endif
 	</div>
 
-## if debug_json != ""
-	<details class="debug-panel">
-		<summary>Debug (SQL / bind / EXPLAIN)</summary>
-		<pre>{{ debug_json }}</pre>
-	</details>
+	<div class="table-scroll-top" id="results-scroll-top" aria-hidden="true"><div></div></div>
+	<div class="table-wrap" id="results-wrap">
+		<table class="grid" id="results-table">
+			<thead>
+				<tr>
+## for c in cols
+## if c.sort != ""
+					<th data-sort-key="{{ c.sort }}">{{ c.label }}</th>
+## else
+					<th>{{ c.label }}</th>
 ## endif
+## endfor
+				</tr>
+			</thead>
+			<tbody id="results-body">
+## for r in rows
+				<tr>
+## for c in cols
+## if c.type == "photo"
+					<td class="col-photo">{% if at(r, loop.index) != "" %}<a href="/users/{{ at(r, id_index) }}"><img class="avatar-sm" src="{{ at(r, loop.index) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
+## else if c.type == "id"
+					<td><a href="/users/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a></td>
+## else if c.type == "name"
+					<td class="cell-name"><a href="/users/{{ at(r, id_index) }}">{{ at(r, loop.index) }}</a></td>
+## else if c.type == "username"
+					<td>{% if at(r, loop.index) != "" %}@{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## else if c.type == "bool"
+					<td class="cell-bool">{% if at(r, loop.index) %}<span class="bool-yes">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
+## else if c.type == "longtext"
+					<td class="cell-long">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## else
+					<td class="nowrap">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## endif
+## endfor
+				</tr>
+## endfor
+## if length(rows) == 0
+				<tr><td colspan="{{ ncols }}" class="muted">No users match this search.</td></tr>
+## endif
+			</tbody>
+		</table>
+	</div>
+
+	<div class="pager grid-pager" id="pager-bottom">
+## if has_prev
+		<a class="pager-btn" href="?offset={{ prev_offset }}&amp;limit={{ limit }}&amp;sort={{ q_sort }}&amp;order={{ q_order }}&amp;search={{ q_search }}">&laquo; Prev</a>
+## endif
+		<span class="pager-info muted">Page {{ page_current }} / {{ page_count }}</span>
+## if has_next
+		<a class="pager-btn" href="?offset={{ next_offset }}&amp;limit={{ limit }}&amp;sort={{ q_sort }}&amp;order={{ q_order }}&amp;search={{ q_search }}">Next &raquo;</a>
+## endif
+	</div>
 
 	<script src="/users-render.js" defer></script>
 	<script src="/users-search.js" defer></script>

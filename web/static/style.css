@@ -94,16 +94,28 @@ table.kv th { width: 12rem; }
 
 /* Zebra-striped, bordered results grid (the advanced-search listings). */
 .table-wrap { overflow-x: auto; }
+/* A second horizontal scrollbar above the wide table (synced by JS), so the
+ * user can scroll sideways without first scrolling down to the bottom bar. */
+.table-scroll-top { overflow-x: auto; overflow-y: hidden; }
+.table-scroll-top > div { height: 1px; }
 table.grid {
 	border: 1px solid var(--border);
-	border-radius: 8px;
-	overflow: hidden;
 	margin-bottom: 0.8rem;
+	/* Grow to fit the (many) columns so .table-wrap scrolls horizontally. */
+	width: max-content;
+	min-width: 100%;
 }
 table.grid th, table.grid td {
 	border-bottom: 1px solid var(--border);
 	border-right: 1px solid var(--border);
+	white-space: nowrap;
 }
+/* Truncate long/name cells; clicking a truncated long cell opens a modal. */
+table.grid td.cell-long, table.grid td.cell-name {
+	max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
+}
+table.grid td.cell-long { cursor: pointer; }
+.bool-yes { color: var(--accent); font-weight: 600; }
 table.grid th:last-child, table.grid td:last-child { border-right: none; }
 table.grid tbody tr:nth-child(even) {
 	background: color-mix(in srgb, var(--fg) 4%, transparent);
@@ -150,7 +162,8 @@ select {
 	padding: 0.3rem 0.6rem; line-height: 1;
 }
 .cond-row .cond-del:hover { color: var(--error); border-color: var(--error); }
-.cond-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.8rem; }
+.cond-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0 0 0.8rem; }
+.cond-val-none { padding: 0.4rem 0; }
 .cond-add {
 	background: transparent; color: var(--accent);
 	border: 1px dashed var(--border);
@@ -161,17 +174,41 @@ select {
 
 /* Grid pager (page-number buttons). */
 .grid-pager { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+#pager-top { margin: 0 0 0.9rem; }
 .grid-pager .pager-btn.active {
 	background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
 }
 .grid-pager .pager-btn[disabled] { opacity: 0.45; cursor: default; }
 .grid-pager .pager-info { margin: 0 0.4rem; }
-.debug-panel { margin: 1rem 0; }
-.debug-panel pre {
-	overflow-x: auto; padding: 0.7rem; border-radius: 8px;
-	background: var(--card); border: 1px solid var(--border);
-	font-size: 0.8rem;
+.debug-panel { margin: 0 0 1rem; }
+.debug-panel summary { cursor: pointer; color: var(--accent); margin-bottom: 0.5rem; }
+.debug-kv { font-size: 0.85rem; }
+.debug-kv th { width: 10rem; }
+.debug-kv code { word-break: break-all; }
+.debug-panel .bind {
+	display: inline-block; margin: 0 0.2rem 0.2rem 0; padding: 0.05rem 0.4rem;
+	border-radius: 4px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+	font-family: ui-monospace, monospace; font-size: 0.85em;
 }
+
+/* Modal for a truncated cell's full text. */
+.modal-overlay {
+	position: fixed; inset: 0; z-index: 100;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+.modal-box {
+	position: relative; max-width: 640px; max-height: 80vh; overflow: auto;
+	padding: 1.4rem 1.4rem 1.2rem; border-radius: 10px;
+	background: var(--card); border: 1px solid var(--border);
+}
+.modal-close {
+	position: absolute; top: 0.4rem; right: 0.5rem;
+	background: transparent; border: none; color: var(--muted);
+	font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0.2rem 0.4rem;
+}
+.modal-close:hover { color: var(--fg); }
+.modal-text { white-space: pre-wrap; word-break: break-word; }
 
 /* User change-history timeline. */
 .timeline { list-style: none; margin: 1rem 0; padding: 0; }

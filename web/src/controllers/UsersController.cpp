@@ -43,7 +43,6 @@ UsersController::list(drogon::HttpRequestPtr req)
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Users";
 	data["search_error"] = "";
-	data["debug_json"]   = "";
 
 	std::string searchRaw = req->getParameter("search");
 	std::string err;
@@ -69,33 +68,61 @@ UsersController::list(drogon::HttpRequestPtr req)
 			db, dao::search::usersSchema(), std::move(empty));
 	}
 
-	int total  = result.value("total", 0);
-	int limit  = result.value("limit", 50);
-	int offset = result.value("offset", 0);
-	int pages  = (limit > 0) ? (total + limit - 1) / limit : 1;
+	/* Tokenise photo cells so the SSR rows match the JSON API's rows. */
+	enrichSearchPhotos(result);
+
+	/* Positions of the id and photo columns (for cross-referencing links). */
+	int idIdx = 0, photoIdx = 0;
+	const auto &cols = result["cols"];
+	for (size_t i = 0; i < cols.size(); i++) {
+		std::string t = cols[i].value("type", std::string());
+		if (t == "id")
+			idIdx = (int)i;
+		else if (t == "photo")
+			photoIdx = (int)i;
+	}
+
+	int total     = result.value("total", 0);
+	int limit     = result.value("limit", 50);
+	int offset    = result.value("offset", 0);
+	int maxOffset = result.value("max_offset", dao::search::MAX_OFFSET);
+
+	/* Cap the page count at the deepest reachable page: offsets beyond
+	 * maxOffset are clamped by the API, so paging past that would land on the
+	 * same rows. Every offered page then maps to a distinct offset. */
+	int pages = (limit > 0) ? (total + limit - 1) / limit : 1;
+	int reach = (limit > 0) ? (maxOffset / limit) + 1 : 1;
+	if (pages > reach)
+		pages = reach;
 	if (pages < 1)
 		pages = 1;
+	int cur = (limit > 0) ? offset / limit : 0;
 
+	data["cols"]        = result["cols"];
 	data["rows"]        = result["rows"];
-	data["columns"]     = result["columns"];
+	data["ncols"]       = (int)cols.size();
+	data["id_index"]    = idIdx;
+	data["photo_index"] = photoIdx;
 	data["schema_json"] = result["fields"].dump(); /* server constants: safe raw */
 	data["total"]       = total;
 	data["limit"]       = limit;
 	data["offset"]      = offset;
+	data["max_offset"]  = maxOffset;
 	data["sort"]        = result.value("sort", std::string());
 	data["order"]       = result.value("order", std::string("desc"));
-	data["page_current"] = (limit > 0) ? (offset / limit) + 1 : 1;
+	data["page_current"] = cur + 1;
 	data["page_count"]  = pages;
 	data["has_prev"]    = offset > 0;
-	data["has_next"]    = offset + limit < total;
+	data["has_next"]    = cur < pages - 1;
 	data["prev_offset"] = (offset - limit < 0) ? 0 : offset - limit;
-	data["next_offset"] = offset + limit;
+	data["next_offset"] = (cur + 1) * limit;
 	data["q_search"]    = drogon::utils::urlEncodeComponent(searchRaw);
 	data["q_sort"] =
 		drogon::utils::urlEncodeComponent(result.value("sort", std::string()));
 	data["q_order"]     = result.value("order", std::string("desc"));
+	data["has_debug"]   = result.contains("debug");
 	if (result.contains("debug"))
-		data["debug_json"] = result["debug"].dump(2);
+		data["debug"] = result["debug"];
 
 	co_return htmlPage(views::Render::page("users.html", data));
 }

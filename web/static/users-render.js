@@ -1,55 +1,68 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * tgloggerd web -- client-side renderer for /v1/search/users rows. It mirrors
- * the SSR markup in views/templates/users.html so a JS-loaded page is identical
- * to a server-rendered one. Every string field in the JSON is already
- * HTML-escaped by the server (name, username, ...), so it is inserted verbatim;
- * file URLs arrive pre-tokenized as _photo_url (the browser has no key).
+ * tgloggerd web -- client renderer for /v1/search/users result rows. It mirrors
+ * the SSR markup in views/templates/users.html, driven by the `cols` metadata
+ * and positional `rows` the API returns (like api2.php's keys/data). Every
+ * string field is already HTML-escaped by the server, so it is inserted
+ * verbatim; the photo cell is a pre-tokenized /files/<token> URL (or "").
  *
- * Exposes window.UsersRender.rows(list) -> table-body HTML string.
+ * Exposes window.UsersRender.rows(cols, rows) -> table-body HTML string.
  */
 (function () {
 	"use strict";
 
-	function photo(r) {
-		if (r._photo_url)
-			return '<a href="/users/' + r.id + '"><img class="avatar-sm" src="' +
-				r._photo_url + '" alt=""></a>';
-		return '<span class="avatar-sm placeholder"></span>';
+	var DASH = '<span class="muted">&mdash;</span>';
+
+	function idIndexOf(cols) {
+		for (var i = 0; i < cols.length; i++)
+			if (cols[i].type === "id")
+				return i;
+		return 1;
 	}
 
-	function badges(r) {
-		var s = "";
-		if (r.is_premium)  s += '<span class="badge">Premium</span>';
-		if (r.is_verified) s += '<span class="badge">Verified</span>';
-		if (r.is_scam)     s += '<span class="badge warn">Scam</span>';
-		if (r.is_fake)     s += '<span class="badge warn">Fake</span>';
-		return s;
+	function cell(col, val, idVal) {
+		switch (col.type) {
+		case "photo":
+			return '<td class="col-photo">' + (val
+				? '<a href="/users/' + idVal + '"><img class="avatar-sm" src="' +
+					val + '" alt=""></a>'
+				: '<span class="avatar-sm placeholder"></span>') + '</td>';
+		case "id":
+			return '<td><a href="/users/' + val + '">' + val + '</a></td>';
+		case "name":
+			return '<td class="cell-name"><a href="/users/' + idVal + '">' +
+				val + '</a></td>';
+		case "username":
+			return '<td>' + (val !== "" ? "@" + val : DASH) + '</td>';
+		case "bool":
+			return '<td class="cell-bool">' + (val
+				? '<span class="bool-yes">Yes</span>'
+				: '<span class="muted">No</span>') + '</td>';
+		case "longtext":
+			return '<td class="cell-long">' + (val !== "" ? val : DASH) + '</td>';
+		default:
+			return '<td class="nowrap">' + (val !== "" ? val : DASH) + '</td>';
+		}
 	}
 
-	function row(r) {
-		var uname = (r.username && r.username !== "")
-			? "@" + r.username
-			: '<span class="muted">&mdash;</span>';
-		return '<tr>' +
-			'<td class="col-photo">' + photo(r) + '</td>' +
-			'<td><a href="/users/' + r.id + '">' + r.id + '</a></td>' +
-			'<td><a href="/users/' + r.id + '">' + r.name + '</a></td>' +
-			'<td>' + uname + '</td>' +
-			'<td>' + r.type + '</td>' +
-			'<td>' + badges(r) + '</td>' +
-			'<td class="nowrap">' + r.created_at + '</td>' +
-			'<td class="nowrap"><a class="muted" href="/users/' + r.id +
-				'/history">History</a></td>' +
-			'</tr>';
+	function row(cols, r, idIdx) {
+		var idVal = r[idIdx];
+		var s = "<tr>";
+		for (var i = 0; i < cols.length; i++)
+			s += cell(cols[i], r[i], idVal);
+		return s + "</tr>";
 	}
 
-	function rows(list) {
+	function rows(cols, list) {
 		if (!list || !list.length)
-			return '<tr><td colspan="8" class="muted">' +
-				'No users match this search.</td></tr>';
-		return list.map(row).join("");
+			return '<tr><td colspan="' + cols.length +
+				'" class="muted">No users match this search.</td></tr>';
+		var idIdx = idIndexOf(cols);
+		var out = "";
+		for (var i = 0; i < list.length; i++)
+			out += row(cols, list[i], idIdx);
+		return out;
 	}
 
-	window.UsersRender = { rows: rows, row: row };
+	window.UsersRender = { rows: rows };
 }());

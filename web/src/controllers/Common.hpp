@@ -17,10 +17,44 @@
 #include <string>
 
 #include "auth/Csrf.hpp"
+#include "auth/FileToken.hpp"
 #include "auth/Session.hpp"
 #include "views/Render.hpp"
 
 namespace tgweb::controllers {
+
+/*
+ * Turn the raw photo file id in each search result row (the cell of the "photo"
+ * column) into an opaque /files/<token> URL the browser can load, or "" when
+ * there is no photo. Shared by the SSR page and the JSON API so both render
+ * identical rows. Safe to call on an error result (no cols/rows).
+ */
+inline void enrichSearchPhotos(nlohmann::json &result)
+{
+	if (!result.is_object() || !result.contains("cols") ||
+	    !result.contains("rows"))
+		return;
+	int photoIdx = -1;
+	const auto &cols = result["cols"];
+	for (size_t i = 0; i < cols.size(); i++) {
+		if (cols[i].value("type", std::string()) == "photo") {
+			photoIdx = (int)i;
+			break;
+		}
+	}
+	if (photoIdx < 0)
+		return;
+	for (auto &row : result["rows"]) {
+		if (!row.is_array() || photoIdx >= (int)row.size())
+			continue;
+		auto &cell = row[photoIdx];
+		if (cell.is_number() && cell.get<int64_t>() != 0)
+			cell = std::string("/files/") +
+			       auth::filetoken::encrypt(cell.get<uint64_t>());
+		else
+			cell = std::string();
+	}
+}
 
 /*
  * Context every authenticated page needs for the layout: the signed-in
