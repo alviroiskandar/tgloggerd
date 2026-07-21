@@ -4,6 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }} — {{ app }}</title>
+<script>
+/*
+ * Theme: default to the OS preference, let the header button override it.
+ * Applied here (before the stylesheet) so the stored choice paints without a
+ * flash. data-theme absent => follow the system (see style.css).
+ */
+(function () {
+	var root = document.documentElement;
+	function stored() { try { return localStorage.getItem("theme"); } catch (e) { return null; } }
+	var s = stored();
+	if (s === "dark" || s === "light")
+		root.setAttribute("data-theme", s);
+
+	function effective() {
+		var t = root.getAttribute("data-theme");
+		if (t) return t;
+		return window.matchMedia &&
+		       window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+	}
+	function paint(btn) {
+		var dark = effective() === "dark";
+		btn.textContent = dark ? "☀" : "☾";
+		var label = dark ? "Switch to light mode" : "Switch to dark mode";
+		btn.setAttribute("aria-label", label);
+		btn.setAttribute("title", label);
+	}
+	document.addEventListener("DOMContentLoaded", function () {
+		var btn = document.getElementById("theme-toggle");
+		if (!btn) return;
+		paint(btn);
+		btn.addEventListener("click", function () {
+			var next = effective() === "dark" ? "light" : "dark";
+			root.setAttribute("data-theme", next);
+			try { localStorage.setItem("theme", next); } catch (e) {}
+			paint(btn);
+		});
+		if (window.matchMedia) {
+			/* Track OS changes live while still following the system. */
+			window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+				if (!stored()) paint(btn);
+			});
+		}
+	});
+})();
+</script>
 <link rel="stylesheet" href="/style.css">
 <script src="/jquery.min.js" defer></script>
 </head>
@@ -17,6 +62,9 @@
 		<a href="/messages/group">Messages</a>
 		<a href="/files">Files</a>
 	</nav>
+## endif
+	<button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☾</button>
+## if logged_in
 	<form class="signout" method="post" action="/logout">
 		<input type="hidden" name="csrf" value="{{ csrf }}">
 		<span class="who">{{ username }}</span>
