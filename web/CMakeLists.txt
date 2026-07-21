@@ -101,6 +101,8 @@ add_executable(tgloggerd_web
 	src/dao/Audit.hpp
 	src/dao/Browse.cpp
 	src/dao/Browse.hpp
+	src/dao/Search.cpp
+	src/dao/Search.hpp
 	src/views/Render.cpp
 	src/views/Render.hpp
 	src/controllers/Common.hpp
@@ -118,6 +120,8 @@ add_executable(tgloggerd_web
 	src/controllers/FilesController.hpp
 	src/controllers/ApiController.cpp
 	src/controllers/ApiController.hpp
+	src/controllers/SearchController.cpp
+	src/controllers/SearchController.hpp
 	src/controllers/MediaController.cpp
 	src/controllers/MediaController.hpp)
 

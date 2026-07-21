@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
+ */
+#ifndef TGLOGGERD_WEB_DAO_SEARCH_HPP
+#define TGLOGGERD_WEB_DAO_SEARCH_HPP
+
+#include <drogon/orm/DbClient.h>
+#include <drogon/utils/coroutine.h>
+
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+/*
+ * Advanced, entity-generic search over the tgloggerd schema.
+ *
+ * A search is a flat list of conditions [{c,o,v,n}] (column key, operator,
+ * value, AND/OR connector to the NEXT condition), evaluated against a curated
+ * per-entity SearchSchema. Only bound `?` VALUES are ever user data; every
+ * other SQL token (column expressions, operators, connectors, table names,
+ * sort column, order) is emitted from server-controlled allowlists, so the
+ * generated SQL is injection-safe by construction. Like dao::browse, every
+ * string placed on the returned JSON is already Render::esc()-escaped.
+ */
+namespace tgweb::dao::search {
+
+/* Operator flags; a field advertises the subset it allows as a bitmask. */
+enum Op : uint32_t {
+	OP_EQ        = 1u << 0,
+	OP_NE        = 1u << 1,
+	OP_LT        = 1u << 2,
+	OP_GT        = 1u << 3,
+	OP_LE        = 1u << 4,
+	OP_GE        = 1u << 5,
+	OP_LIKE      = 1u << 6,  /* "contains" */
+	OP_NLIKE     = 1u << 7,
+	OP_ISNULL    = 1u << 8,
+	OP_ISNOTNULL = 1u << 9,
+};
+
+enum class FType { Text, Int, Bool, Datetime, Enum };
+
+/*
+ * Column: the condition is `<expr> <op> ?` (or `<expr> IS [NOT] NULL`).
+ * Exists : the condition is `[NOT] EXISTS (SELECT 1 FROM <exTable>
+ *          WHERE x.<exFk> = <idCol> <exExtra> AND <exCol> {=|LIKE} ?)`.
+ *          For Exists fields, `=`/LIKE mean "ever matched" and `!=`/`NOT LIKE`
+ *          mean "never matched" (NOT EXISTS) -- never the misleading "ever had
+ *          a value != x". Exists fields therefore never allow IS [NOT] NULL.
+ */
+enum class FKind { Column, Exists };
+
+struct SearchField {
+	std::string_view key;      /* the `c` value clients send */
+	std::string_view label;    /* human label for the UI */
+	FType            type;
+	FKind            kind;
+	std::string_view expr;     /* Column: the LHS SQL expression */
+	std::string_view exTable;  /* Exists: "table x" (alias must be x) */
+	std::string_view exCol;    /* Exists: "x.<col>" being compared */
+	std::string_view exExtra;  /* Exists: extra predicate or "" */
+	uint32_t         ops;      /* allowed-operator bitmask */
+	bool             sortable;
+	bool             display;  /* part of the default result columns */
+	std::string_view enumVals; /* Enum: CSV of allowed values, else "" */
+};
+
+struct SearchSchema {
+	std::string_view fromJoin;     /* "users u LEFT JOIN user_extra_info e ON ..." */
+	std::string_view selectCols;   /* display projection for the page query */
+	std::string_view idCol;        /* "u.id": tiebreaker + Exists join target */
+	std::string_view exFk;         /* FK column in Exists tables ("user_id") */
+	std::string_view defaultSort;  /* default ORDER BY expression */
+	std::string_view defaultOrder; /* "ASC" | "DESC" */
+	const SearchField *fields;
+	size_t            nFields;
+	/* Project one result row to escaped JSON (raw photo id + _href kept). */
+	nlohmann::json (*mapRow)(const drogon::orm::Row &);
+};
+
+/* One parsed condition from the search JSON. */
+struct Condition {
+	std::string c, o, v, n;
+	bool hasV = false; /* whether "v" was present (IS NULL omits it) */
+};
+
+struct Request {
+	std::vector<Condition> conds;
+	std::string sort;   /* field key; empty -> schema default */
+	std::string order;  /* "asc"|"desc"; empty -> schema default */
+	int  limit  = 50;
+	int  offset = 0;
+	bool debug  = false; /* already AND-ed with is-admin by the caller */
+};
+
+/* Limits (documented in web/docs/search-api.md). */
+constexpr int MAX_CONDS  = 16;
+constexpr int MAX_EXISTS = 4;
+constexpr int MAX_VLEN   = 512;
+constexpr int MAX_LIMIT  = 100;
+constexpr int MAX_OFFSET = 50000;
+
+/* The registered users schema. */
+const SearchSchema &usersSchema(void);
+
+/*
+ * Run a search. On success returns {fields, columns, rows, total, limit,
+ * offset, sort, order[, debug]}. On a validation error returns {"error": msg}
+ * (the controller maps that to HTTP 400). Never throws for user input.
+ */
+drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
+				 const SearchSchema &schema, Request req);
+
+} /* namespace tgweb::dao::search */
+
+#endif /* TGLOGGERD_WEB_DAO_SEARCH_HPP */
