@@ -5,6 +5,7 @@
 #include <tgloggerd/DB.hpp>
 
 #include <string>
+#include <cstdint>
 
 namespace tgloggerd {
 
@@ -44,6 +45,19 @@ void DB::recordTextHistory(mysql::Transaction &tx, const char *table,
 	std::string ins = std::string("INSERT INTO ") + table + " (" +
 		fk_column + ", " + value_column + ") VALUES (?, ?)";
 	tx.insert(ins, { entity_id, value });
+}
+
+bool DB::bumpMsgCount(mysql::Transaction &tx, const char *table, int64_t id)
+{
+	tx.execute(std::string("UPDATE ") + table +
+		   " SET msg_count = msg_count + 1 WHERE id = ?", { id });
+
+	auto r = tx.query(std::string("SELECT msg_count FROM ") + table +
+			  " WHERE id = ?", { id });
+	if (r.empty() || !r[0][0].has_value())
+		return false;
+	uint64_t c = std::stoull(*r[0][0]);
+	return c != 0 && (c % 10 == 0);
 }
 
 } /* namespace tgloggerd */

@@ -26,8 +26,9 @@ mysql::Param b(bool v)
  * metadata. The shared edit-snapshot and forward-info logic is reused via
  * the DB message helpers.
  */
-void DB::upsertGroupMessage(const models::GroupMessage &msg)
+MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 {
+	MsgCountRefetch refetch;
 	/*
 	 * file_id is intentionally omitted: media files are downloaded
 	 * asynchronously and linked later via setGroupMessageFile, so the
@@ -139,6 +140,19 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 						  "group_message_id", gm_id,
 						  *msg.forward_info);
 			}
+
+			/*
+			 * Genuinely new message (only reached on first insert,
+			 * on the single-threaded serial worker): bump the
+			 * group's counter and, when a user sent it, that user's.
+			 * One increment per recorded row -- matches the COUNT(1)
+			 * prefill in scripts/prefill_msg_count.py.
+			 */
+			if (bumpMsgCount(tx, "`groups`", msg.chat_id))
+				refetch.group = msg.chat_id;
+			if (msg.sender_user_id.has_value() &&
+			    bumpMsgCount(tx, "users", *msg.sender_user_id))
+				refetch.user = *msg.sender_user_id;
 			return;
 		}
 
@@ -184,6 +198,8 @@ void DB::upsertGroupMessage(const models::GroupMessage &msg)
 					  "group_message_id", gm_id,
 					  *msg.forward_info);
 	});
+
+	return refetch;
 }
 
 void DB::setGroupMessageFile(int64_t chat_id, int64_t message_id,

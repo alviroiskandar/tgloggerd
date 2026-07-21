@@ -17,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 namespace tgloggerd {
@@ -26,6 +27,17 @@ namespace tgloggerd {
  * tgloggerd models onto SQL statements executed through the generic
  * mysql::Database, so the rest of tgloggerd never writes SQL directly.
  */
+
+/*
+ * Returned by the message upserts: a user and/or group whose msg_count just
+ * crossed a multiple of 10 on this insert, so its full info should be
+ * refetched. Empty on edits/deletes (no new message was recorded).
+ */
+struct MsgCountRefetch {
+	std::optional<int64_t> user;
+	std::optional<int64_t> group;
+};
+
 class DB {
 public:
 	explicit DB(const mysql::Config &cfg);
@@ -92,13 +104,13 @@ public:
 	 *  - Forward info (inserts into private_message_fwd_info if
 	 *    present and not already recorded).
 	 */
-	void upsertPrivateMessage(const models::PrivateMessage &msg);
+	MsgCountRefetch upsertPrivateMessage(const models::PrivateMessage &msg);
 
 	/*
 	 * Insert or update a group-chat message. Same semantics as
 	 * upsertPrivateMessage, targeting the group_messages tables.
 	 */
-	void upsertGroupMessage(const models::GroupMessage &msg);
+	MsgCountRefetch upsertGroupMessage(const models::GroupMessage &msg);
 
 	/*
 	 * Point a message's file_id at a files row, once its media
@@ -190,6 +202,14 @@ private:
 	void insertForwardInfo(mysql::Transaction &tx, const char *table,
 			       const char *fk_column, uint64_t message_row_id,
 			       const models::ForwardInfo &info);
+
+	/*
+	 * Increment `<table>.msg_count` for row `id` and return whether the new
+	 * value is a positive multiple of 10 (i.e. this message just crossed a
+	 * refetch boundary). `table` is a compile-time literal, never user
+	 * input.
+	 */
+	bool bumpMsgCount(mysql::Transaction &tx, const char *table, int64_t id);
 
 	mysql::Database db_;
 };

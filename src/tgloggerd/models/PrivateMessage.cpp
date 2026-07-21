@@ -30,8 +30,9 @@ mysql::Param b(bool v)
  *   - If the message became deleted, only stamp deleted_at.
  *   - If forward_info is present and not already recorded, insert it.
  */
-void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
+MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 {
+	MsgCountRefetch refetch;
 	/*
 	 * file_id is intentionally omitted: media files are downloaded
 	 * asynchronously and linked later via setPrivateMessageFile, so the
@@ -135,6 +136,16 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 						  "private_message_id", pm_id,
 						  *msg.forward_info);
 			}
+
+			/*
+			 * Genuinely new message: bump the sender user's counter.
+			 * sender_id is NULL for our own outgoing messages, which
+			 * therefore count for no user -- matching the COUNT(1)
+			 * prefill (private_messages WHERE sender_id = user).
+			 */
+			if (msg.sender_id.has_value() &&
+			    bumpMsgCount(tx, "users", *msg.sender_id))
+				refetch.user = *msg.sender_id;
 			return;
 		}
 
@@ -207,6 +218,8 @@ void DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 					  "private_message_id", pm_id,
 					  *msg.forward_info);
 	});
+
+	return refetch;
 }
 
 void DB::setPrivateMessageFile(int64_t chat_id, int64_t message_id,
