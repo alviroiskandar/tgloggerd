@@ -121,8 +121,12 @@ constexpr int MAX_VLEN   = 512;
 constexpr int MAX_LIMIT  = 1000;
 constexpr int MAX_OFFSET = 500000;
 
-/* The registered users schema. */
+/* The registered per-entity schemas. */
 const SearchSchema &usersSchema(void);
+const SearchSchema &groupsSchema(void);
+
+/* Look up a schema by entity name ("users", "groups"); nullptr if unknown. */
+const SearchSchema *schemaByName(const std::string &entity);
 
 /*
  * Parse the `search` query-param JSON ([{c,o,v,n}, ...]) into conditions.

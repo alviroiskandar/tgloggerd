@@ -30,19 +30,6 @@ namespace tgweb::dao::browse {
 drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db);
 
 /*
- * One page of users, newest id first. cursor is the last id seen (0 for the
- * first page); at most `limit` rows are returned. When `query` is non-empty the
- * page is filtered to it (case-insensitive substring). `field` selects which
- * column(s) to match: "all" (id, name, username), or one of "id", "name",
- * "username", "phone", "bio". Result: {users:[{id, name, username, type,
- * is_premium, is_verified, is_scam, is_fake}], next_cursor} where next_cursor
- * is null when there are no more.
- */
-drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
-				       int64_t cursor, int limit,
-				       std::string query, std::string field);
-
-/*
  * A single user's profile and change history, or std::nullopt if no such user.
  * Result: {user:{...}, usernames:[...], name_hist:[...], username_events:[...],
  * bio_hist:[...], phone_hist:[...], photo_hist:[...]}.
@@ -58,19 +45,6 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
  */
 drogon::Task<std::optional<nlohmann::json>>
 userHistory(drogon::orm::DbClientPtr db, int64_t id, int limit, int offset);
-
-/*
- * One page of groups, newest id first (group ids are negative, so this pages
- * from the least-negative downward). cursor is the last id seen (0 for the
- * first page). When `query` is non-empty the page is filtered to it
- * (case-insensitive substring). `field` selects which column(s) to match:
- * "all" (id, title, username), or one of "id", "title", "username",
- * "description". Result: {groups:[{id, type, title, username, admins}],
- * next_cursor}.
- */
-drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
-					int64_t cursor, int limit,
-					std::string query, std::string field);
 
 /*
  * A single group with its current admins and change history, or std::nullopt

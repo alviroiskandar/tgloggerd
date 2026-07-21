@@ -63,6 +63,8 @@ UsersController::list(drogon::HttpRequestPtr req)
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Users";
+	data["entity"] = "users";
+	data["detail_base"] = "/users";
 	data["search_error"] = "";
 
 	std::string searchRaw = req->getParameter("search");
@@ -145,7 +147,7 @@ UsersController::list(drogon::HttpRequestPtr req)
 	if (result.contains("debug"))
 		data["debug"] = result["debug"];
 
-	co_return htmlPage(views::Render::page("users.html", data));
+	co_return htmlPage(views::Render::page("search_page.html", data));
 }
 
 drogon::Task<drogon::HttpResponsePtr>

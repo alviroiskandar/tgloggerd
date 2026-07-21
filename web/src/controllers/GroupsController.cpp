@@ -5,55 +5,131 @@
  */
 #include "controllers/GroupsController.hpp"
 
+#include "auth/Session.hpp"
 #include "controllers/Common.hpp"
 #include "dao/Browse.hpp"
+#include "dao/Search.hpp"
 #include "views/Render.hpp"
+
+#include <drogon/utils/Utilities.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <string>
 
 namespace tgweb::controllers {
 
+/* Advanced-search groups listing; mirrors UsersController::list (shared core +
+ * shared search_page.html template), with the groups schema and detail base. */
 drogon::Task<drogon::HttpResponsePtr>
 GroupsController::list(drogon::HttpRequestPtr req)
 {
+	std::string rawLimit = req->getParameter("limit");
+	if (!rawLimit.empty() &&
+	    strtol(rawLimit.c_str(), nullptr, 10) > dao::search::MAX_LIMIT) {
+		auto params = req->getParameters();
+		params["limit"] = std::to_string(dao::search::MAX_LIMIT);
+		std::string qs;
+		for (const auto &kv : params) {
+			if (!qs.empty())
+				qs += "&";
+			qs += drogon::utils::urlEncodeComponent(kv.first) + "=" +
+			      drogon::utils::urlEncodeComponent(kv.second);
+		}
+		co_return drogon::HttpResponse::newRedirectionResponse(
+			req->getPath() + "?" + qs);
+	}
+
 	auto db = drogon::app().getDbClient("ro");
 
-	int limit = clampedIntParam(req, "limit", 50, 1, 200);
-	int64_t cursor = 0;
-	std::string before = req->getParameter("before");
-	if (!before.empty())
-		cursor = strtoll(before.c_str(), nullptr, 10);
+	dao::search::Request sreq;
+	sreq.limit  = clampedIntParam(req, "limit", 10, 1, dao::search::MAX_LIMIT);
+	sreq.offset = clampedIntParam(req, "offset", 0, 0, dao::search::MAX_OFFSET);
+	sreq.sort   = req->getParameter("sort");
+	sreq.order  = req->getParameter("order");
+	sreq.debug  = (req->getParameter("debug") == "1") &&
+		      auth::session::isAdmin(req);
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Groups";
-	data["limit"] = limit;
+	data["entity"] = "groups";
+	data["detail_base"] = "/groups";
+	data["search_error"] = "";
 
-	nlohmann::json fields = nlohmann::json::array();
-	auto addField = [&](const char *v, const char *l) {
-		nlohmann::json o;
-		o["value"] = v;
-		o["label"] = l;
-		fields.push_back(std::move(o));
-	};
-	addField("all", "All fields");
-	addField("id", "ID");
-	addField("title", "Title");
-	addField("username", "Username");
-	addField("description", "Description");
+	std::string searchRaw = req->getParameter("search");
+	std::string err;
+	if (!dao::search::parseConditions(searchRaw, sreq.conds, err)) {
+		data["search_error"] = views::Render::esc(err);
+		sreq.conds.clear();
+		searchRaw.clear();
+	}
 
-	std::string field;
-	std::string query = applySearch(data, req, "/groups",
-					"Search groups…", std::move(fields),
-					field);
+	nlohmann::json result = co_await dao::search::run(
+		db, dao::search::groupsSchema(), std::move(sreq));
 
-	nlohmann::json page = co_await dao::browse::listGroups(db, cursor, limit,
-							       query, field);
-	data["groups"] = page["groups"];
-	data["next_cursor"] = page["next_cursor"];
+	if (result.contains("error")) {
+		data["search_error"] =
+			views::Render::esc(result["error"].get<std::string>());
+		searchRaw.clear();
+		dao::search::Request empty;
+		empty.limit = clampedIntParam(req, "limit", 10, 1,
+					      dao::search::MAX_LIMIT);
+		result = co_await dao::search::run(
+			db, dao::search::groupsSchema(), std::move(empty));
+	}
 
-	co_return htmlPage(views::Render::page("groups.html", data));
+	enrichSearchPhotos(result);
+
+	int idIdx = 0, photoIdx = 0;
+	const auto &cols = result["cols"];
+	for (size_t i = 0; i < cols.size(); i++) {
+		std::string t = cols[i].value("type", std::string());
+		if (t == "id")
+			idIdx = (int)i;
+		else if (t == "photo")
+			photoIdx = (int)i;
+	}
+
+	int total     = result.value("total", 0);
+	int limit     = result.value("limit", 10);
+	int offset    = result.value("offset", 0);
+	int maxOffset = result.value("max_offset", dao::search::MAX_OFFSET);
+	int pages = (limit > 0) ? (total + limit - 1) / limit : 1;
+	int reach = (limit > 0) ? (maxOffset / limit) + 1 : 1;
+	if (pages > reach)
+		pages = reach;
+	if (pages < 1)
+		pages = 1;
+	int cur = (limit > 0) ? offset / limit : 0;
+
+	data["cols"]        = result["cols"];
+	data["rows"]        = result["rows"];
+	data["ncols"]       = (int)cols.size();
+	data["id_index"]    = idIdx;
+	data["photo_index"] = photoIdx;
+	data["schema_json"] = result["fields"].dump();
+	data["total"]       = total;
+	data["limit"]       = limit;
+	data["offset"]      = offset;
+	data["max_offset"]  = maxOffset;
+	data["sort"]        = result.value("sort", std::string());
+	data["order"]       = result.value("order", std::string("desc"));
+	data["page_current"] = cur + 1;
+	data["page_count"]  = pages;
+	data["has_prev"]    = offset > 0;
+	data["has_next"]    = cur < pages - 1;
+	data["prev_offset"] = (offset - limit < 0) ? 0 : offset - limit;
+	data["next_offset"] = (cur + 1) * limit;
+	data["q_search"]    = drogon::utils::urlEncodeComponent(searchRaw);
+	data["q_sort"] =
+		drogon::utils::urlEncodeComponent(result.value("sort", std::string()));
+	data["q_order"]     = result.value("order", std::string("desc"));
+	data["has_debug"]   = result.contains("debug");
+	if (result.contains("debug"))
+		data["debug"] = result["debug"];
+
+	co_return htmlPage(views::Render::page("search_page.html", data));
 }
 
 drogon::Task<drogon::HttpResponsePtr>

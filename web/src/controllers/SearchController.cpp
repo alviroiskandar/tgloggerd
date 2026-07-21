@@ -35,8 +35,13 @@ drogon::HttpResponsePtr jsonError(const std::string &msg,
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
-SearchController::users(drogon::HttpRequestPtr req)
+SearchController::search(drogon::HttpRequestPtr req, std::string entity)
 {
+	const dao::search::SearchSchema *schema = dao::search::schemaByName(entity);
+	if (!schema)
+		co_return jsonError("unknown search entity: '" + entity + "'",
+				    drogon::k404NotFound);
+
 	dao::search::Request sreq;
 	sreq.limit  = clampedIntParam(req, "limit", 10, 1,
 				      dao::search::MAX_LIMIT);
@@ -53,8 +58,8 @@ SearchController::users(drogon::HttpRequestPtr req)
 		co_return jsonError(err, drogon::k400BadRequest);
 
 	auto db = drogon::app().getDbClient("ro");
-	nlohmann::json result = co_await dao::search::run(
-		db, dao::search::usersSchema(), std::move(sreq));
+	nlohmann::json result = co_await dao::search::run(db, *schema,
+							  std::move(sreq));
 
 	if (result.contains("error"))
 		co_return jsonError(result["error"].get<std::string>(),

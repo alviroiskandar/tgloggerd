@@ -109,46 +109,6 @@ inline int clampedIntParam(const drogon::HttpRequestPtr &req, const char *name,
 	return std::clamp(n, lo, hi);
 }
 
-/*
- * Wire up the shared search box for a listing page. Reads "q" and "field",
- * validates the field against `fields` (an array of {value, label} options;
- * the first is the default when the request's field is missing or unknown),
- * and populates data["search"] = {action, q, placeholder, fields, field} for
- * the search.html component (q is HTML-escaped for the input value). Also sets
- * data["q_url"] / data["field_url"] with the URL-encoded values for carrying
- * the active search through pager links. Returns the raw query, and writes the
- * validated field to `field`, to hand to the DAO.
- */
-inline std::string applySearch(nlohmann::json &data,
-			       const drogon::HttpRequestPtr &req,
-			       const std::string &action,
-			       const std::string &placeholder,
-			       nlohmann::json fields, std::string &field)
-{
-	std::string q = req->getParameter("q");
-
-	std::string requested = req->getParameter("field");
-	field = fields.empty() ? std::string("all")
-			       : fields[0]["value"].get<std::string>();
-	for (const auto &f : fields) {
-		if (f["value"] == requested) {
-			field = requested;
-			break;
-		}
-	}
-
-	nlohmann::json s;
-	s["action"]      = action;
-	s["q"]           = views::Render::esc(q);
-	s["placeholder"] = placeholder;
-	s["field"]       = field;
-	s["fields"]      = std::move(fields);
-	data["search"]   = std::move(s);
-	data["q_url"]     = drogon::utils::urlEncodeComponent(q);
-	data["field_url"] = drogon::utils::urlEncodeComponent(field);
-	return q;
-}
-
 } /* namespace tgweb::controllers */
 
 #endif /* TGLOGGERD_WEB_CONTROLLERS_COMMON_HPP */

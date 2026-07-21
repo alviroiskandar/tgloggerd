@@ -1,16 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * tgloggerd web -- advanced-search UI for /users. Progressive enhancement over
- * the server-rendered first page: a condition builder driven by the embedded
- * field registry, then sorting/paging/searching through the /v1/search/users
- * JSON API (cols + positional rows) without full reloads, keeping the URL
- * shareable. Depends on jQuery (global) and window.UsersRender.
+ * tgloggerd web -- advanced-search UI for the listing pages (/users, /groups,
+ * ...). Progressive enhancement over the server-rendered first page: a
+ * condition builder driven by the embedded field registry, then
+ * sorting/paging/searching through the entity's /v1/search/<entity> JSON API
+ * (cols + positional rows) without full reloads, keeping the URL shareable. The
+ * API URL and detail-page base come from the page's data-api/data-detail-base.
+ * Depends on jQuery (global) and window.SearchRender.
  */
 jQuery(function ($) {
 	"use strict";
 
-	var $page = $("#users-page");
-	if (!$page.length || !window.UsersRender)
+	var $page = $("#search-page");
+	if (!$page.length || !window.SearchRender)
 		return;
 
 	var schema = [];
@@ -25,11 +27,12 @@ jQuery(function ($) {
 	var byKey = {};
 	schema.forEach(function (f) { byKey[f.key] = f; });
 
-	var $body    = $("#results-body");
-	var $meta    = $(".search-meta");
-	var $builder = $("#search-builder");
-	var api      = "/v1/search/users";
-	var NCOLS    = $("#results-table thead th").length || 20;
+	var $body      = $("#results-body");
+	var $meta      = $(".search-meta");
+	var $builder   = $("#search-builder");
+	var api        = $page.attr("data-api") || "/v1/search/users";
+	var detailBase = $page.attr("data-detail-base") || "/users";
+	var NCOLS      = $("#results-table thead th").length || 20;
 
 	function attrNum(name, def) {
 		var v = parseInt($page.attr(name), 10);
@@ -320,7 +323,7 @@ jQuery(function ($) {
 				state.maxOffset = d.max_offset;
 			state.sort   = d.sort || "";
 			state.order  = d.order || "desc";
-			$body.html(window.UsersRender.rows(d.cols, d.rows));
+			$body.html(window.SearchRender.rows(d.cols, d.rows, detailBase));
 			renderMeta();
 			renderPagers();
 			renderDebug(d);

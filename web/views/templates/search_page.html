@@ -1,9 +1,10 @@
-<section class="users search-page" id="users-page"
+<section class="search-page" id="search-page"
+	data-api="/v1/search/{{ entity }}" data-detail-base="{{ detail_base }}"
 	data-total="{{ total }}" data-limit="{{ limit }}" data-offset="{{ offset }}"
 	data-max-offset="{{ max_offset }}"
 	data-sort="{{ sort }}" data-order="{{ order }}"
 	data-id-index="{{ id_index }}" data-photo-index="{{ photo_index }}">
-	<h1>Users</h1>
+	<h1>{{ title }}</h1>
 
 	<script type="application/json" id="search-schema">{{ schema_json }}</script>
 
@@ -12,7 +13,7 @@
 ## endif
 
 	<div class="search-builder" id="search-builder">
-		<noscript><p class="muted">Advanced search needs JavaScript. Showing the newest users.</p></noscript>
+		<noscript><p class="muted">Advanced search needs JavaScript. Showing the newest results.</p></noscript>
 	</div>
 
 	<div class="search-meta">
@@ -75,11 +76,11 @@
 				<tr>
 ## for c in cols
 ## if c.type == "photo"
-					<td class="col-photo">{% if at(r, loop.index) != "" %}<a href="/users/{{ at(r, id_index) }}"><img class="avatar-sm" src="{{ at(r, loop.index) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
+					<td class="col-photo">{% if at(r, loop.index) != "" %}<a href="{{ detail_base }}/{{ at(r, id_index) }}"><img class="avatar-sm" src="{{ at(r, loop.index) }}" alt=""></a>{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</td>
 ## else if c.type == "id"
-					<td><a href="/users/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a></td>
+					<td><a href="{{ detail_base }}/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a></td>
 ## else if c.type == "name"
-					<td class="cell-name"><a href="/users/{{ at(r, id_index) }}">{{ at(r, loop.index) }}</a></td>
+					<td class="cell-name"><a href="{{ detail_base }}/{{ at(r, id_index) }}">{{ at(r, loop.index) }}</a></td>
 ## else if c.type == "username"
 					<td>{% if at(r, loop.index) != "" %}@{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
 ## else if c.type == "bool"
@@ -93,7 +94,7 @@
 				</tr>
 ## endfor
 ## if length(rows) == 0
-				<tr><td colspan="{{ ncols }}" class="muted">No users match this search.</td></tr>
+				<tr><td colspan="{{ ncols }}" class="muted">No results match this search.</td></tr>
 ## endif
 			</tbody>
 		</table>
@@ -109,6 +110,6 @@
 ## endif
 	</div>
 
-	<script src="/users-render.js" defer></script>
-	<script src="/users-search.js" defer></script>
+	<script src="/search-render.js" defer></script>
+	<script src="/search.js" defer></script>
 </section>

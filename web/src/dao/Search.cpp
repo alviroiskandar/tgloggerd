@@ -318,6 +318,74 @@ const SearchSchema kUsersSchema = {
 	/* mapRow     */ &mapRowUser,
 };
 
+/* --- groups registry ------------------------------------------------------ */
+/* `groups` is a reserved word (backticked); group ids are negative Telegram
+ * chat ids; there is no group_extra table (description lives on groups). */
+
+const SearchField kGroupFields[] = {
+	{ "id",          "Group ID",   FType::Int,      FKind::Column, "g.id",          "", "", "", INT_OPS,  true,  true,  "" },
+	{ "title",       "Title",      FType::Text,     FKind::Column, "g.title",       "", "", "", TEXT_OPS, true,  true,  "" },
+	{ "description", "Description", FType::Text,     FKind::Column, "g.description", "", "", "", TEXT_OPS, false, true,  "" },
+	{ "type",        "Type",       FType::Enum,     FKind::Column, "g.type",        "", "", "", ENUM_OPS, true,  true,  "basic_group,supergroup,channel" },
+	{ "has_photo",   "Has photo",  FType::Bool,     FKind::Column, "g.photo_file_id","", "", "", NULL_OPS, false, false, "" },
+	{ "created_at",  "Created",    FType::Datetime, FKind::Column, "g.created_at",  "", "", "", DT_OPS,   true,  true,  "" },
+	{ "updated_at",  "Updated",    FType::Datetime, FKind::Column, "g.updated_at",  "", "", "", DT_OPS,   true,  true,  "" },
+	{ "username",    "Username (current)", FType::Text, FKind::Exists, "", "group_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
+	{ "hist_title",       "Title (ever)",       FType::Text, FKind::Exists, "", "group_hist_title x",            "x.title",       "", EXISTS_POS, false, false, "" },
+	{ "hist_description", "Description (ever)",  FType::Text, FKind::Exists, "", "group_hist_description x",      "x.description", "", EXISTS_POS, false, false, "" },
+	{ "hist_username",    "Username (ever)",     FType::Text, FKind::Exists, "", "group_hist_usernames_events x", "x.username",    "", EXISTS_OPS, false, false, "" },
+};
+
+const DisplayCol kGroupCols[] = {
+	{ "photo",       "",            "photo",    ""           },
+	{ "id",          "ID",          "id",       "id"         },
+	{ "title",       "Title",       "name",     "title"      },
+	{ "username",    "Username",     "username", ""           },
+	{ "type",        "Type",        "text",     "type"       },
+	{ "description", "Description",  "longtext", ""           },
+	{ "admin_count", "Admins",      "int",      ""           },
+	{ "created_at",  "Created",     "datetime", "created_at" },
+	{ "updated_at",  "Updated",     "datetime", "updated_at" },
+};
+
+nlohmann::json mapRowGroup(const drogon::orm::Row &r)
+{
+	nlohmann::json a = nlohmann::json::array();
+	a.push_back(r["photo_file_id"].isNull()
+			    ? (int64_t)0 : r["photo_file_id"].as<int64_t>());
+	a.push_back(r["id"].as<int64_t>());
+	std::string title = escCol(r, "title");
+	a.push_back(title.empty() ? std::string("(untitled)") : title);
+	a.push_back(escCol(r, "username"));
+	a.push_back(r["type"].as<std::string>());
+	a.push_back(escCol(r, "description"));
+	a.push_back(r["admin_count"].isNull() ? std::string("0")
+					      : r["admin_count"].as<std::string>());
+	a.push_back(r["created_at"].as<std::string>());
+	a.push_back(r["updated_at"].as<std::string>());
+	return a;
+}
+
+const SearchSchema kGroupsSchema = {
+	/* fromJoin   */ "`groups` g",
+	/* selectCols */ "g.id, g.title, g.description, g.type, g.photo_file_id, "
+			 "g.created_at, g.updated_at, "
+			 "(SELECT gu.username FROM group_usernames gu "
+			 "WHERE gu.group_id = g.id AND gu.kind='active' "
+			 "ORDER BY gu.position LIMIT 1) AS username, "
+			 "(SELECT COUNT(*) FROM group_admins ga "
+			 "WHERE ga.group_id = g.id) AS admin_count",
+	/* idCol      */ "g.id",
+	/* exFk       */ "group_id",
+	/* defaultSort*/ "g.id",
+	/* defaultOrder*/ "DESC",
+	/* fields     */ kGroupFields,
+	/* nFields    */ sizeof(kGroupFields) / sizeof(kGroupFields[0]),
+	/* cols       */ kGroupCols,
+	/* nCols      */ sizeof(kGroupCols) / sizeof(kGroupCols[0]),
+	/* mapRow     */ &mapRowGroup,
+};
+
 const SearchField *findField(const SearchSchema &s, const std::string &key)
 {
 	for (size_t i = 0; i < s.nFields; i++)
@@ -524,6 +592,20 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 const SearchSchema &usersSchema(void)
 {
 	return kUsersSchema;
+}
+
+const SearchSchema &groupsSchema(void)
+{
+	return kGroupsSchema;
+}
+
+const SearchSchema *schemaByName(const std::string &entity)
+{
+	if (entity == "users")
+		return &kUsersSchema;
+	if (entity == "groups")
+		return &kGroupsSchema;
+	return nullptr;
 }
 
 /* Longest raw `search` JSON we will even attempt to parse. */

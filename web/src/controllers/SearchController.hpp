@@ -20,11 +20,12 @@ namespace tgweb::controllers {
 class SearchController : public drogon::HttpController<SearchController> {
 public:
 	METHOD_LIST_BEGIN
-	ADD_METHOD_TO(SearchController::users, "/v1/search/users", drogon::Get,
+	ADD_METHOD_TO(SearchController::search, "/v1/search/{1}", drogon::Get,
 		      "tgweb::auth::AuthFilter");
 	METHOD_LIST_END
 
-	drogon::Task<drogon::HttpResponsePtr> users(drogon::HttpRequestPtr req);
+	drogon::Task<drogon::HttpResponsePtr> search(drogon::HttpRequestPtr req,
+						     std::string entity);
 };
 
 } /* namespace tgweb::controllers */

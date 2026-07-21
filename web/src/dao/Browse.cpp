@@ -38,22 +38,6 @@ std::string escColMulti(const drogon::orm::Row &r, const char *col)
 	return Render::escMultiline(r[col].as<std::string>());
 }
 
-/*
- * A LIKE pattern "%q%" with the LIKE metacharacters in q escaped, so a user's
- * literal % or _ matches itself (backslash is LIKE's default escape char). The
- * value is a bound parameter, so this is about match semantics, not injection.
- */
-std::string likePattern(const std::string &q)
-{
-	std::string e;
-	for (char c : q) {
-		if (c == '\\' || c == '%' || c == '_')
-			e += '\\';
-		e += c;
-	}
-	return "%" + e + "%";
-}
-
 /* A display name from first/last name, escaped, never empty. */
 std::string displayName(const drogon::orm::Row &r)
 {
@@ -273,81 +257,6 @@ drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db)
 	j["private_messages"] = row["private_messages"].as<int64_t>();
 	j["group_messages"]   = row["group_messages"].as<int64_t>();
 	j["files"]            = row["files"].as<int64_t>();
-	co_return j;
-}
-
-drogon::Task<nlohmann::json> listUsers(drogon::orm::DbClientPtr db,
-				       int64_t cursor, int limit,
-				       std::string query, std::string field)
-{
-	/*
-	 * A single parameterized statement covers every case: the leading
-	 * "? = ''" disables the search filter when no query is given, each
-	 * matched column is gated by "? IN ('all', <field>)" so `field` scopes
-	 * the search ("all" matches id/name/username), and "? = 0 OR u.id < ?"
-	 * makes the cursor optional (cursor 0 = first page). Fetch one extra row
-	 * to know whether a further page exists. The SQL is a named local (never
-	 * a temporary in the co_await operand) so it outlives the suspension; a
-	 * temporary there is mishandled by the coroutine lowering and
-	 * double-freed across thread migration.
-	 */
-	std::string like = likePattern(query);
-	std::string q =
-		"SELECT u.id, u.first_name, u.last_name, u.type, "
-		"u.profile_photo_file_id, u.created_at, u.updated_at, "
-		"u.is_premium, u.is_verified, u.is_scam, u.is_fake, "
-		"(SELECT un.username FROM user_usernames un "
-		" WHERE un.user_id = u.id AND un.kind = 'active' "
-		" ORDER BY un.position LIMIT 1) AS username "
-		"FROM users u "
-		/* phone/bio live in user_extra_info; join it for those filters. */
-		"LEFT JOIN user_extra_info e ON e.user_id = u.id "
-		"WHERE (? = '' "
-		"       OR (CAST(u.id AS CHAR) LIKE ? AND ? IN ('all','id')) "
-		"       OR (CONCAT_WS(' ', u.first_name, u.last_name) LIKE ? "
-		"           AND ? IN ('all','name')) "
-		"       OR (EXISTS (SELECT 1 FROM user_usernames un "
-		"                   WHERE un.user_id = u.id AND un.username LIKE ?) "
-		"           AND ? IN ('all','username')) "
-		"       OR (e.phone_number LIKE ? AND ? IN ('phone')) "
-		"       OR (e.bio LIKE ? AND ? IN ('bio'))) "
-		"AND (? = 0 OR u.id < ?) "
-		"ORDER BY u.id DESC LIMIT ?";
-	auto rowsHolder = co_await db->execSqlCoro(
-		q, query, like, field, like, field, like, field, like, field,
-		like, field, cursor, cursor, limit + 1);
-	const drogon::orm::Result &rows = rowsHolder;
-
-	nlohmann::json users = nlohmann::json::array();
-	int64_t lastId = 0;
-	int n = 0;
-	for (const auto &r : rows) {
-		if (n++ >= limit)
-			break;
-		lastId = r["id"].as<int64_t>();
-		nlohmann::json u;
-		u["id"]          = lastId;
-		u["name"]        = displayName(r);
-		u["username"]    = escCol(r, "username");
-		u["type"]        = r["type"].as<std::string>();
-		if (!r["profile_photo_file_id"].isNull())
-			u["photo_file_id"] =
-				r["profile_photo_file_id"].as<int64_t>();
-		u["is_premium"]  = r["is_premium"].as<int>() != 0;
-		u["is_verified"] = r["is_verified"].as<int>() != 0;
-		u["is_scam"]     = r["is_scam"].as<int>() != 0;
-		u["is_fake"]     = r["is_fake"].as<int>() != 0;
-		u["created_at"]  = r["created_at"].as<std::string>();
-		u["updated_at"]  = r["updated_at"].as<std::string>();
-		users.push_back(std::move(u));
-	}
-
-	nlohmann::json j;
-	j["users"] = std::move(users);
-	if ((int)rows.size() > limit && lastId > 0)
-		j["next_cursor"] = lastId;
-	else
-		j["next_cursor"] = nullptr;
 	co_return j;
 }
 
@@ -632,72 +541,6 @@ nlohmann::json grantedPerms(const drogon::orm::Row &r)
 }
 
 } /* namespace */
-
-drogon::Task<nlohmann::json> listGroups(drogon::orm::DbClientPtr db,
-					int64_t cursor, int limit,
-					std::string query, std::string field)
-{
-	/* See listUsers for the "? = ''" (search), "? IN ('all', <field>)"
-	 * (field scope) and "? = 0 OR ..." (cursor) toggles and the named-local
-	 * requirement for the SQL string. */
-	std::string like = likePattern(query);
-	std::string q =
-		"SELECT g.id, g.type, g.title, g.photo_file_id, "
-		"g.created_at, g.updated_at, "
-		"(SELECT gu.username FROM group_usernames gu "
-		" WHERE gu.group_id = g.id AND gu.kind = 'active' "
-		" ORDER BY gu.position LIMIT 1) AS username, "
-		"(SELECT COUNT(*) FROM group_admins ga "
-		" WHERE ga.group_id = g.id) AS admins "
-		"FROM `groups` g "
-		"WHERE (? = '' "
-		"       OR (CAST(g.id AS CHAR) LIKE ? AND ? IN ('all','id')) "
-		"       OR (g.title LIKE ? AND ? IN ('all','title')) "
-		"       OR (EXISTS (SELECT 1 FROM group_usernames gu "
-		"                   WHERE gu.group_id = g.id AND gu.username LIKE ?) "
-		"           AND ? IN ('all','username')) "
-		"       OR (g.description LIKE ? AND ? IN ('description'))) "
-		"AND (? = 0 OR g.id < ?) "
-		"ORDER BY g.id DESC LIMIT ?";
-	auto rowsHolder = co_await db->execSqlCoro(
-		q, query, like, field, like, field, like, field, like, field,
-		cursor, cursor, limit + 1);
-	const drogon::orm::Result &rows = rowsHolder;
-
-	nlohmann::json groups = nlohmann::json::array();
-	int64_t lastId = 0;
-	bool haveLast = false;
-	int n = 0;
-	for (const auto &r : rows) {
-		if (n++ >= limit)
-			break;
-		lastId = r["id"].as<int64_t>();
-		haveLast = true;
-		nlohmann::json g;
-		g["id"]       = lastId;
-		g["type"]     = r["type"].as<std::string>();
-		g["title"]    = r["title"].isNull()
-					? std::string("(no title)")
-					: Render::esc(r["title"].as<std::string>());
-		if (g["title"].get<std::string>().empty())
-			g["title"] = "(no title)";
-		g["username"] = escCol(r, "username");
-		g["admins"]   = r["admins"].as<int64_t>();
-		g["created_at"] = r["created_at"].as<std::string>();
-		g["updated_at"] = r["updated_at"].as<std::string>();
-		if (!r["photo_file_id"].isNull())
-			g["photo_file_id"] = r["photo_file_id"].as<int64_t>();
-		groups.push_back(std::move(g));
-	}
-
-	nlohmann::json j;
-	j["groups"] = std::move(groups);
-	if ((int)rows.size() > limit && haveLast)
-		j["next_cursor"] = lastId;
-	else
-		j["next_cursor"] = nullptr;
-	co_return j;
-}
 
 drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db,
 						     int64_t id)
@@ -1020,7 +863,7 @@ drogon::Task<nlohmann::json> listMessages(drogon::orm::DbClientPtr db,
 
 	/* cursor == 0 sentinel means "first page"; ids and message_ids are all
 	 * positive so 0 never collides with a real key. The SQL goes into a
-	 * named local (see listUsers) to keep it alive across the suspension. */
+	 * named local to keep it alive across the suspension. */
 	std::optional<drogon::orm::Result> rowsHolder;
 	if (chatId) {
 		std::string q = sel +
