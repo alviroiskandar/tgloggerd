@@ -308,7 +308,17 @@ a.card:hover { border-color: var(--accent); text-decoration: none; }
 	-webkit-mask: var(--avatar-silhouette) center / 66% no-repeat;
 	        mask: var(--avatar-silhouette) center / 66% no-repeat;
 }
-td.col-photo, th.col-photo { width: 28px; padding-right: 0; }
+/* Keep the photo column tight and centre the round photo/placeholder in it.
+ * Symmetric padding matters: an asymmetric one (e.g. padding-right:0) makes the
+ * column size to the image and pushes it against one edge. */
+td.col-photo, th.col-photo {
+	width: 28px;
+	padding-left: 0.5rem;
+	padding-right: 0.5rem;
+	text-align: center;
+	vertical-align: middle;
+}
+td.col-photo .avatar-sm { margin: 0 auto; }
 
 /* Chat pages: double the header and per-message avatars (28px -> 56px). The
  * base .avatar-sm is shared with the listing tables, so scope the bump to
