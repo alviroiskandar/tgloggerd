@@ -308,7 +308,10 @@ int TgLoggerd::start(void)
 	tdlib_->setPrivateMessageHandler([this](const models::PrivateMessage &pm) {
 		serial_->post([this, pm] {
 			try {
-				db_->upsertPrivateMessage(pm);
+				auto r = db_->upsertPrivateMessage(pm);
+				/* Every 10th message: refresh the sender's info. */
+				if (r.user.has_value())
+					tdlib_->refetchUser(*r.user);
 			} catch (const std::exception &e) {
 				pr_error(l_, "Failed to store private message"
 					 " chat_id=%lld msg_id=%lld: %s",
@@ -320,7 +323,13 @@ int TgLoggerd::start(void)
 	tdlib_->setGroupMessageHandler([this](const models::GroupMessage &gm) {
 		serial_->post([this, gm] {
 			try {
-				db_->upsertGroupMessage(gm);
+				auto r = db_->upsertGroupMessage(gm);
+				/* Every 10th message: refresh the group and the
+				 * sender's info. */
+				if (r.group.has_value())
+					tdlib_->refetchGroup(*r.group);
+				if (r.user.has_value())
+					tdlib_->refetchUser(*r.user);
 			} catch (const std::exception &e) {
 				pr_error(l_, "Failed to store group message"
 					 " chat_id=%lld msg_id=%lld: %s",

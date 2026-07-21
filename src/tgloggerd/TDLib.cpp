@@ -23,6 +23,7 @@
 #include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <mutex>
 
 namespace tgloggerd {
 
@@ -923,6 +924,20 @@ struct TDLib::Impl {
 	int						backfill_page_ = 100;
 	int						backfill_inflight_max_ = 1;
 
+	/*
+	 * Periodic full-info refetch requested off the loop thread (every 10th
+	 * message; see DB::bumpMsgCount). refetch_*_pending_ are filled by the
+	 * serial DB worker under refetch_mtx_ and drained on the loop thread;
+	 * refetch_*_last_ is a loop-thread-only per-entity cooldown so a burst
+	 * (e.g. backfill) cannot hammer the API.
+	 */
+	std::mutex					refetch_mtx_;
+	std::unordered_set<int64_t>			refetch_users_pending_;
+	std::unordered_set<int64_t>			refetch_groups_pending_;
+	std::unordered_map<int64_t, time_t>		refetch_user_last_;
+	std::unordered_map<int64_t, time_t>		refetch_group_last_;
+	double						refetch_cooldown_ = 300.0;
+
 	Impl(uint32_t api_id, const char *api_hash, const char *data_dir);
 
 	std::uint64_t next_query_id(void) { return ++current_query_id_; }
@@ -959,6 +974,11 @@ struct TDLib::Impl {
 	void emit_message_file(const PendingMsgFile &ref, const td_api::file &f);
 	void maybe_download_profile_photo(const td_api::user &u);
 	void request_user_full_info(int64_t user_id);
+	void enqueue_refetch_user(int64_t user_id);
+	void enqueue_refetch_group(int64_t group_id);
+	void drain_refetch(void);
+	void refetch_user_info(int64_t user_id);
+	void refetch_group_info(int64_t chat_id);
 	void handle_file_update(const td_api::file &f);
 	void emit_photo(int64_t user_id, const td_api::file &f);
 	void handle_new_chat(const td_api::chat &chat, bool from_chat_list);
@@ -1873,6 +1893,95 @@ void TDLib::Impl::request_user_full_info(int64_t user_id)
 		});
 }
 
+/* Thread-safe: called from the serial DB worker (see the message handlers). */
+void TDLib::Impl::enqueue_refetch_user(int64_t user_id)
+{
+	if (user_id == 0)
+		return;
+	std::lock_guard<std::mutex> lk(refetch_mtx_);
+	refetch_users_pending_.insert(user_id);
+}
+
+void TDLib::Impl::enqueue_refetch_group(int64_t group_id)
+{
+	if (group_id == 0)
+		return;
+	std::lock_guard<std::mutex> lk(refetch_mtx_);
+	refetch_groups_pending_.insert(group_id);
+}
+
+/*
+ * Drain the pending refetch sets on the loop thread (called once per loop()).
+ * A per-entity cooldown keeps a burst of crossings (e.g. during backfill) from
+ * hammering the API; the refetch itself re-runs the normal fetch paths, whose
+ * upserts record any changed fields as history.
+ */
+void TDLib::Impl::drain_refetch(void)
+{
+	std::unordered_set<int64_t> users, groups;
+	{
+		std::lock_guard<std::mutex> lk(refetch_mtx_);
+		if (refetch_users_pending_.empty() &&
+		    refetch_groups_pending_.empty())
+			return;
+		users.swap(refetch_users_pending_);
+		groups.swap(refetch_groups_pending_);
+	}
+
+	time_t now = std::time(nullptr);
+	for (int64_t uid : users) {
+		time_t &last = refetch_user_last_[uid];
+		if (last != 0 && (double)(now - last) < refetch_cooldown_)
+			continue;
+		last = now;
+		refetch_user_info(uid);
+	}
+	for (int64_t gid : groups) {
+		time_t &last = refetch_group_last_[gid];
+		if (last != 0 && (double)(now - last) < refetch_cooldown_)
+			continue;
+		last = now;
+		refetch_group_info(gid);
+	}
+}
+
+/* Fresh fetch of a user's basic + full info (loop thread). The user/full-info
+ * handlers upsert it, recording name/username/bio/photo changes as history. */
+void TDLib::Impl::refetch_user_info(int64_t user_id)
+{
+	if (user_id == 0)
+		return;
+
+	send_query(td_api::make_object<td_api::getUser>(user_id),
+		[this](Object obj) {
+			if (obj->get_id() != td_api::user::ID)
+				return;
+			auto u = td::move_tl_object_as<td_api::user>(obj);
+			if (user_handler_)
+				user_handler_(map_user(*u));
+			maybe_download_profile_photo(*u);
+			users_[u->id_] = std::move(u);
+		});
+	request_user_full_info(user_id);
+}
+
+/* Fresh fetch of a group's chat + full info (loop thread). getChat ->
+ * handle_new_chat re-emits the group and re-requests its full info, so the
+ * group upsert records title/description/username/photo changes as history. */
+void TDLib::Impl::refetch_group_info(int64_t chat_id)
+{
+	if (chat_id == 0)
+		return;
+
+	send_query(td_api::make_object<td_api::getChat>(chat_id),
+		[this](Object obj) {
+			if (obj->get_id() != td_api::chat::ID)
+				return;
+			auto c = td::move_tl_object_as<td_api::chat>(obj);
+			handle_new_chat(*c, false);
+		});
+}
+
 void TDLib::Impl::maybe_download_profile_photo(const td_api::user &u)
 {
 	if (!photo_handler_ || !u.profile_photo_ || !u.profile_photo_->big_)
@@ -2530,6 +2639,9 @@ void TDLib::setBackfillConfig(double tick_interval, double discovery_interval,
 
 void TDLib::loop(int timeout)
 {
+	/* Issue any refetches queued by the DB worker, on this (the loop)
+	 * thread where send_query and the TDLib caches live. */
+	impl_->drain_refetch();
 	impl_->process_response(impl_->client_manager_->receive(timeout));
 }
 
@@ -2553,6 +2665,16 @@ void TDLib::deleteLocalFile(int32_t file_id)
 void TDLib::setPruneOnStart(bool on)
 {
 	impl_->purge_on_start_ = on;
+}
+
+void TDLib::refetchUser(int64_t user_id)
+{
+	impl_->enqueue_refetch_user(user_id);
+}
+
+void TDLib::refetchGroup(int64_t group_id)
+{
+	impl_->enqueue_refetch_group(group_id);
 }
 
 } /* namespace tgloggerd */

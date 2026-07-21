@@ -268,6 +268,15 @@ public:
 	void deleteLocalFile(int32_t file_id);
 
 	/*
+	 * Queue a full-info refetch of a user / group (by chat_id). Thread-safe
+	 * (callable from a worker thread); the refetch runs on the loop thread
+	 * and its upserts record any changed fields as history. Used to refresh
+	 * an entity every 10th message it is involved in.
+	 */
+	void refetchUser(int64_t user_id);
+	void refetchGroup(int64_t group_id);
+
+	/*
 	 * When enabled, issue a one-time optimizeStorage once the client
 	 * reaches the ready state, reclaiming files TDLib cached in a previous
 	 * run. Must be called before loop().
