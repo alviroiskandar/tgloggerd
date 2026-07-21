@@ -109,7 +109,7 @@ struct Request {
 	std::vector<Condition> conds;
 	std::string sort;   /* field key; empty -> schema default */
 	std::string order;  /* "asc"|"desc"; empty -> schema default */
-	int  limit  = 50;
+	int  limit  = 10;
 	int  offset = 0;
 	bool debug  = false; /* already AND-ed with is-admin by the caller */
 };
@@ -118,7 +118,7 @@ struct Request {
 constexpr int MAX_CONDS  = 16;
 constexpr int MAX_EXISTS = 4;
 constexpr int MAX_VLEN   = 512;
-constexpr int MAX_LIMIT  = 100;
+constexpr int MAX_LIMIT  = 1000;
 constexpr int MAX_OFFSET = 500000;
 
 /* The registered users schema. */

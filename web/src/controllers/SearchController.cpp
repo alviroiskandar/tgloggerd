@@ -38,7 +38,7 @@ drogon::Task<drogon::HttpResponsePtr>
 SearchController::users(drogon::HttpRequestPtr req)
 {
 	dao::search::Request sreq;
-	sreq.limit  = clampedIntParam(req, "limit", 50, 1,
+	sreq.limit  = clampedIntParam(req, "limit", 10, 1,
 				      dao::search::MAX_LIMIT);
 	sreq.offset = clampedIntParam(req, "offset", 0, 0,
 				      dao::search::MAX_OFFSET);

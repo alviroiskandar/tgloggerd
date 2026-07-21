@@ -16,8 +16,10 @@
 	</div>
 
 	<div class="search-meta">
-		<span class="muted"><strong>{{ total }}</strong> result{% if total != 1 %}s{% endif %}</span>
-		<span class="muted">· page {{ page_current }} / {{ page_count }}</span>
+		<span id="meta-text"><span class="muted"><strong>{{ total }}</strong> result{% if total != 1 %}s{% endif %}</span> <span class="muted">· page {{ page_current }} / {{ page_count }}</span></span>
+		<label class="limit-ctl">Per page
+			<input type="number" id="limit-input" min="1" max="1000" step="1" value="{{ limit }}">
+		</label>
 	</div>
 
 	<div id="debug-area">

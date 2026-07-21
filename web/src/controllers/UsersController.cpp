@@ -30,10 +30,31 @@ namespace tgweb::controllers {
 drogon::Task<drogon::HttpResponsePtr>
 UsersController::list(drogon::HttpRequestPtr req)
 {
+	/*
+	 * Normalise an over-large ?limit= in the page URL by redirecting to the
+	 * capped value (the JSON API just clamps silently, but the page URL is
+	 * user-facing and shareable, so it should read the effective value).
+	 */
+	std::string rawLimit = req->getParameter("limit");
+	if (!rawLimit.empty() &&
+	    strtol(rawLimit.c_str(), nullptr, 10) > dao::search::MAX_LIMIT) {
+		auto params = req->getParameters();
+		params["limit"] = std::to_string(dao::search::MAX_LIMIT);
+		std::string qs;
+		for (const auto &kv : params) {
+			if (!qs.empty())
+				qs += "&";
+			qs += drogon::utils::urlEncodeComponent(kv.first) + "=" +
+			      drogon::utils::urlEncodeComponent(kv.second);
+		}
+		co_return drogon::HttpResponse::newRedirectionResponse(
+			req->getPath() + "?" + qs);
+	}
+
 	auto db = drogon::app().getDbClient("ro");
 
 	dao::search::Request sreq;
-	sreq.limit  = clampedIntParam(req, "limit", 50, 1, dao::search::MAX_LIMIT);
+	sreq.limit  = clampedIntParam(req, "limit", 10, 1, dao::search::MAX_LIMIT);
 	sreq.offset = clampedIntParam(req, "offset", 0, 0, dao::search::MAX_OFFSET);
 	sreq.sort   = req->getParameter("sort");
 	sreq.order  = req->getParameter("order");
@@ -62,7 +83,7 @@ UsersController::list(drogon::HttpRequestPtr req)
 			views::Render::esc(result["error"].get<std::string>());
 		searchRaw.clear();
 		dao::search::Request empty;
-		empty.limit = clampedIntParam(req, "limit", 50, 1,
+		empty.limit = clampedIntParam(req, "limit", 10, 1,
 					      dao::search::MAX_LIMIT);
 		result = co_await dao::search::run(
 			db, dao::search::usersSchema(), std::move(empty));

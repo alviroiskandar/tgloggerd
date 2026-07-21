@@ -170,7 +170,9 @@ select {
 }
 .cond-clear { background: transparent; color: var(--fg); border: 1px solid var(--border); }
 .cond-debug { margin-left: auto; color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; }
-.search-meta { margin: 0.2rem 0 0.6rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.search-meta { margin: 0.2rem 0 0.6rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.limit-ctl { margin-left: auto; color: var(--muted); font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+.limit-ctl input { width: 5rem; padding: 0.25rem 0.4rem; }
 
 /* Grid pager (page-number buttons). */
 .grid-pager { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }

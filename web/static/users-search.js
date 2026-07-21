@@ -220,7 +220,7 @@ jQuery(function ($) {
 	function renderMeta() {
 		var pages = totalPages();
 		var cur = state.limit > 0 ? Math.floor(state.offset / state.limit) + 1 : 1;
-		$meta.html('<span class="muted"><strong>' + state.total +
+		$("#meta-text").html('<span class="muted"><strong>' + state.total +
 			"</strong> result" + (state.total === 1 ? "" : "s") +
 			'</span> <span class="muted">· page ' + cur + " / " +
 			pages + "</span>");
@@ -376,6 +376,18 @@ jQuery(function ($) {
 			state.order = "asc";
 		}
 		/* Keep the current page when re-sorting (do not reset offset). */
+		load();
+	});
+
+	$("#limit-input").on("change", function () {
+		var v = parseInt(this.value, 10);
+		if (isNaN(v) || v < 1) v = 1;
+		if (v > 1000) v = 1000;
+		this.value = v;
+		if (v === state.limit)
+			return;
+		state.limit = v;
+		state.offset = 0; /* page size changed -> back to page 1 */
 		load();
 	});
 
