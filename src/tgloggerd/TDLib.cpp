@@ -1929,12 +1929,14 @@ void TDLib::Impl::drain_refetch(void)
 	}
 
 	time_t now = std::time(nullptr);
+	int nu = 0, ng = 0;
 	for (int64_t uid : users) {
 		time_t &last = refetch_user_last_[uid];
 		if (last != 0 && (double)(now - last) < refetch_cooldown_)
 			continue;
 		last = now;
 		refetch_user_info(uid);
+		nu++;
 	}
 	for (int64_t gid : groups) {
 		time_t &last = refetch_group_last_[gid];
@@ -1942,7 +1944,11 @@ void TDLib::Impl::drain_refetch(void)
 			continue;
 		last = now;
 		refetch_group_info(gid);
+		ng++;
 	}
+	if (nu || ng)
+		std::cerr << "refetch: refreshing " << nu << " user(s), " << ng
+			  << " group(s) after msg_count crossings\n";
 }
 
 /* Fresh fetch of a user's basic + full info (loop thread). The user/full-info
