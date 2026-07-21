@@ -160,4 +160,38 @@ UsersController::chat(drogon::HttpRequestPtr req, std::string id)
 	co_return htmlPage(views::Render::page("chat.html", data));
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+UsersController::history(drogon::HttpRequestPtr req, std::string id)
+{
+	auto db = drogon::app().getDbClient("ro");
+
+	int64_t uid = strtoll(id.c_str(), nullptr, 10);
+	int limit  = clampedIntParam(req, "limit", 100, 1, 500);
+	int offset = clampedIntParam(req, "offset", 0, 0, 100000);
+
+	auto hist = co_await dao::browse::userHistory(db, uid, limit, offset);
+	if (!hist)
+		co_return renderStatus(req, drogon::k404NotFound, "User not found",
+				       "No user exists with that id.");
+
+	nlohmann::json data = pageBase(req);
+	data["title"] = "History · user " + id;
+	data["uid"]   = uid;
+
+	auto header = co_await dao::browse::chatHeader(db, "private", uid);
+	data["chat"] = header ? *header : nlohmann::json::object();
+
+	int off = (*hist)["offset"].get<int>();
+	int lim = (*hist)["limit"].get<int>();
+	data["entries"]     = (*hist)["entries"];
+	data["limit"]       = lim;
+	data["offset"]      = off;
+	data["has_more"]    = (*hist)["has_more"];
+	data["has_prev"]    = off > 0;
+	data["prev_offset"] = (off - lim < 0) ? 0 : off - lim;
+	data["next_offset"] = off + lim;
+
+	co_return htmlPage(views::Render::page("user_history.html", data));
+}
+
 } /* namespace tgweb::controllers */

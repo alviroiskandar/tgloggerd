@@ -51,6 +51,15 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 						    int64_t id);
 
 /*
+ * A user's change history as one merged, newest-first timeline (name, username
+ * events, bio, phone and profile-photo changes UNION-ed), paginated by
+ * limit/offset. Returns std::nullopt if no such user. Result: {entries:[{kind,
+ * detail, action?, file_id?, created_at}], limit, offset, has_more}.
+ */
+drogon::Task<std::optional<nlohmann::json>>
+userHistory(drogon::orm::DbClientPtr db, int64_t id, int limit, int offset);
+
+/*
  * One page of groups, newest id first (group ids are negative, so this pages
  * from the least-negative downward). cursor is the last id seen (0 for the
  * first page). When `query` is non-empty the page is filtered to it

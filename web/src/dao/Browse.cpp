@@ -536,6 +536,67 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	co_return j;
 }
 
+drogon::Task<std::optional<nlohmann::json>>
+userHistory(drogon::orm::DbClientPtr db, int64_t id, int limit, int offset)
+{
+	{
+		auto ex = co_await db->execSqlCoro(
+			"SELECT 1 FROM users WHERE id = ?", id);
+		if (ex.empty())
+			co_return std::nullopt;
+	}
+
+	/*
+	 * Merge the five per-user history tables into one newest-first timeline.
+	 * Each source normalises to (kind, id, created_at, detail, action,
+	 * file_id); the outer query formats the timestamp and pages the union.
+	 * The table/column names are compile-time literals; only the user id and
+	 * limit/offset are bound.
+	 */
+	std::string q =
+		"SELECT kind, detail, action, file_id, "
+		"DATE_FORMAT(created_at, '%d %b %Y %H:%i') AS created_at "
+		"FROM ("
+		"  SELECT 'name' AS kind, id, created_at, "
+		"         TRIM(CONCAT_WS(' ', first_name, last_name)) AS detail, "
+		"         NULL AS action, NULL AS file_id "
+		"  FROM user_hist_name WHERE user_id = ? "
+		"  UNION ALL SELECT 'bio', id, created_at, bio, NULL, NULL "
+		"  FROM user_hist_bio WHERE user_id = ? "
+		"  UNION ALL SELECT 'phone', id, created_at, phone_number, NULL, NULL "
+		"  FROM user_hist_phone_num WHERE user_id = ? "
+		"  UNION ALL SELECT 'username', id, created_at, username, action, NULL "
+		"  FROM user_hist_usernames_events WHERE user_id = ? "
+		"  UNION ALL SELECT 'photo', id, created_at, NULL, NULL, file_id "
+		"  FROM user_hist_profile_photo WHERE user_id = ? "
+		") t ORDER BY created_at DESC, kind, id DESC LIMIT ? OFFSET ?";
+	auto rows = co_await db->execSqlCoro(q, id, id, id, id, id,
+					     limit + 1, offset);
+
+	nlohmann::json entries = nlohmann::json::array();
+	int n = 0;
+	for (const auto &r : rows) {
+		if (n++ >= limit)
+			break;
+		nlohmann::json e;
+		e["kind"]       = r["kind"].as<std::string>();
+		e["detail"]     = escCol(r, "detail");
+		e["created_at"] = escCol(r, "created_at");
+		if (!r["action"].isNull())
+			e["action"] = r["action"].as<std::string>();
+		if (!r["file_id"].isNull())
+			e["file_id"] = r["file_id"].as<int64_t>();
+		entries.push_back(std::move(e));
+	}
+
+	nlohmann::json j;
+	j["entries"]  = std::move(entries);
+	j["limit"]    = limit;
+	j["offset"]   = offset;
+	j["has_more"] = (int)rows.size() > limit;
+	co_return j;
+}
+
 namespace {
 
 /* Admin permission columns and their display labels. */

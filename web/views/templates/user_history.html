@@ -1,0 +1,60 @@
+<section class="user-history">
+	<p class="detail-actions">
+		<a class="btn" href="/users/{{ uid }}">&larr; Back to user</a>
+		<a class="btn" href="/users/{{ uid }}/chat">💬 Chat history</a>
+	</p>
+
+	<div class="detail-head">
+## if existsIn(chat, "photo_file_id")
+		<img class="avatar" src="{{ media(chat.photo_file_id) }}" alt="">
+## else
+		<span class="avatar placeholder"></span>
+## endif
+		<div>
+			<h1>{% if existsIn(chat, "title") %}{{ chat.title }}{% else %}User {{ uid }}{% endif %}</h1>
+			<p class="muted">Change history · #{{ uid }}</p>
+		</div>
+	</div>
+
+## if length(entries) == 0
+	<p class="muted">No recorded history for this user.</p>
+## else
+	<ol class="timeline">
+## for h in entries
+		<li class="tl-item tl-{{ h.kind }}">
+			<span class="tl-icon" aria-hidden="true">{% if h.kind == "name" %}📝{% else if h.kind == "username" %}🔗{% else if h.kind == "bio" %}💬{% else if h.kind == "phone" %}☎{% else if h.kind == "photo" %}🖼{% else %}•{% endif %}</span>
+			<div class="tl-body">
+				<div class="tl-detail">
+## if h.kind == "username"
+					<span class="tl-kind">Username {{ h.action }}</span>{% if h.detail != "" %} <span class="tl-val">@{{ h.detail }}</span>{% endif %}
+## else if h.kind == "photo"
+					<span class="tl-kind">Profile photo</span>
+## if existsIn(h, "file_id")
+					<a class="tl-photo" href="{{ media(h.file_id) }}"><img src="{{ media(h.file_id) }}" alt=""></a>
+## else
+					<span class="muted">removed</span>
+## endif
+## else if h.kind == "name"
+					<span class="tl-kind">Name</span> {% if h.detail != "" %}<span class="tl-val">{{ h.detail }}</span>{% else %}<span class="muted">(cleared)</span>{% endif %}
+## else if h.kind == "bio"
+					<span class="tl-kind">Bio</span> {% if h.detail != "" %}<span class="tl-val">{{ h.detail }}</span>{% else %}<span class="muted">(cleared)</span>{% endif %}
+## else if h.kind == "phone"
+					<span class="tl-kind">Phone</span> {% if h.detail != "" %}<span class="tl-val">{{ h.detail }}</span>{% else %}<span class="muted">(cleared)</span>{% endif %}
+## endif
+				</div>
+				<div class="tl-time muted">{{ h.created_at }}</div>
+			</div>
+		</li>
+## endfor
+	</ol>
+## endif
+
+	<div class="pager grid-pager">
+## if has_prev
+		<a class="pager-btn" href="?offset={{ prev_offset }}&amp;limit={{ limit }}">&laquo; Newer</a>
+## endif
+## if has_more
+		<a class="pager-btn" href="?offset={{ next_offset }}&amp;limit={{ limit }}">Older &raquo;</a>
+## endif
+	</div>
+</section>
