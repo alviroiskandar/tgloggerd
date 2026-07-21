@@ -92,8 +92,86 @@ th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(
 th { color: var(--muted); font-weight: 600; }
 table.kv th { width: 12rem; }
 
+/* Zebra-striped, bordered results grid (the advanced-search listings). */
+.table-wrap { overflow-x: auto; }
+table.grid {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	overflow: hidden;
+	margin-bottom: 0.8rem;
+}
+table.grid th, table.grid td {
+	border-bottom: 1px solid var(--border);
+	border-right: 1px solid var(--border);
+}
+table.grid th:last-child, table.grid td:last-child { border-right: none; }
+table.grid tbody tr:nth-child(even) {
+	background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+table.grid tbody tr:hover {
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+table.grid tbody tr:last-child td { border-bottom: none; }
+table.grid th[data-sort-key] { cursor: pointer; user-select: none; white-space: nowrap; }
+table.grid th[data-sort-key]:hover { color: var(--fg); }
+table.grid th.sort-active { color: var(--accent); }
+table.grid th.sort-active[data-dir="asc"]::after  { content: " ▲"; font-size: 0.7em; }
+table.grid th.sort-active[data-dir="desc"]::after { content: " ▼"; font-size: 0.7em; }
 .muted { color: var(--muted); }
 .nowrap { white-space: nowrap; }
+
+/* Shared select styling (there is otherwise no global select rule). */
+select {
+	font: inherit;
+	padding: 0.4rem 0.55rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--fg);
+}
+
+/* Advanced-search condition builder. */
+.search-page h1 { margin-bottom: 0.6rem; }
+.search-error { color: var(--error); margin: 0.4rem 0; }
+.search-builder {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 0.8rem;
+	margin-bottom: 1rem;
+}
+.cond-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+.cond-row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.cond-row .cond-col { min-width: 12rem; }
+.cond-row .cond-val { flex: 1; min-width: 8rem; }
+.cond-row .cond-del {
+	background: transparent; color: var(--muted);
+	border: 1px solid var(--border); border-radius: 6px;
+	padding: 0.3rem 0.6rem; line-height: 1;
+}
+.cond-row .cond-del:hover { color: var(--error); border-color: var(--error); }
+.cond-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.8rem; }
+.cond-add {
+	background: transparent; color: var(--accent);
+	border: 1px dashed var(--border);
+}
+.cond-clear { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+.cond-debug { margin-left: auto; color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; }
+.search-meta { margin: 0.2rem 0 0.6rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Grid pager (page-number buttons). */
+.grid-pager { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.grid-pager .pager-btn.active {
+	background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+}
+.grid-pager .pager-btn[disabled] { opacity: 0.45; cursor: default; }
+.grid-pager .pager-info { margin: 0 0.4rem; }
+.debug-panel { margin: 1rem 0; }
+.debug-panel pre {
+	overflow-x: auto; padding: 0.7rem; border-radius: 8px;
+	background: var(--card); border: 1px solid var(--border);
+	font-size: 0.8rem;
+}
 
 /* Search box (shared by the listing pages) */
 .search { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1.2rem; }

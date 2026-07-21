@@ -108,6 +108,15 @@ constexpr int MAX_OFFSET = 50000;
 const SearchSchema &usersSchema(void);
 
 /*
+ * Parse the `search` query-param JSON ([{c,o,v,n}, ...]) into conditions.
+ * An empty string is a valid "browse all" (out stays empty). Returns false and
+ * sets err (400-worthy) on malformed input. Does not validate field/operator
+ * names -- run() does that against the schema.
+ */
+bool parseConditions(const std::string &raw, std::vector<Condition> &out,
+		     std::string &err);
+
+/*
  * Run a search. On success returns {fields, columns, rows, total, limit,
  * offset, sort, order[, debug]}. On a validation error returns {"error": msg}
  * (the controller maps that to HTTP 400). Never throws for user input.

@@ -5,54 +5,97 @@
  */
 #include "controllers/UsersController.hpp"
 
+#include "auth/FileToken.hpp"
+#include "auth/Session.hpp"
 #include "controllers/Common.hpp"
 #include "dao/Browse.hpp"
+#include "dao/Search.hpp"
 #include "views/Render.hpp"
+
+#include <drogon/utils/Utilities.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
+#include <string>
 
 namespace tgweb::controllers {
 
+/*
+ * The advanced-search listing. Server-renders the first page (so a shared
+ * ?search=... URL reproduces without JS and SEO/no-JS still works), then
+ * users-search.js takes over the condition builder, sorting and paging by
+ * calling the /v1/search/users API. Both render identical rows.
+ */
 drogon::Task<drogon::HttpResponsePtr>
 UsersController::list(drogon::HttpRequestPtr req)
 {
 	auto db = drogon::app().getDbClient("ro");
 
-	int limit = clampedIntParam(req, "limit", 50, 1, 200);
-	int64_t cursor = 0;
-	std::string before = req->getParameter("before");
-	if (!before.empty())
-		cursor = strtoll(before.c_str(), nullptr, 10);
+	dao::search::Request sreq;
+	sreq.limit  = clampedIntParam(req, "limit", 50, 1, dao::search::MAX_LIMIT);
+	sreq.offset = clampedIntParam(req, "offset", 0, 0, dao::search::MAX_OFFSET);
+	sreq.sort   = req->getParameter("sort");
+	sreq.order  = req->getParameter("order");
+	sreq.debug  = (req->getParameter("debug") == "1") &&
+		      auth::session::isAdmin(req);
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Users";
-	data["limit"] = limit;
+	data["search_error"] = "";
+	data["debug_json"]   = "";
 
-	nlohmann::json fields = nlohmann::json::array();
-	auto addField = [&](const char *v, const char *l) {
-		nlohmann::json o;
-		o["value"] = v;
-		o["label"] = l;
-		fields.push_back(std::move(o));
-	};
-	addField("all", "All fields");
-	addField("id", "ID");
-	addField("name", "Name");
-	addField("username", "Username");
-	addField("phone", "Phone");
-	addField("bio", "Bio");
+	std::string searchRaw = req->getParameter("search");
+	std::string err;
+	if (!dao::search::parseConditions(searchRaw, sreq.conds, err)) {
+		data["search_error"] = views::Render::esc(err);
+		sreq.conds.clear();
+		searchRaw.clear();
+	}
 
-	std::string field;
-	std::string query = applySearch(data, req, "/users",
-					"Search users…", std::move(fields),
-					field);
+	nlohmann::json result = co_await dao::search::run(
+		db, dao::search::usersSchema(), std::move(sreq));
 
-	nlohmann::json page = co_await dao::browse::listUsers(db, cursor, limit,
-							      query, field);
-	data["users"] = page["users"];
-	data["next_cursor"] = page["next_cursor"];
+	/* A syntactically valid but semantically bad search (unknown field,
+	 * disallowed operator): show the note and fall back to browse-all. */
+	if (result.contains("error")) {
+		data["search_error"] =
+			views::Render::esc(result["error"].get<std::string>());
+		searchRaw.clear();
+		dao::search::Request empty;
+		empty.limit = clampedIntParam(req, "limit", 50, 1,
+					      dao::search::MAX_LIMIT);
+		result = co_await dao::search::run(
+			db, dao::search::usersSchema(), std::move(empty));
+	}
+
+	int total  = result.value("total", 0);
+	int limit  = result.value("limit", 50);
+	int offset = result.value("offset", 0);
+	int pages  = (limit > 0) ? (total + limit - 1) / limit : 1;
+	if (pages < 1)
+		pages = 1;
+
+	data["rows"]        = result["rows"];
+	data["columns"]     = result["columns"];
+	data["schema_json"] = result["fields"].dump(); /* server constants: safe raw */
+	data["total"]       = total;
+	data["limit"]       = limit;
+	data["offset"]      = offset;
+	data["sort"]        = result.value("sort", std::string());
+	data["order"]       = result.value("order", std::string("desc"));
+	data["page_current"] = (limit > 0) ? (offset / limit) + 1 : 1;
+	data["page_count"]  = pages;
+	data["has_prev"]    = offset > 0;
+	data["has_next"]    = offset + limit < total;
+	data["prev_offset"] = (offset - limit < 0) ? 0 : offset - limit;
+	data["next_offset"] = offset + limit;
+	data["q_search"]    = drogon::utils::urlEncodeComponent(searchRaw);
+	data["q_sort"] =
+		drogon::utils::urlEncodeComponent(result.value("sort", std::string()));
+	data["q_order"]     = result.value("order", std::string("desc"));
+	if (result.contains("debug"))
+		data["debug_json"] = result["debug"].dump(2);
 
 	co_return htmlPage(views::Render::page("users.html", data));
 }

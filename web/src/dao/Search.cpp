@@ -474,6 +474,70 @@ const SearchSchema &usersSchema(void)
 	return kUsersSchema;
 }
 
+/* Longest raw `search` JSON we will even attempt to parse. */
+static constexpr size_t kMaxSearchBytes = 8192;
+
+bool parseConditions(const std::string &raw, std::vector<Condition> &out,
+		     std::string &err)
+{
+	if (raw.empty())
+		return true;
+	if (raw.size() > kMaxSearchBytes) {
+		err = "search parameter too large";
+		return false;
+	}
+
+	nlohmann::json j;
+	try {
+		j = nlohmann::json::parse(raw);
+	} catch (const std::exception &) {
+		err = "search must be valid JSON";
+		return false;
+	}
+	if (!j.is_array()) {
+		err = "search must be a JSON array";
+		return false;
+	}
+
+	for (const auto &item : j) {
+		if (!item.is_object()) {
+			err = "each condition must be a JSON object";
+			return false;
+		}
+		Condition c;
+		auto strField = [&](const char *k, std::string &dst,
+				    bool required) -> bool {
+			if (!item.contains(k) || item[k].is_null()) {
+				if (required) {
+					err = std::string("missing '") + k +
+					      "' in a condition";
+					return false;
+				}
+				return true;
+			}
+			if (!item[k].is_string()) {
+				err = std::string("'") + k + "' must be a string";
+				return false;
+			}
+			dst = item[k].get<std::string>();
+			return true;
+		};
+		if (!strField("c", c.c, true) || !strField("o", c.o, true) ||
+		    !strField("n", c.n, false))
+			return false;
+		if (item.contains("v") && !item["v"].is_null()) {
+			if (!item["v"].is_string()) {
+				err = "'v' must be a string";
+				return false;
+			}
+			c.v = item["v"].get<std::string>();
+			c.hasV = true;
+		}
+		out.push_back(std::move(c));
+	}
+	return true;
+}
+
 drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 				 const SearchSchema &schema, Request req)
 {
