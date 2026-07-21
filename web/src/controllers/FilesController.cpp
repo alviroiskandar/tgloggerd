@@ -4,40 +4,139 @@
  */
 #include "controllers/FilesController.hpp"
 
+#include "auth/Session.hpp"
 #include "controllers/Common.hpp"
-#include "dao/Browse.hpp"
+#include "dao/Search.hpp"
 #include "views/Render.hpp"
 
+#include <drogon/utils/Utilities.h>
+
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 
 namespace tgweb::controllers {
 
+/* Advanced-search files listing; mirrors Users/GroupsController (shared core +
+ * shared search_page.html). Files have no profile page, so detail_base is empty
+ * and the id/thumbnail cells link to the tokenised media download instead. */
 drogon::Task<drogon::HttpResponsePtr>
 FilesController::list(drogon::HttpRequestPtr req)
 {
+	std::string rawLimit = req->getParameter("limit");
+	if (!rawLimit.empty() &&
+	    strtol(rawLimit.c_str(), nullptr, 10) > dao::search::MAX_LIMIT) {
+		auto params = req->getParameters();
+		params["limit"] = std::to_string(dao::search::MAX_LIMIT);
+		std::string qs;
+		for (const auto &kv : params) {
+			if (!qs.empty())
+				qs += "&";
+			qs += drogon::utils::urlEncodeComponent(kv.first) + "=" +
+			      drogon::utils::urlEncodeComponent(kv.second);
+		}
+		co_return drogon::HttpResponse::newRedirectionResponse(
+			req->getPath() + "?" + qs);
+	}
+
 	auto db = drogon::app().getDbClient("ro");
 
-	int limit = clampedIntParam(req, "limit", 50, 1, 200);
-	int64_t cursor = 0;
-	std::string before = req->getParameter("before");
-	if (!before.empty())
-		cursor = strtoll(before.c_str(), nullptr, 10);
-
-	/* Optional file-type facet; the DAO ignores an unrecognized value. */
-	std::string type = req->getParameter("type");
+	dao::search::Request sreq;
+	sreq.limit  = clampedIntParam(req, "limit", 10, 1, dao::search::MAX_LIMIT);
+	sreq.offset = clampedIntParam(req, "offset", 0, 0, dao::search::MAX_OFFSET);
+	sreq.sort   = req->getParameter("sort");
+	sreq.order  = req->getParameter("order");
+	sreq.debug  = (req->getParameter("debug") == "1") &&
+		      auth::session::isAdmin(req);
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Files";
-	data["limit"] = limit;
+	data["entity"] = "files";
+	data["detail_base"] = "";     /* no detail page; link to media instead */
+	data["search_error"] = "";
 
-	nlohmann::json page =
-		co_await dao::browse::listFiles(db, cursor, limit, type);
-	data["files"] = page["files"];
-	data["type"] = page["type"];
-	data["next_cursor"] = page["next_cursor"];
+	std::string searchRaw = req->getParameter("search");
+	std::string err;
+	if (!dao::search::parseConditions(searchRaw, sreq.conds, err)) {
+		data["search_error"] = views::Render::esc(err);
+		sreq.conds.clear();
+		searchRaw.clear();
+	}
 
-	co_return htmlPage(views::Render::page("files.html", data));
+	nlohmann::json result = co_await dao::search::run(
+		db, dao::search::filesSchema(), std::move(sreq));
+
+	if (result.contains("error")) {
+		data["search_error"] =
+			views::Render::esc(result["error"].get<std::string>());
+		searchRaw.clear();
+		dao::search::Request empty;
+		empty.limit = clampedIntParam(req, "limit", 10, 1,
+					      dao::search::MAX_LIMIT);
+		result = co_await dao::search::run(
+			db, dao::search::filesSchema(), std::move(empty));
+	}
+
+	enrichSearchPhotos(result);
+
+	/* Column positions the renderer needs: id/thumb for the media links, and
+	 * file_type/stored to pick the thumbnail (image vs. type icon). */
+	int idIdx = 0, photoIdx = 0, typeIdx = -1, storedIdx = -1;
+	const auto &cols = result["cols"];
+	for (size_t i = 0; i < cols.size(); i++) {
+		std::string t = cols[i].value("type", std::string());
+		std::string k = cols[i].value("key", std::string());
+		if (t == "id")
+			idIdx = (int)i;
+		else if (t == "photo" || t == "filethumb")
+			photoIdx = (int)i;
+		if (k == "file_type")
+			typeIdx = (int)i;
+		else if (k == "stored")
+			storedIdx = (int)i;
+	}
+
+	int total     = result.value("total", 0);
+	int limit     = result.value("limit", 10);
+	int offset    = result.value("offset", 0);
+	int maxOffset = result.value("max_offset", dao::search::MAX_OFFSET);
+	int pages = (limit > 0) ? (total + limit - 1) / limit : 1;
+	int reach = (limit > 0) ? (maxOffset / limit) + 1 : 1;
+	if (pages > reach)
+		pages = reach;
+	if (pages < 1)
+		pages = 1;
+	int cur = (limit > 0) ? offset / limit : 0;
+
+	data["cols"]        = result["cols"];
+	data["rows"]        = result["rows"];
+	data["ncols"]       = (int)cols.size();
+	data["id_index"]    = idIdx;
+	data["photo_index"] = photoIdx;
+	data["type_index"]  = typeIdx;
+	data["stored_index"] = storedIdx;
+	data["schema_json"] = result["fields"].dump();
+	data["total"]       = total;
+	data["limit"]       = limit;
+	data["offset"]      = offset;
+	data["max_offset"]  = maxOffset;
+	data["sort"]        = result.value("sort", std::string());
+	data["order"]       = result.value("order", std::string("desc"));
+	data["page_current"] = cur + 1;
+	data["page_count"]  = pages;
+	data["has_prev"]    = offset > 0;
+	data["has_next"]    = cur < pages - 1;
+	data["prev_offset"] = (offset - limit < 0) ? 0 : offset - limit;
+	data["next_offset"] = (cur + 1) * limit;
+	data["q_search"]    = drogon::utils::urlEncodeComponent(searchRaw);
+	data["q_sort"] =
+		drogon::utils::urlEncodeComponent(result.value("sort", std::string()));
+	data["q_order"]     = result.value("order", std::string("desc"));
+	data["has_debug"]   = result.contains("debug");
+	if (result.contains("debug"))
+		data["debug"] = result["debug"];
+
+	co_return htmlPage(views::Render::page("search_page.html", data));
 }
 
 } /* namespace tgweb::controllers */

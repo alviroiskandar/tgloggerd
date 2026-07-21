@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,6 +48,24 @@ std::string displayName(const drogon::orm::Row &r)
 bool rowBool(const drogon::orm::Row &r, const char *col)
 {
 	return !r[col].isNull() && r[col].as<int>() != 0;
+}
+
+/* Bytes -> a short human string (e.g. "12.3 MB"); mirrors dao::browse. */
+std::string humanSize(uint64_t bytes)
+{
+	static const char *unit[] = { "B", "KB", "MB", "GB", "TB" };
+	double v = (double)bytes;
+	int u = 0;
+	while (v >= 1024.0 && u < 4) {
+		v /= 1024.0;
+		u++;
+	}
+	char buf[32];
+	if (u == 0)
+		snprintf(buf, sizeof(buf), "%llu B", (unsigned long long)bytes);
+	else
+		snprintf(buf, sizeof(buf), "%.1f %s", v, unit[u]);
+	return buf;
 }
 
 /* --- operator table ------------------------------------------------------- */
@@ -381,6 +400,70 @@ const SearchSchema kGroupsSchema = {
 	/* mapRow     */ &mapRowGroup,
 };
 
+/* --- files registry ------------------------------------------------------- */
+/* The content-addressed file store. Files have no profile page: the id and
+ * thumbnail cells link to the tokenised media download instead (detail_base is
+ * empty, see FilesController), and the thumbnail is rendered by the files-only
+ * "filethumb" cell type. */
+
+const SearchField kFileFields[] = {
+	{ "id",         "File ID",   FType::Int,      FKind::Column, "f.id",             "", "", "", INT_OPS,  true,  true,  "" },
+	{ "file_type",  "Type",      FType::Enum,     FKind::Column, "f.file_type",      "", "", "", ENUM_OPS, true,  true,  "photo,video,document,audio,voice,sticker,animation,unknown" },
+	{ "name",       "Name",      FType::Text,     FKind::Column, "f.orig_file_name", "", "", "", TEXT_OPS, true,  true,  "" },
+	{ "ext",        "Extension", FType::Text,     FKind::Column, "COALESCE(f.file_ext,'')", "", "", "", TEXT_OPS, true, true, "" },
+	{ "size",       "Size",      FType::Int,      FKind::Column, "f.file_size",      "", "", "", INT_OPS,  true,  true,  "" },
+	{ "hits",       "Hits",      FType::Int,      FKind::Column, "f.hit_count",      "", "", "", INT_OPS,  true,  true,  "" },
+	{ "stored",     "Stored",    FType::Bool,     FKind::Column, "f.on_disk",        "", "", "", BOOL_OPS, false, true,  "" },
+	{ "tg_file_id", "TG file id",FType::Text,     FKind::Column, "f.tg_file_id",     "", "", "", TEXT_OPS, false, false, "" },
+	{ "created_at", "Created",   FType::Datetime, FKind::Column, "f.created_at",     "", "", "", DT_OPS,   true,  true,  "" },
+	{ "updated_at", "Updated",   FType::Datetime, FKind::Column, "f.updated_at",     "", "", "", DT_OPS,   true,  false, "" },
+};
+
+const DisplayCol kFileCols[] = {
+	{ "thumb",      "",          "filethumb", ""          },
+	{ "id",         "ID",        "id",        "id"        },
+	{ "file_type",  "Type",      "text",      "file_type" },
+	{ "name",       "Name",      "text",      "name"      },
+	{ "ext",        "Ext",       "text",      "ext"       },
+	{ "size",       "Size",      "text",      "size"      },
+	{ "hits",       "Hits",      "int",       "hits"      },
+	{ "stored",     "Stored",    "bool",      ""          },
+	{ "created_at", "First seen","datetime",  "created_at"},
+};
+
+/* Positional row aligned to kFileCols. The thumb cell is the raw file id (0
+ * never occurs for a real file); the controller tokenises it to /files/<token>,
+ * which serves as both the thumbnail src and the row's download link. */
+nlohmann::json mapRowFile(const drogon::orm::Row &r)
+{
+	nlohmann::json a = nlohmann::json::array();
+	a.push_back(r["id"].as<int64_t>());          /* thumb: raw id -> token */
+	a.push_back(r["id"].as<int64_t>());
+	a.push_back(r["file_type"].as<std::string>());
+	a.push_back(escCol(r, "orig_file_name"));
+	a.push_back(escCol(r, "file_ext"));
+	a.push_back(humanSize(r["file_size"].as<uint64_t>()));
+	a.push_back(r["hit_count"].as<std::string>());
+	a.push_back(rowBool(r, "on_disk"));
+	a.push_back(escCol(r, "created_at"));
+	return a;
+}
+
+const SearchSchema kFilesSchema = {
+	/* fromJoin   */ "files f",
+	/* selectCols */ "f.id, f.file_type, f.file_ext, f.orig_file_name, "
+			 "f.file_size, f.hit_count, f.on_disk, f.created_at",
+	/* idCol      */ "f.id",
+	/* exFk       */ "",              /* no EXISTS fields for files */
+	/* defaultSort*/ "f.id",
+	/* defaultOrder*/ "DESC",
+	/* fields     */ kFileFields,
+	/* nFields    */ sizeof(kFileFields) / sizeof(kFileFields[0]),
+	/* cols       */ kFileCols,
+	/* nCols      */ sizeof(kFileCols) / sizeof(kFileCols[0]),
+	/* mapRow     */ &mapRowFile,
+};
+
 const SearchField *findField(const SearchSchema &s, const std::string &key)
 {
 	for (size_t i = 0; i < s.nFields; i++)
@@ -597,12 +680,19 @@ const SearchSchema &groupsSchema(void)
 	return kGroupsSchema;
 }
 
+const SearchSchema &filesSchema(void)
+{
+	return kFilesSchema;
+}
+
 const SearchSchema *schemaByName(const std::string &entity)
 {
 	if (entity == "users")
 		return &kUsersSchema;
 	if (entity == "groups")
 		return &kGroupsSchema;
+	if (entity == "files")
+		return &kFilesSchema;
 	return nullptr;
 }
 

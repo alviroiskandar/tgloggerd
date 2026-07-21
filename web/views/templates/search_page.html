@@ -77,8 +77,10 @@
 ## for c in cols
 ## if c.type == "photo"
 					<td class="col-photo"><a href="{{ detail_base }}/{{ at(r, id_index) }}">{% if at(r, loop.index) != "" %}<img class="avatar-sm" src="{{ at(r, loop.index) }}" alt="">{% else %}<span class="avatar-sm placeholder"></span>{% endif %}</a></td>
+## else if c.type == "filethumb"
+					<td class="col-photo"><a href="{{ at(r, loop.index) }}">{% if at(r, type_index) == "photo" and at(r, stored_index) %}<img class="avatar-sm" src="{{ at(r, loop.index) }}" alt="" loading="lazy">{% else %}<span class="file-icon">{% if at(r, type_index) == "video" %}🎬{% else if at(r, type_index) == "animation" %}🎞️{% else if at(r, type_index) == "sticker" %}🌟{% else if at(r, type_index) == "document" %}📄{% else if at(r, type_index) == "audio" %}🎵{% else if at(r, type_index) == "voice" %}🎤{% else %}📎{% endif %}</span>{% endif %}</a></td>
 ## else if c.type == "id"
-					<td><a href="{{ detail_base }}/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a></td>
+					<td>{% if detail_base != "" %}<a href="{{ detail_base }}/{{ at(r, loop.index) }}">{{ at(r, loop.index) }}</a>{% else %}<a href="{{ at(r, photo_index) }}">{{ at(r, loop.index) }}</a>{% endif %}</td>
 ## else if c.type == "name"
 					<td class="cell-name"><a href="{{ detail_base }}/{{ at(r, id_index) }}">{{ at(r, loop.index) }}</a></td>
 ## else if c.type == "username"

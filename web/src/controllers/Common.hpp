@@ -24,10 +24,11 @@
 namespace tgweb::controllers {
 
 /*
- * Turn the raw photo file id in each search result row (the cell of the "photo"
- * column) into an opaque /files/<token> URL the browser can load, or "" when
- * there is no photo. Shared by the SSR page and the JSON API so both render
- * identical rows. Safe to call on an error result (no cols/rows).
+ * Turn the raw file id in each search result row's image cell (the "photo"
+ * column of users/groups, or the "filethumb" column of files) into an opaque
+ * /files/<token> URL the browser can load, or "" when there is none. Shared by
+ * the SSR page and the JSON API so both render identical rows. Safe to call on
+ * an error result (no cols/rows).
  */
 inline void enrichSearchPhotos(nlohmann::json &result)
 {
@@ -37,7 +38,8 @@ inline void enrichSearchPhotos(nlohmann::json &result)
 	int photoIdx = -1;
 	const auto &cols = result["cols"];
 	for (size_t i = 0; i < cols.size(); i++) {
-		if (cols[i].value("type", std::string()) == "photo") {
+		std::string t = cols[i].value("type", std::string());
+		if (t == "photo" || t == "filethumb") {
 			photoIdx = (int)i;
 			break;
 		}

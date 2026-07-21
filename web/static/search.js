@@ -31,7 +31,11 @@ jQuery(function ($) {
 	var $meta      = $(".search-meta");
 	var $builder   = $("#search-builder");
 	var api        = $page.attr("data-api") || "/v1/search/users";
-	var detailBase = $page.attr("data-detail-base") || "/users";
+	/* Empty is meaningful (files have no detail page), so keep "" rather than
+	 * falling back; only default when the attribute is absent entirely. */
+	var detailBase = $page.attr("data-detail-base");
+	if (detailBase == null)
+		detailBase = "/users";
 	var NCOLS      = $("#results-table thead th").length || 20;
 
 	function attrNum(name, def) {

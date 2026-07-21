@@ -84,16 +84,6 @@ drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr 
 						       std::string scope,
 						       int64_t id);
 
-/*
- * One page of stored files, newest id first. cursor is the last id seen (0 for
- * the first page). When `type` is non-empty and not "all" the page is filtered
- * to that files.file_type. Result: {files:[{id, type, name, ext, size, size_h,
- * hits, created_at}], next_cursor} with strings escaped.
- */
-drogon::Task<nlohmann::json> listFiles(drogon::orm::DbClientPtr db,
-				       int64_t cursor, int limit,
-				       std::string type);
-
 /* Metadata needed to locate and serve a stored file. */
 struct FileMeta {
 	std::string hex;       /* lower-case hex of the SHA-256 digest.      */

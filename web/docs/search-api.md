@@ -1,8 +1,8 @@
 # Advanced Search API
 
 A read-only JSON API for querying the logged entities with multi-condition
-filters, JOINs and history lookups. It backs the `/users` page (and, later,
-`/groups` and `/files`), but can be called directly.
+filters, JOINs and history lookups. It backs the `/users`, `/groups` and
+`/files` pages, but can be called directly.
 
 Modeled on a flat `[{c,o,v,n}]` condition grammar. Every SQL token except the
 bound `?` values comes from a server-side allowlist (the per-entity **field
@@ -11,22 +11,21 @@ registry**), so the endpoint is injection-safe by construction.
 ## Endpoint
 
 ```
-GET /v1/search/users
+GET /v1/search/{entity}
 ```
 
-Requires a logged-in session (the shared `AuthFilter`); an unauthenticated
-request is redirected (302) to `/login`, exactly like the other `/v1` routes.
-
-> `GET /v1/search/groups` and `GET /v1/search/files` are planned and will share
-> the same grammar with their own field registries.
+`{entity}` is `users`, `groups` or `files` — each shares the same grammar with
+its own field registry (an unknown entity returns **404**). Requires a logged-in
+session (the shared `AuthFilter`); an unauthenticated request is redirected (302)
+to `/login`, exactly like the other `/v1` routes.
 
 ## Query parameters
 
 | param    | type   | default | notes |
 |----------|--------|---------|-------|
 | `search` | string | (empty) | URL-encoded JSON array of conditions (see below). Empty = browse all. |
-| `limit`  | int    | `50`    | rows per page, clamped to `1..100`. |
-| `offset` | int    | `0`     | row offset, clamped to `0..50000`. |
+| `limit`  | int    | `10`    | rows per page, clamped to `1..1000`. |
+| `offset` | int    | `0`     | row offset, clamped to `0..500000`. |
 | `sort`   | string | (id)    | a **sortable** field key; anything else falls back to the default (`id`). |
 | `order`  | string | `desc`  | `asc` or `desc`. |
 | `debug`  | `1`    | off     | **admin only**: include the generated SQL, bind values and `EXPLAIN`. |
@@ -117,6 +116,47 @@ updated_at, msg_count, paid_star_count`.
 
 Datetime values accept MySQL-parseable strings (`2024-03-17`,
 `2024-03-17 09:00`). Boolean values are `0`/`1`.
+
+## Groups field registry
+
+| key | label | type | kind | operators |
+|-----|-------|------|------|-----------|
+| `id` | Group ID | int | C | `= != < > <= >=` |
+| `title` | Title | text | C | `= != LIKE NOT LIKE` |
+| `description` | Description | text | C | `= != LIKE NOT LIKE` |
+| `type` | Type | enum | C | `= !=` — values `basic_group,supergroup,channel` |
+| `msg_count` | Messages | int | C | `= != < > <= >=` |
+| `has_photo` | Has photo | bool | C | `IS NULL IS NOT NULL` |
+| `username` | Username (current) | text | E | `= LIKE` (+`!=`/`NOT LIKE` = never) |
+| `created_at` | Created | datetime | C | `= != < > <= >=` |
+| `updated_at` | Updated | datetime | C | `= != < > <= >=` |
+| `hist_title` | Title (ever) | text | E | `= LIKE` |
+| `hist_description` | Description (ever) | text | E | `= LIKE` |
+| `hist_username` | Username (ever) | text | E | `= LIKE` (+never) |
+
+Group ids are negative Telegram chat ids. Sortable keys: `id, title, type,
+created_at, updated_at, msg_count`.
+
+## Files field registry
+
+The content-addressed file store. Files have no profile page: on the `/files`
+page the id and thumbnail cells link to the tokenized media download
+(`/files/<token>`) instead.
+
+| key | label | type | kind | operators |
+|-----|-------|------|------|-----------|
+| `id` | File ID | int | C | `= != < > <= >=` |
+| `file_type` | Type | enum | C | `= !=` — values `photo,video,document,audio,voice,sticker,animation,unknown` |
+| `name` | Name | text | C | `= != LIKE NOT LIKE` — the original Telegram file name (may be empty) |
+| `ext` | Extension | text | C | `= != LIKE NOT LIKE` |
+| `size` | Size | int | C | `= != < > <= >=` — bytes (displayed human-readable) |
+| `hits` | Hits | int | C | `= != < > <= >=` — times this content (SHA-256) was seen |
+| `stored` | Stored | bool | C | `= !=` — `0` = metadata-only (too large), re-downloadable |
+| `tg_file_id` | TG file id | text | C | `= != LIKE NOT LIKE` |
+| `created_at` | Created | datetime | C | `= != < > <= >=` |
+| `updated_at` | Updated | datetime | C | `= != < > <= >=` |
+
+Sortable keys: `id, file_type, name, ext, size, hits, created_at`.
 
 ## Response
 

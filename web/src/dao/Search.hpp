@@ -124,6 +124,7 @@ constexpr int MAX_OFFSET = 500000;
 /* The registered per-entity schemas. */
 const SearchSchema &usersSchema(void);
 const SearchSchema &groupsSchema(void);
+const SearchSchema &filesSchema(void);
 
 /* Look up a schema by entity name ("users", "groups"); nullptr if unknown. */
 const SearchSchema *schemaByName(const std::string &entity);
