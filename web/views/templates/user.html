@@ -37,6 +37,7 @@
 
 	<table class="kv">
 		<tr><th>Type</th><td>{{ user.type }}</td></tr>
+		<tr><th>Messages sent</th><td>{{ user.msg_count }}</td></tr>
 		<tr><th>First name</th><td>{{ user.first_name }}</td></tr>
 		<tr><th>Last name</th><td>{{ user.last_name }}</td></tr>
 		<tr><th>Phone</th><td>{% if user.phone_number != "" %}{{ user.phone_number }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>

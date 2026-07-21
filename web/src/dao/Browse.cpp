@@ -268,7 +268,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 		"u.profile_photo_file_id, u.is_verified, u.is_scam, u.is_fake, "
 		"u.is_premium, u.is_support, u.accent_color_id, "
 		"u.birthday_day, u.birthday_month, u.birthday_year, "
-		"u.created_at, u.updated_at, "
+		"u.msg_count, u.created_at, u.updated_at, "
 		/* Sparse fields live in user_extra_info; a missing row reads as
 		 * all-default, so COALESCE to the same sentinels. */
 		"COALESCE(e.phone_number, '') AS phone_number, "
@@ -340,6 +340,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 			bday += " " + std::to_string(r["birthday_year"].as<int>());
 		user["birthday"] = bday;
 	}
+	user["msg_count"]         = r["msg_count"].as<int64_t>();
 	user["created_at"]        = r["created_at"].as<std::string>();
 	user["updated_at"]        = r["updated_at"].as<std::string>();
 	if (!r["profile_photo_file_id"].isNull())
@@ -547,7 +548,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 {
 	auto gr = co_await db->execSqlCoro(
 		"SELECT id, type, title, description, photo_file_id, "
-		"created_at, updated_at FROM `groups` WHERE id = ?",
+		"msg_count, created_at, updated_at FROM `groups` WHERE id = ?",
 		id);
 
 	if (gr.empty())
@@ -560,6 +561,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	group["type"]        = r["type"].as<std::string>();
 	group["title"]       = Render::esc(title.empty() ? "(no title)" : title);
 	group["description"] = escColMulti(r, "description");
+	group["msg_count"]   = r["msg_count"].as<int64_t>();
 	group["created_at"]  = r["created_at"].as<std::string>();
 	group["updated_at"]  = r["updated_at"].as<std::string>();
 	if (!r["photo_file_id"].isNull())

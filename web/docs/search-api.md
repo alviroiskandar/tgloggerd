@@ -86,6 +86,7 @@ the response, so a client can build its UI from the registry.
 | `last_name` | Last name | text | C | `= != LIKE NOT LIKE` |
 | `username` | Username (current) | text | E | `= LIKE` (+`!=`/`NOT LIKE` = never) |
 | `type` | Type | enum | C | `= !=` — values `regular,deleted,bot,unknown` |
+| `msg_count` | Messages | int | C | `= != < > <= >=` |
 | `has_photo` | Has photo | bool | C | `IS NULL IS NOT NULL` |
 | `is_verified` | Verified | bool | C | `= !=` |
 | `is_premium` | Premium | bool | C | `= !=` |
@@ -112,7 +113,7 @@ the response, so a client can build its UI from the registry.
 Column fields on `user_extra_info` are `COALESCE`'d to their schema default, so a
 user whose extra-info row is absent (the daemon deletes all-default rows) still
 matches e.g. `bio = ''`. Sortable keys: `id, first_name, type, created_at,
-updated_at, paid_star_count`.
+updated_at, msg_count, paid_star_count`.
 
 Datetime values accept MySQL-parseable strings (`2024-03-17`,
 `2024-03-17 09:00`). Boolean values are `0`/`1`.

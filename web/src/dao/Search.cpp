@@ -190,6 +190,7 @@ const SearchField kUserFields[] = {
 	{ "last_name",  "Last name",  FType::Text,    FKind::Column, "u.last_name", "", "", "", TEXT_OPS, false, true,  "" },
 	{ "username",   "Username (current)", FType::Text, FKind::Exists, "", "user_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
 	{ "type",       "Type",      FType::Enum,     FKind::Column, "u.type",      "", "", "", ENUM_OPS, true,  true,  "regular,deleted,bot,unknown" },
+	{ "msg_count",  "Messages",  FType::Int,      FKind::Column, "u.msg_count", "", "", "", INT_OPS,  true,  true,  "" },
 	{ "has_photo",  "Has photo", FType::Bool,     FKind::Column, "u.profile_photo_file_id", "", "", "", NULL_OPS, false, false, "" },
 	{ "is_verified","Verified",  FType::Bool,     FKind::Column, "u.is_verified","", "", "", BOOL_OPS, false, true,  "" },
 	{ "is_premium", "Premium",   FType::Bool,     FKind::Column, "u.is_premium", "", "", "", BOOL_OPS, false, true,  "" },
@@ -226,6 +227,7 @@ const DisplayCol kUserCols[] = {
 	{ "name",               "Name",             "name",     "first_name" },
 	{ "username",           "Username",         "username", ""           },
 	{ "type",               "Type",             "text",     "type"       },
+	{ "msg_count",          "Messages",         "int",      "msg_count"  },
 	{ "is_verified",        "Verified",         "bool",     ""           },
 	{ "is_premium",         "Premium",          "bool",     ""           },
 	{ "is_scam",            "Scam",             "bool",     ""           },
@@ -259,6 +261,7 @@ nlohmann::json mapRowUser(const drogon::orm::Row &r)
 	a.push_back(displayName(r));
 	a.push_back(escCol(r, "username"));
 	a.push_back(r["type"].as<std::string>());
+	a.push_back(r["msg_count"].as<std::string>());
 	a.push_back(rowBool(r, "is_verified"));
 	a.push_back(rowBool(r, "is_premium"));
 	a.push_back(rowBool(r, "is_scam"));
@@ -283,6 +286,7 @@ const SearchSchema kUsersSchema = {
 	/* selectCols */ "u.id, u.first_name, u.last_name, u.type, u.is_verified, "
 			 "u.is_premium, u.is_scam, u.is_fake, u.is_support, "
 			 "u.profile_photo_file_id, u.created_at, u.updated_at, "
+			 "u.msg_count, "
 			 "(SELECT un.username FROM user_usernames un "
 			 "WHERE un.user_id = u.id AND un.kind='active' "
 			 "ORDER BY un.position LIMIT 1) AS username, "
@@ -315,6 +319,7 @@ const SearchField kGroupFields[] = {
 	{ "title",       "Title",      FType::Text,     FKind::Column, "g.title",       "", "", "", TEXT_OPS, true,  true,  "" },
 	{ "description", "Description", FType::Text,     FKind::Column, "g.description", "", "", "", TEXT_OPS, false, true,  "" },
 	{ "type",        "Type",       FType::Enum,     FKind::Column, "g.type",        "", "", "", ENUM_OPS, true,  true,  "basic_group,supergroup,channel" },
+	{ "msg_count",   "Messages",   FType::Int,      FKind::Column, "g.msg_count",   "", "", "", INT_OPS,  true,  true,  "" },
 	{ "has_photo",   "Has photo",  FType::Bool,     FKind::Column, "g.photo_file_id","", "", "", NULL_OPS, false, false, "" },
 	{ "created_at",  "Created",    FType::Datetime, FKind::Column, "g.created_at",  "", "", "", DT_OPS,   true,  true,  "" },
 	{ "updated_at",  "Updated",    FType::Datetime, FKind::Column, "g.updated_at",  "", "", "", DT_OPS,   true,  true,  "" },
@@ -330,6 +335,7 @@ const DisplayCol kGroupCols[] = {
 	{ "title",       "Title",       "name",     "title"      },
 	{ "username",    "Username",     "username", ""           },
 	{ "type",        "Type",        "text",     "type"       },
+	{ "msg_count",   "Messages",    "int",      "msg_count"  },
 	{ "description", "Description",  "longtext", ""           },
 	{ "admin_count", "Admins",      "int",      ""           },
 	{ "created_at",  "Created",     "datetime", "created_at" },
@@ -346,6 +352,7 @@ nlohmann::json mapRowGroup(const drogon::orm::Row &r)
 	a.push_back(title.empty() ? std::string("(untitled)") : title);
 	a.push_back(escCol(r, "username"));
 	a.push_back(r["type"].as<std::string>());
+	a.push_back(r["msg_count"].as<std::string>());
 	a.push_back(escCol(r, "description"));
 	a.push_back(r["admin_count"].isNull() ? std::string("0")
 					      : r["admin_count"].as<std::string>());
@@ -357,7 +364,7 @@ nlohmann::json mapRowGroup(const drogon::orm::Row &r)
 const SearchSchema kGroupsSchema = {
 	/* fromJoin   */ "`groups` g",
 	/* selectCols */ "g.id, g.title, g.description, g.type, g.photo_file_id, "
-			 "g.created_at, g.updated_at, "
+			 "g.created_at, g.updated_at, g.msg_count, "
 			 "(SELECT gu.username FROM group_usernames gu "
 			 "WHERE gu.group_id = g.id AND gu.kind='active' "
 			 "ORDER BY gu.position LIMIT 1) AS username, "

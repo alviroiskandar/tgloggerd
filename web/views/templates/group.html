@@ -13,6 +13,7 @@
 
 	<table class="kv">
 		<tr><th>Type</th><td>{{ group.type }}</td></tr>
+		<tr><th>Messages</th><td>{{ group.msg_count }}</td></tr>
 		<tr><th>Description</th><td>{% if group.description != "" %}{{ group.description }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
 ## if existsIn(group, "photo_file_id")
 		<tr><th>Photo</th><td><a href="{{ media(group.photo_file_id) }}">file #{{ group.photo_file_id }}</a></td></tr>
