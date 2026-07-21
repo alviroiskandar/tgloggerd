@@ -63,8 +63,8 @@ With `?debug=1` (admin) the response echoes the exact generated SQL.
 |-------|-----------|---------|
 | `=` `!=` | all value fields | equality / inequality |
 | `<` `>` `<=` `>=` | int, datetime | comparison |
-| `LIKE` | text | **contains** (the value is wrapped as `%value%`, metacharacters escaped) |
-| `NOT LIKE` | text | does not contain |
+| `LIKE` | text | SQL `LIKE` with the value bound **verbatim** — a plain term matches literally; add `%`/`_` yourself for wildcards (e.g. `%admin%` to match a substring) |
+| `NOT LIKE` | text | negation of `LIKE` |
 | `IS NULL` `IS NOT NULL` | nullable fields | presence test (no `v`) |
 
 **History / current-username fields** are `EXISTS` fields: `=`/`LIKE` mean

@@ -36,7 +36,7 @@ enum Op : uint32_t {
 	OP_GT        = 1u << 3,
 	OP_LE        = 1u << 4,
 	OP_GE        = 1u << 5,
-	OP_LIKE      = 1u << 6,  /* "contains" */
+	OP_LIKE      = 1u << 6,  /* SQL LIKE; value bound verbatim (% is opt-in) */
 	OP_NLIKE     = 1u << 7,
 	OP_ISNULL    = 1u << 8,
 	OP_ISNOTNULL = 1u << 9,

@@ -44,18 +44,6 @@ std::string displayName(const drogon::orm::Row &r)
 	return Render::esc(name);
 }
 
-/* "%q%" with LIKE metacharacters escaped; value is bound, so match-only. */
-std::string likePattern(const std::string &q)
-{
-	std::string e;
-	for (char c : q) {
-		if (c == '\\' || c == '%' || c == '_')
-			e += '\\';
-		e += c;
-	}
-	return "%" + e + "%";
-}
-
 bool rowBool(const drogon::orm::Row &r, const char *col)
 {
 	return !r[col].isNull() && r[col].as<int>() != 0;
@@ -500,8 +488,11 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 			if (!validValue(*f, c.v, err))
 				return false;
 
+			/* LIKE binds the value verbatim -- no implicit "%q%"
+			 * wrapping -- so a plain term matches literally and the
+			 * user opts into wildcards by typing % or _ themselves. */
 			bool likeish = (ot->op == OP_LIKE || ot->op == OP_NLIKE);
-			std::string val = likeish ? likePattern(c.v) : c.v;
+			std::string val = c.v;
 
 			if (f->kind == FKind::Column) {
 				frag += f->expr;
