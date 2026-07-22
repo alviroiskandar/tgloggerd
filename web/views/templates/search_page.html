@@ -89,6 +89,10 @@
 					<td class="cell-bool">{% if at(r, loop.index) %}<span class="bool-yes">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
 ## else if c.type == "longtext"
 					<td class="cell-long">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## else if c.type == "fileid"
+					<td class="cell-long cell-fileid">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## else if c.type == "hash"
+					<td class="cell-hash">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
 ## else
 					<td class="nowrap">{% if at(r, loop.index) != "" %}{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
 ## endif

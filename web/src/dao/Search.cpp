@@ -429,6 +429,8 @@ const DisplayCol kFileCols[] = {
 	{ "hits",       "Hits",      "int",       "hits"      },
 	{ "stored",     "Stored",    "bool",      ""          },
 	{ "created_at", "First seen","datetime",  "created_at"},
+	{ "tg_file_id", "Telegram file ID", "fileid", ""      },
+	{ "sha256",     "SHA-256",   "hash",      ""          },
 };
 
 /* Positional row aligned to kFileCols. The thumb cell is the raw file id (0
@@ -446,13 +448,16 @@ nlohmann::json mapRowFile(const drogon::orm::Row &r)
 	a.push_back(r["hit_count"].as<std::string>());
 	a.push_back(rowBool(r, "on_disk"));
 	a.push_back(escCol(r, "created_at"));
+	a.push_back(escCol(r, "tg_file_id"));
+	a.push_back(escCol(r, "sha256_hex"));
 	return a;
 }
 
 const SearchSchema kFilesSchema = {
 	/* fromJoin   */ "files f",
 	/* selectCols */ "f.id, f.file_type, f.file_ext, f.orig_file_name, "
-			 "f.file_size, f.hit_count, f.on_disk, f.created_at",
+			 "f.file_size, f.hit_count, f.on_disk, f.created_at, "
+			 "f.tg_file_id, HEX(f.sha256) AS sha256_hex",
 	/* idCol      */ "f.id",
 	/* exFk       */ "",              /* no EXISTS fields for files */
 	/* defaultSort*/ "f.id",

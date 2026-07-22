@@ -150,6 +150,13 @@ table.grid td.cell-long, table.grid td.cell-name {
 	max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
 }
 table.grid td.cell-long { cursor: pointer; }
+/* Identifier cells: monospace. The Telegram file id truncates at ~40 chars
+ * (40ch of the monospace font) and reuses .cell-long's click-to-modal; the
+ * SHA-256 hex is shown in full. */
+table.grid td.cell-fileid, table.grid td.cell-hash {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+table.grid td.cell-fileid { max-width: 40ch; }
 .bool-yes { color: var(--accent); font-weight: 600; }
 table.grid th:last-child, table.grid td:last-child { border-right: none; }
 table.grid tbody tr:nth-child(even) {

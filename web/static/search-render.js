@@ -69,6 +69,10 @@
 				: '<span class="muted">No</span>') + '</td>';
 		case "longtext":
 			return '<td class="cell-long">' + (val !== "" ? val : DASH) + '</td>';
+		case "fileid":
+			return '<td class="cell-long cell-fileid">' + (val !== "" ? val : DASH) + '</td>';
+		case "hash":
+			return '<td class="cell-hash">' + (val !== "" ? val : DASH) + '</td>';
 		default:
 			return '<td class="nowrap">' + (val !== "" ? val : DASH) + '</td>';
 		}

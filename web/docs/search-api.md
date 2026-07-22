@@ -158,6 +158,11 @@ page the id and thumbnail cells link to the tokenized media download
 
 Sortable keys: `id, file_type, name, ext, size, hits, created_at`.
 
+The table also shows two identifier columns: `tg_file_id` (searchable, above;
+its full value is truncated in the table — click the cell for the full id in a
+modal) and `sha256` (a display-only column, the content digest as an uppercase
+hex string). The thumbnail is likewise display-only.
+
 ## Response
 
 On success the body is a single JSON object. `cols` describes the displayed
