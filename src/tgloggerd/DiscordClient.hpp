@@ -49,6 +49,12 @@ public:
 				   const std::string &message_id,
 				   const std::string &json_body);
 
+	/*
+	 * GET the webhook object (its JSON carries guild_id/channel_id, needed to
+	 * build a message jump link). No body is sent.
+	 */
+	DiscordResponse get(const std::string &url);
+
 private:
 	DiscordResponse request(const char *method, const std::string &url,
 				const std::string &json_body);

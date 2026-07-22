@@ -68,11 +68,13 @@ std::optional<QuotedMessage> DB::getQuotedMessage(int64_t chat_id,
 	/* Group ids are negative, private (peer user) ids positive. */
 	const char *sql = chat_id < 0
 		? "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
-		  "gm.text FROM telegram_group_messages gm "
+		  "gm.text, gm.sender_user_id, gm.sender_chat_id "
+		  "FROM telegram_group_messages gm "
 		  "LEFT JOIN telegram_users u ON u.id = gm.sender_user_id "
 		  "WHERE gm.chat_id = ? AND gm.message_id = ?"
 		: "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
-		  "pm.text FROM telegram_private_messages pm "
+		  "pm.text, pm.sender_id, NULL "
+		  "FROM telegram_private_messages pm "
 		  "LEFT JOIN telegram_users u ON u.id = pm.sender_id "
 		  "WHERE pm.chat_id = ? AND pm.message_id = ?";
 
@@ -87,6 +89,10 @@ std::optional<QuotedMessage> DB::getQuotedMessage(int64_t chat_id,
 	if (!last.empty())
 		q.sender_name += (q.sender_name.empty() ? "" : " ") + last;
 	q.text = rows[0][2].value_or("");
+	if (rows[0][3].has_value())
+		q.sender_id = std::stoll(*rows[0][3]);
+	if (rows[0][4].has_value())
+		q.sender_chat_id = std::stoll(*rows[0][4]);
 	return q;
 }
 

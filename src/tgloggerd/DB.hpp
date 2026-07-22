@@ -47,8 +47,10 @@ struct DiscordWebhook {
 
 /* A quoted (replied-to) message, for rendering a reply in a forward. */
 struct QuotedMessage {
-	std::string sender_name; /* may be empty (unknown/own) */
-	std::string text;        /* may be empty (media with no caption) */
+	std::string sender_name;     /* may be empty (unknown/own) */
+	std::string text;            /* may be empty (media with no caption) */
+	int64_t     sender_id = 0;      /* user sender; 0 if a chat/channel sent it */
+	int64_t     sender_chat_id = 0; /* chat/channel sender; 0 if a user */
 };
 
 /* A chat's current photo (telegram_files.id) and title, for a channel/group sender. */

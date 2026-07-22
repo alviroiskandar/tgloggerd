@@ -81,6 +81,23 @@ private:
 		int64_t     sender_chat_id;
 		std::string sender_name;
 	};
+	/* A webhook's guild/channel, to build a message jump link (from a
+	 * one-time GET of the webhook, cached in webhook_info_). */
+	struct WebhookInfo {
+		std::string guild_id;
+		std::string channel_id;
+		bool ok(void) const {
+			return !guild_id.empty() && !channel_id.empty();
+		}
+	};
+	/* The replied-to message rendered as a reply embed (author + snippet). */
+	struct ReplyInfo {
+		Sender      sender;         /* replied message's author */
+		std::string snippet;        /* first line of the replied text */
+		int64_t     chat_id = 0;    /* replied message (chat_id, message_id), */
+		int64_t     message_id = 0; /* to resolve its Discord jump link */
+		bool        ok = false;
+	};
 
 	std::vector<std::string> webhooks_for(int64_t chat_id);
 	void reload(void);
@@ -90,11 +107,25 @@ private:
 			      int64_t sender_chat_id,
 			      const std::string &known_name);
 	std::string media_url(uint64_t files_id) const;
-	std::string quote_prefix(const ForwardMessage &fm);
+	/* Resolve the reply (if any) into an embed's author + snippet. */
+	ReplyInfo resolve_reply(const ForwardMessage &fm);
+	/* Build the reply embed JSON fragment; jump_url makes the author clickable. */
+	std::string reply_embed(const ReplyInfo &ri,
+				const std::string &jump_url) const;
+	/* Discord jump link to the replied message in `webhook_url`'s channel, or
+	 * "" if it wasn't forwarded there / the webhook's guild is unknown. */
+	std::string reply_jump_url(const std::string &webhook_url,
+				   int64_t reply_chat_id, int64_t reply_msg_id);
+	/* Guild/channel of a webhook (cached; one GET per webhook). */
+	WebhookInfo webhook_info(const std::string &webhook_url);
 	std::string build_payload(const Sender &s, const std::string &content,
 				  const std::string &embed) const;
-	/* POST to each webhook and record the created message ids (so a later
-	 * edit/delete can find them; the content is re-derived, not stored). */
+	/* POST one payload to a webhook and record the created message id (so a
+	 * later edit/delete can find it; the content is re-derived, not stored). */
+	void post_one_and_record(const std::string &url, const std::string &payload,
+				 int64_t chat_id, int64_t message_id,
+				 const char *kind);
+	/* Post the same payload to each webhook. */
 	void post_and_record(const std::vector<std::string> &urls,
 			     const std::string &payload, int64_t chat_id,
 			     int64_t message_id, const char *kind);
@@ -118,6 +149,9 @@ private:
 
 	std::mutex	cache_mtx_;
 	std::unordered_map<int64_t, std::vector<std::string>> cache_;
+
+	std::mutex	webhook_info_mtx_;
+	std::unordered_map<std::string, WebhookInfo> webhook_info_;
 
 	std::mutex	media_mtx_;
 	std::map<std::pair<int64_t, int64_t>, PendingMedia> pending_media_;

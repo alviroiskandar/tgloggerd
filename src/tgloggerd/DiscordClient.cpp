@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 namespace tgloggerd {
@@ -97,9 +98,13 @@ DiscordResponse DiscordClient::request(const char *method,
 	hdrs = curl_slist_append(hdrs, "User-Agent: tgloggerd-discord/1.0");
 
 	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method); /* POST or PATCH */
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
-	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)json_body.size());
+	if (std::strcmp(method, "GET") == 0) {
+		curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+	} else {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method); /* POST/PATCH */
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)json_body.size());
+	}
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
@@ -161,6 +166,11 @@ DiscordResponse DiscordClient::patch_json(const std::string &webhook_url,
 {
 	return with_retry("PATCH", webhook_url + "/messages/" + message_id,
 			  json_body);
+}
+
+DiscordResponse DiscordClient::get(const std::string &url)
+{
+	return with_retry("GET", url, std::string());
 }
 
 } /* namespace tgloggerd */

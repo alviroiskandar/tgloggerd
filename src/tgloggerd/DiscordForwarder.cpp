@@ -16,6 +16,24 @@ namespace tgloggerd {
 
 namespace {
 
+/* Left-bar accent of the reply embed (a muted green, matching the reference). */
+constexpr int kReplyColor = 0x2ecc71;
+
+/* Value of a top-level string field in a small JSON body: "field":"<value>".
+ * Returns "" if the field is absent or not a string (e.g. "field":null). */
+std::string json_str_field(const std::string &body, const char *field)
+{
+	std::string key = std::string("\"") + field + "\":\"";
+	size_t p = body.find(key);
+	if (p == std::string::npos)
+		return std::string();
+	p += key.size();
+	size_t e = body.find('"', p);
+	if (e == std::string::npos)
+		return std::string();
+	return body.substr(p, e - p);
+}
+
 /* Truncate `s` to at most max_bytes without splitting a UTF-8 sequence. */
 std::string utf8_truncate(const std::string &s, size_t max_bytes)
 {
@@ -184,10 +202,12 @@ DiscordForwarder::resolve_sender(int64_t chat_id, int64_t sender_id,
 	return s;
 }
 
-std::string DiscordForwarder::quote_prefix(const ForwardMessage &fm)
+DiscordForwarder::ReplyInfo
+DiscordForwarder::resolve_reply(const ForwardMessage &fm)
 {
+	ReplyInfo ri;
 	if (fm.reply_to_msg_id == 0)
-		return std::string();
+		return ri;
 	int64_t qchat = fm.reply_to_chat_id != 0 ? fm.reply_to_chat_id : fm.chat_id;
 
 	std::optional<QuotedMessage> q;
@@ -195,17 +215,95 @@ std::string DiscordForwarder::quote_prefix(const ForwardMessage &fm)
 		q = db_->getQuotedMessage(qchat, fm.reply_to_msg_id);
 	} catch (const std::exception &e) {
 		pr_warn(l_, "discord: reply lookup failed: %s", e.what());
-		return std::string();
+		return ri;
 	}
 	if (!q)
-		return std::string();
+		return ri;
 
-	std::string qt = first_line(q->text, 120);
-	std::string who = q->sender_name.empty()
-		? std::string() : ("**" + q->sender_name + "**: ");
-	if (who.empty() && qt.empty())
+	ri.sender = resolve_sender(qchat, q->sender_id, q->sender_chat_id,
+				   q->sender_name);
+	ri.snippet = first_line(q->text, 100);
+	ri.chat_id = qchat;
+	ri.message_id = fm.reply_to_msg_id;
+	ri.ok = true;
+	return ri;
+}
+
+std::string DiscordForwarder::reply_embed(const ReplyInfo &ri,
+					  const std::string &jump_url) const
+{
+	/* An embed styled like a Discord reply: coloured bar, the replied
+	 * author's name+avatar (name links to the message), and a text snippet. */
+	std::string e = "\"embeds\":[{\"color\":" + std::to_string(kReplyColor) +
+			",\"author\":{\"name\":\"" +
+			json_escape(ri.sender.name) + "\"";
+	if (!jump_url.empty())
+		e += ",\"url\":\"" + json_escape(jump_url) + "\"";
+	if (!ri.sender.avatar_url.empty())
+		e += ",\"icon_url\":\"" + json_escape(ri.sender.avatar_url) + "\"";
+	e += "}";
+	if (!ri.snippet.empty())
+		e += ",\"description\":\"" + json_escape(ri.snippet) + "\"";
+	e += "}]";
+	return e;
+}
+
+DiscordForwarder::WebhookInfo
+DiscordForwarder::webhook_info(const std::string &webhook_url)
+{
+	{
+		std::lock_guard<std::mutex> lk(webhook_info_mtx_);
+		auto it = webhook_info_.find(webhook_url);
+		if (it != webhook_info_.end())
+			return it->second;
+	}
+
+	WebhookInfo wi;
+	DiscordResponse r = client_.get(webhook_url);
+	if (!r.ok()) {
+		/* Transient failure: don't cache, so it is retried next time. */
+		pr_warn(l_, "discord: webhook info GET failed (status=%ld)", r.status);
+		return wi;
+	}
+	wi.guild_id = json_str_field(r.body, "guild_id");
+	wi.channel_id = json_str_field(r.body, "channel_id");
+	{
+		std::lock_guard<std::mutex> lk(webhook_info_mtx_);
+		webhook_info_[webhook_url] = wi;
+	}
+	return wi;
+}
+
+std::string DiscordForwarder::reply_jump_url(const std::string &webhook_url,
+					     int64_t reply_chat_id,
+					     int64_t reply_msg_id)
+{
+	/* The replied message's Discord id in this same webhook's channel. */
+	std::string msg_id;
+	try {
+		auto sent = db_->getSentMessages(reply_chat_id, reply_msg_id, nullptr);
+		for (const auto &s : sent) {
+			if (s.webhook_url != webhook_url)
+				continue;
+			if (s.kind == "text") {
+				msg_id = s.discord_message_id; /* prefer the text part */
+				break;
+			}
+			if (msg_id.empty())
+				msg_id = s.discord_message_id;
+		}
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: reply target lookup failed: %s", e.what());
 		return std::string();
-	return "> " + who + qt + "\n";
+	}
+	if (msg_id.empty())
+		return std::string(); /* replied message wasn't forwarded here */
+
+	WebhookInfo wi = webhook_info(webhook_url);
+	if (!wi.ok())
+		return std::string();
+	return "https://discord.com/channels/" + wi.guild_id + "/" +
+	       wi.channel_id + "/" + msg_id;
 }
 
 std::string DiscordForwarder::build_payload(const Sender &s,
@@ -223,32 +321,38 @@ std::string DiscordForwarder::build_payload(const Sender &s,
 	return p;
 }
 
+void DiscordForwarder::post_one_and_record(const std::string &url,
+					   const std::string &payload,
+					   int64_t chat_id, int64_t message_id,
+					   const char *kind)
+{
+	DiscordResponse r = client_.post_json(url, payload);
+	if (!r.ok()) {
+		std::string detail = r.status ? r.body.substr(0, 200) : r.error;
+		pr_warn(l_, "discord: webhook POST failed (status=%ld): %s",
+			r.status, detail.c_str());
+		return;
+	}
+	/* Remember the Discord message so a later Telegram edit or delete can
+	 * find it (the content is re-derived, not stored). */
+	if (!r.message_id.empty()) {
+		try {
+			db_->recordSentMessage(chat_id, message_id, url,
+					       r.message_id, kind);
+		} catch (const std::exception &e) {
+			pr_warn(l_, "discord: record sent-message failed: %s",
+				e.what());
+		}
+	}
+}
+
 void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
 				       const std::string &payload,
 				       int64_t chat_id, int64_t message_id,
 				       const char *kind)
 {
-	for (const auto &url : urls) {
-		DiscordResponse r = client_.post_json(url, payload);
-		if (!r.ok()) {
-			std::string detail = r.status ? r.body.substr(0, 200)
-						      : r.error;
-			pr_warn(l_, "discord: webhook POST failed (status=%ld): %s",
-				r.status, detail.c_str());
-			continue;
-		}
-		/* Remember the Discord message so a later Telegram edit or delete
-		 * can find it (the content is re-derived, not stored). */
-		if (!r.message_id.empty()) {
-			try {
-				db_->recordSentMessage(chat_id, message_id, url,
-						       r.message_id, kind);
-			} catch (const std::exception &e) {
-				pr_warn(l_, "discord: record sent-message failed: %s",
-					e.what());
-			}
-		}
-	}
+	for (const auto &url : urls)
+		post_one_and_record(url, payload, chat_id, message_id, kind);
 }
 
 void DiscordForwarder::forward(const ForwardMessage &fm)
@@ -274,22 +378,31 @@ void DiscordForwarder::forward(const ForwardMessage &fm)
 void DiscordForwarder::do_text_forward(ForwardMessage fm,
 				       std::vector<std::string> urls)
 {
-	std::string content = quote_prefix(fm);
-	content += fm.text;
+	std::string content = utf8_truncate(fm.text, 2000);
+	ReplyInfo ri = resolve_reply(fm);
 
-	/* Media with no caption/quote: skip -- the image will follow. A plain
-	 * text/service message with no text: nothing to send either. */
-	if (content.empty())
+	/* Nothing to show: media with no caption and not a reply -- the image
+	 * follows in do_media_forward -- or an empty service message. A reply is
+	 * always shown (its embed carries the context) even without text. */
+	if (content.empty() && !ri.ok)
 		return;
-	content = utf8_truncate(content, 2000);
 
 	Sender s = resolve_sender(fm.chat_id, fm.sender_id, fm.sender_chat_id,
 				  fm.sender_name);
-	pr_info(l_, "discord: forwarding chat_id=%lld (%s) to %zu webhook(s): %.60s",
+	pr_info(l_, "discord: forwarding chat_id=%lld (%s%s) to %zu webhook(s): %.60s",
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
-		urls.size(), content.c_str());
-	post_and_record(urls, build_payload(s, content, std::string()),
-			fm.chat_id, fm.message_id, "text");
+		ri.ok ? "+reply" : "", urls.size(), content.c_str());
+
+	/* The reply embed's jump link is per-channel, so build one payload per
+	 * webhook (without a reply, the embed is empty and payloads are equal). */
+	for (const auto &url : urls) {
+		std::string embed;
+		if (ri.ok)
+			embed = reply_embed(ri,
+				reply_jump_url(url, ri.chat_id, ri.message_id));
+		post_one_and_record(url, build_payload(s, content, embed),
+				    fm.chat_id, fm.message_id, "text");
+	}
 }
 
 void DiscordForwarder::forward_edit(const ForwardMessage &fm)
@@ -311,13 +424,12 @@ void DiscordForwarder::do_edit_forward(ForwardMessage fm)
 	if (sent.empty())
 		return; /* nothing forwarded, or expired, or media-only */
 
-	std::string content = quote_prefix(fm);
-	content += fm.text;
+	std::string content = utf8_truncate(fm.text, 2000);
 	if (content.empty())
 		return; /* edited to empty -> leave the Discord message as-is */
-	content = utf8_truncate(content, 2000);
 
-	/* A webhook message edit changes only content (not username/avatar). */
+	/* A webhook message edit changes only content, leaving the reply embed
+	 * (and username/avatar) intact. */
 	std::string payload = "{\"content\":\"" + json_escape(content) +
 			      "\",\"allowed_mentions\":{\"parse\":[]}}";
 
@@ -361,18 +473,14 @@ void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
 	 * source message row, so the tombstone keeps the message rather than
 	 * blanking it. The content is not stored on the tracking row; it is
 	 * rebuilt exactly as the forward path built it:
-	 *   text  part = reply quote + message text
+	 *   text  part = message text (the reply embed, if any, stays untouched)
 	 *   media part = the media link (empty for an image, whose embed stays)
 	 */
 	std::string text_content, media_content;
 	try {
 		auto mf = db_->getMessageForward(chat_id, message_id);
 		if (mf) {
-			ForwardMessage q{};
-			q.chat_id = chat_id;
-			q.reply_to_chat_id = mf->reply_to_chat_id;
-			q.reply_to_msg_id = mf->reply_to_msg_id;
-			text_content = quote_prefix(q) + mf->text;
+			text_content = mf->text;
 
 			if (mf->file_id) {
 				auto fi = db_->getFileInfo(*mf->file_id);
