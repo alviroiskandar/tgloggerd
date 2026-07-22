@@ -22,6 +22,11 @@ CREATE DATABASE IF NOT EXISTS \`${WEB_DB_APP_NAME}\`
 CREATE USER IF NOT EXISTS '${WEB_DB_RO_USER}'@'%' IDENTIFIED BY '${WEB_DB_RO_PASSWORD}';
 GRANT SELECT ON \`${MYSQL_DATABASE}\`.* TO '${WEB_DB_RO_USER}'@'%';
 
+-- The web app manages the Discord webhook integrations, which live in the
+-- logger's schema; grant it write access to just that one table (the read-only
+-- boundary otherwise holds). The GRANT may precede the table's creation.
+GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.discord_webhooks TO '${WEB_DB_RO_USER}'@'%';
+
 -- Read-write over the web app's own schema (accounts, audit). ALL is needed to
 -- run the web migrations; at run time the app performs only DML.
 CREATE USER IF NOT EXISTS '${WEB_DB_APP_USER}'@'%' IDENTIFIED BY '${WEB_DB_APP_PASSWORD}';
