@@ -67,6 +67,8 @@ add_executable(tgloggerd
 	src/tgloggerd/ThreadPool.hpp
 	src/tgloggerd/TDLib.cpp
 	src/tgloggerd/TDLib.hpp
+	src/tgloggerd/FileToken.cpp
+	src/tgloggerd/FileToken.hpp
 	src/tgloggerd/DiscordClient.cpp
 	src/tgloggerd/DiscordClient.hpp
 	src/tgloggerd/DiscordForwarder.cpp
@@ -90,8 +92,13 @@ target_compile_options(tgloggerd PRIVATE
 find_package(OpenSSL REQUIRED)
 # libcurl (HTTPS) for the Discord webhook forwarder.
 find_package(CURL REQUIRED)
+# libsodium: the daemon mints the web's /files/<token> URLs for Discord
+# avatar/media links, using the same construction as web/src/auth/FileToken.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED libsodium)
 # std::thread in the background worker/file pools needs the platform threads
 # library explicitly, rather than relying on it arriving transitively.
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-target_link_libraries(tgloggerd PRIVATE Td::TdStatic connector-jdbc OpenSSL::Crypto CURL::libcurl Threads::Threads)
+target_link_libraries(tgloggerd PRIVATE Td::TdStatic connector-jdbc OpenSSL::Crypto CURL::libcurl ${SODIUM_LIBRARIES} Threads::Threads)
+target_include_directories(tgloggerd PRIVATE ${SODIUM_INCLUDE_DIRS})

@@ -233,8 +233,14 @@ int TgLoggerd::start(void)
 	size_t discord_queue = (size_t)strtoull(
 		env("TG_DISCORD_QUEUE_MAX", "20000").c_str(), nullptr, 10);
 	int discord_refresh = atoi(env("TG_DISCORD_REFRESH_SECS", "20").c_str());
+	/* Public base URL of the web app (e.g. https://tgd.gnuweeb.org) so
+	 * forwarded avatars/media resolve to /files/<token>; WEB_APP_KEY (shared
+	 * with the web) mints those tokens. */
+	std::string discord_public_url = env("TG_DISCORD_PUBLIC_URL", "");
+	std::string web_app_key = env("WEB_APP_KEY", "");
 	discord_ = std::make_unique<DiscordForwarder>(db_.get(), l_,
-			discord_threads, discord_queue, discord_refresh);
+			discord_threads, discord_queue, discord_refresh,
+			discord_public_url, web_app_key);
 	discord_->start();
 	pr_debug(l_, "discord: threads=%zu queue=%zu refresh=%ds",
 		 discord_threads, discord_queue, discord_refresh);
@@ -586,6 +592,10 @@ void TgLoggerd::onMessageFile(const MessageFile &m)
 				 (long long)message_id, e.what());
 		}
 	});
+
+	/* If this file belongs to a live forwarded message, mirror it to Discord. */
+	if (discord_)
+		discord_->on_media_stored(chat_id, message_id, fid);
 }
 
 /*
@@ -604,6 +614,9 @@ void TgLoggerd::onMessageFileLink(const MessageFileLink &lk)
 		" msg_id=%lld file_id=%llu", lk.is_group ? "group" : "private",
 		(long long)lk.chat_id, (long long)lk.message_id,
 		(unsigned long long)lk.file_id);
+
+	if (discord_)
+		discord_->on_media_stored(lk.chat_id, lk.message_id, lk.file_id);
 }
 
 std::optional<uint64_t>

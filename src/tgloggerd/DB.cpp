@@ -37,6 +37,72 @@ std::vector<DiscordWebhook> DB::loadDiscordWebhooks(void)
 	return out;
 }
 
+std::optional<uint64_t> DB::getUserPhotoFileId(int64_t user_id)
+{
+	auto rows = db_.query(
+		"SELECT profile_photo_file_id FROM users WHERE id = ?",
+		{ user_id });
+	if (rows.empty() || !rows[0][0].has_value())
+		return std::nullopt;
+	return (uint64_t)std::stoull(*rows[0][0]);
+}
+
+ChatPhoto DB::getGroupPhoto(int64_t chat_id)
+{
+	ChatPhoto out;
+	auto rows = db_.query(
+		"SELECT photo_file_id, title FROM `groups` WHERE id = ?",
+		{ chat_id });
+	if (rows.empty())
+		return out;
+	if (rows[0][0].has_value())
+		out.photo_file_id = (uint64_t)std::stoull(*rows[0][0]);
+	out.title = rows[0][1].value_or("");
+	return out;
+}
+
+std::optional<QuotedMessage> DB::getQuotedMessage(int64_t chat_id,
+						  int64_t message_id)
+{
+	/* Group ids are negative, private (peer user) ids positive. */
+	const char *sql = chat_id < 0
+		? "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
+		  "gm.text FROM group_messages gm "
+		  "LEFT JOIN users u ON u.id = gm.sender_user_id "
+		  "WHERE gm.chat_id = ? AND gm.message_id = ?"
+		: "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
+		  "pm.text FROM private_messages pm "
+		  "LEFT JOIN users u ON u.id = pm.sender_id "
+		  "WHERE pm.chat_id = ? AND pm.message_id = ?";
+
+	auto rows = db_.query(sql, { chat_id, message_id });
+	if (rows.empty())
+		return std::nullopt;
+
+	QuotedMessage q;
+	std::string first = rows[0][0].value_or("");
+	std::string last  = rows[0][1].value_or("");
+	q.sender_name = first;
+	if (!last.empty())
+		q.sender_name += (q.sender_name.empty() ? "" : " ") + last;
+	q.text = rows[0][2].value_or("");
+	return q;
+}
+
+std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
+{
+	auto rows = db_.query(
+		"SELECT file_type, file_ext, on_disk FROM files WHERE id = ?",
+		{ files_id });
+	if (rows.empty())
+		return std::nullopt;
+	FileInfo fi;
+	fi.file_type = rows[0][0].value_or("unknown");
+	fi.ext       = rows[0][1].value_or("");
+	fi.on_disk   = rows[0][2].has_value() && *rows[0][2] == "1";
+	return fi;
+}
+
 void DB::recordTextHistory(mysql::Transaction &tx, const char *table,
 			   const char *fk_column, const char *value_column,
 			   int64_t entity_id, const std::string &value)

@@ -111,11 +111,16 @@ struct MessageReply {
  */
 struct ForwardMessage {
 	int64_t		chat_id = 0;
-	int64_t		sender_id = 0;
+	int64_t		message_id = 0;
+	int64_t		sender_id = 0;      /* user sender; 0 if a chat sent it */
+	int64_t		sender_chat_id = 0; /* chat/channel sender; 0 if a user */
 	std::string	sender_name;
 	std::string	sender_username;
 	std::string	text;	/* message text or media caption; may be empty */
 	std::string	kind;	/* content category; empty for plain unknown */
+	int64_t		reply_to_chat_id = 0; /* replied chat_id; 0 = same chat */
+	int64_t		reply_to_msg_id = 0;  /* replied server msg id; 0 = none */
+	bool		has_file = false;   /* carries a downloadable media file */
 	bool		is_outgoing = false;
 };
 

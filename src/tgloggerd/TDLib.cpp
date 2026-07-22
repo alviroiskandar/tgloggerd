@@ -1439,8 +1439,20 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 	if (forward_handler_) {
 		ForwardMessage fm;
 		fm.chat_id     = message.chat_id_;
+		fm.message_id  = to_server_msg_id(message.id_);
 		fm.is_outgoing = message.is_outgoing_;
 		fm.sender_id   = sender_user_id(message);
+		if (message.sender_id_ &&
+		    message.sender_id_->get_id() == td_api::messageSenderChat::ID)
+			fm.sender_chat_id = static_cast<
+				const td_api::messageSenderChat &>(
+					*message.sender_id_).chat_id_;
+
+		int64_t rc = 0, rm = 0;
+		if (reply_target(message, rc, rm)) {
+			fm.reply_to_chat_id = rc;
+			fm.reply_to_msg_id  = to_server_msg_id(rm);
+		}
 
 		auto it = users_.find(fm.sender_id);
 		if (it != users_.end() && it->second) {
@@ -1462,6 +1474,9 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 		if (mc.text.has_value())
 			fm.text = *mc.text;
 		fm.kind = forward_kind_str(mc.content_type);
+		/* Media kinds carry a downloadable file (forwarded once stored). */
+		fm.has_file = !fm.kind.empty() && fm.kind != "text" &&
+			      fm.kind != "service";
 
 		forward_handler_(fm);
 	}

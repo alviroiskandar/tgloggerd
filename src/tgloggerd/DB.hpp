@@ -44,6 +44,25 @@ struct DiscordWebhook {
 	std::string webhook_url;
 };
 
+/* A quoted (replied-to) message, for rendering a reply in a forward. */
+struct QuotedMessage {
+	std::string sender_name; /* may be empty (unknown/own) */
+	std::string text;        /* may be empty (media with no caption) */
+};
+
+/* A chat's current photo (files.id) and title, for a channel/group sender. */
+struct ChatPhoto {
+	std::optional<uint64_t> photo_file_id;
+	std::string             title;
+};
+
+/* A stored file's category/extension/availability, for media forwarding. */
+struct FileInfo {
+	std::string file_type; /* files.file_type: "photo", "video", ... */
+	std::string ext;       /* lowercase extension without dot; may be empty */
+	bool        on_disk;   /* false = metadata-only, no servable bytes */
+};
+
 class DB {
 public:
 	explicit DB(const mysql::Config &cfg);
@@ -54,6 +73,13 @@ public:
 
 	/* Load all enabled Discord webhook integrations (discord_webhooks). */
 	std::vector<DiscordWebhook> loadDiscordWebhooks(void);
+
+	/* Discord-forwarder lookups (see DiscordForwarder). */
+	std::optional<uint64_t> getUserPhotoFileId(int64_t user_id);
+	ChatPhoto getGroupPhoto(int64_t chat_id);
+	std::optional<QuotedMessage> getQuotedMessage(int64_t chat_id,
+						      int64_t message_id);
+	std::optional<FileInfo> getFileInfo(uint64_t files_id);
 
 	/*
 	 * Insert or update a user together with its usernames, atomically.
