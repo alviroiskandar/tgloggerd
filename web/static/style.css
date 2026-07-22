@@ -700,3 +700,61 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 	outline: 2px solid var(--accent); outline-offset: -2px;
 	animation: msg-flash 1.5s ease-out 1;
 }
+
+/* Settings ------------------------------------------------------------------
+ * A section layout (left nav + main pane) so more sections can be added later
+ * without reshaping the page; for now it holds only the Account section. */
+.settings h1 { margin-bottom: 1rem; }
+.settings-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
+.settings-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	min-width: 10rem;
+	flex: none;
+}
+.settings-nav a {
+	padding: 0.4rem 0.7rem;
+	border-radius: 6px;
+	color: var(--fg);
+}
+.settings-nav a:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); text-decoration: none; }
+.settings-nav a.active {
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+	color: var(--accent);
+	font-weight: 600;
+}
+.settings-main { flex: 1; min-width: 0; }
+.settings-section h2 { margin-top: 0; font-size: 1.15rem; }
+.settings-card {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 1.2rem 1.3rem;
+	max-width: 26rem;
+	margin-top: 0.8rem;
+}
+.settings-card h3 { margin: 0 0 0.8rem; font-size: 1rem; }
+.settings-form { display: flex; flex-direction: column; gap: 0.9rem; }
+.settings-form label {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+.settings-form input { color: var(--fg); }
+.settings-actions { margin-top: 0.2rem; }
+.settings-flash {
+	margin: 0 0 0.9rem;
+	padding: 0.5rem 0.7rem;
+	border-radius: 6px;
+	font-size: 0.9rem;
+}
+.settings-flash.ok  { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.settings-flash.err { color: var(--error);  background: color-mix(in srgb, var(--error) 12%, transparent); }
+
+@media (max-width: 640px) {
+	.settings-layout { flex-direction: column; }
+	.settings-nav { flex-direction: row; flex-wrap: wrap; min-width: 0; }
+}

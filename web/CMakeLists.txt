@@ -123,7 +123,9 @@ add_executable(tgloggerd_web
 	src/controllers/SearchController.cpp
 	src/controllers/SearchController.hpp
 	src/controllers/MediaController.cpp
-	src/controllers/MediaController.hpp)
+	src/controllers/MediaController.hpp
+	src/controllers/SettingsController.cpp
+	src/controllers/SettingsController.hpp)
 
 # src/ is the web app's own tree; ../src exposes the reusable tgloggerd model
 # headers (plain value types) should we want them. third_party/ holds the

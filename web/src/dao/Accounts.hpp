@@ -46,6 +46,21 @@ drogon::Task<void> seedAdmin(drogon::orm::DbClientPtr db,
 drogon::Task<std::optional<WebUser>> findByUsername(drogon::orm::DbClientPtr db,
 						    std::string username);
 
+/*
+ * Look up an account by id (the trusted identity carried in the session
+ * cookie). Returns std::nullopt if no such row exists.
+ */
+drogon::Task<std::optional<WebUser>> findById(drogon::orm::DbClientPtr db,
+					      uint64_t id);
+
+/*
+ * Replace an account's password hash. `passwordHash` must already be a
+ * self-describing argon2id string (see auth::hashPassword). Throws
+ * drogon::orm::DrogonDbException on a database error.
+ */
+drogon::Task<void> updatePassword(drogon::orm::DbClientPtr db, uint64_t id,
+				  std::string passwordHash);
+
 } /* namespace accounts */
 
 } /* namespace tgweb::dao */
