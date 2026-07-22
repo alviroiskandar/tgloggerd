@@ -391,9 +391,10 @@ void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
 	for (const auto &s : sent) {
 		const std::string &orig = s.kind == "media" ? media_content
 							    : text_content;
-		/* Prepend "(Deleted)" to the original content, then re-fit it into
-		 * Discord's 2000-char limit (the prefix is kept, the tail trimmed). */
-		std::string content = utf8_truncate("(Deleted)\n\n" + orig, 2000);
+		/* Prepend a bold "(Deleted)" to the original content, then re-fit
+		 * it into Discord's 2000-char limit (the self-contained bold prefix
+		 * is kept, the tail trimmed). */
+		std::string content = utf8_truncate("**(Deleted)**\n\n" + orig, 2000);
 		std::string payload = "{\"content\":\"" + json_escape(content) +
 				      "\",\"allowed_mentions\":{\"parse\":[]}}";
 		DiscordResponse r = client_.patch_json(s.webhook_url,
