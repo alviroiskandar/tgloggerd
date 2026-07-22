@@ -121,6 +121,7 @@ std::string Render::page(const std::string &contentTemplate,
 	layout["title"] = data["title"];
 	layout["content"] = content;
 	layout["logged_in"] = data.contains("username");
+	layout["is_admin"] = data.value("is_admin", false);
 	if (data.contains("username"))
 		layout["username"] = data["username"];
 	if (data.contains("csrf"))

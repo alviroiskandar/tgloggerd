@@ -101,6 +101,8 @@ add_executable(tgloggerd_web
 	src/dao/Audit.hpp
 	src/dao/Browse.cpp
 	src/dao/Browse.hpp
+	src/dao/Discord.cpp
+	src/dao/Discord.hpp
 	src/dao/Search.cpp
 	src/dao/Search.hpp
 	src/views/Render.cpp
@@ -110,6 +112,8 @@ add_executable(tgloggerd_web
 	src/controllers/AuthController.hpp
 	src/controllers/DashboardController.cpp
 	src/controllers/DashboardController.hpp
+	src/controllers/DiscordController.cpp
+	src/controllers/DiscordController.hpp
 	src/controllers/UsersController.cpp
 	src/controllers/UsersController.hpp
 	src/controllers/GroupsController.cpp
