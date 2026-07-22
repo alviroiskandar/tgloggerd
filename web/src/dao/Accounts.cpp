@@ -30,8 +30,8 @@ drogon::Task<std::optional<WebUser>> findByUsername(drogon::orm::DbClientPtr db,
 						    std::string username)
 {
 	auto rows = co_await db->execSqlCoro(
-		"SELECT id, username, password_hash, role, is_active "
-		"FROM web_users WHERE username = ?",
+		"SELECT id, username, password_hash, role, is_active, "
+		"session_epoch FROM web_users WHERE username = ?",
 		username);
 
 	if (rows.empty())
@@ -44,6 +44,7 @@ drogon::Task<std::optional<WebUser>> findByUsername(drogon::orm::DbClientPtr db,
 	u.passwordHash = r["password_hash"].as<std::string>();
 	u.role         = r["role"].as<std::string>();
 	u.isActive     = r["is_active"].as<int>() != 0;
+	u.epoch        = r["session_epoch"].as<uint32_t>();
 	co_return u;
 }
 
@@ -51,8 +52,8 @@ drogon::Task<std::optional<WebUser>> findById(drogon::orm::DbClientPtr db,
 					      uint64_t id)
 {
 	auto rows = co_await db->execSqlCoro(
-		"SELECT id, username, password_hash, role, is_active "
-		"FROM web_users WHERE id = ?",
+		"SELECT id, username, password_hash, role, is_active, "
+		"session_epoch FROM web_users WHERE id = ?",
 		id);
 
 	if (rows.empty())
@@ -65,16 +66,24 @@ drogon::Task<std::optional<WebUser>> findById(drogon::orm::DbClientPtr db,
 	u.passwordHash = r["password_hash"].as<std::string>();
 	u.role         = r["role"].as<std::string>();
 	u.isActive     = r["is_active"].as<int>() != 0;
+	u.epoch        = r["session_epoch"].as<uint32_t>();
 	co_return u;
 }
 
-drogon::Task<void> updatePassword(drogon::orm::DbClientPtr db, uint64_t id,
-				  std::string passwordHash)
+drogon::Task<uint32_t> setPassword(drogon::orm::DbClientPtr db, uint64_t id,
+				   std::string passwordHash)
 {
+	/* Bump the epoch in the same statement so the change is atomic, then read
+	 * back the new value to re-issue the caller's cookie. */
 	co_await db->execSqlCoro(
-		"UPDATE web_users SET password_hash = ? WHERE id = ?",
+		"UPDATE web_users "
+		"SET password_hash = ?, session_epoch = session_epoch + 1 "
+		"WHERE id = ?",
 		passwordHash, id);
-	co_return;
+
+	auto rows = co_await db->execSqlCoro(
+		"SELECT session_epoch FROM web_users WHERE id = ?", id);
+	co_return rows.empty() ? 0u : rows[0]["session_epoch"].as<uint32_t>();
 }
 
 } /* namespace tgweb::dao::accounts */

@@ -127,7 +127,8 @@ AuthController::postLogin(drogon::HttpRequestPtr req)
 
 	/* Issue the signed session cookie on the redirect response. */
 	auto resp = redirect("/");
-	tgweb::auth::session::issue(resp, user->id, user->username, user->role);
+	tgweb::auth::session::issue(resp, user->id, user->username, user->role,
+				   user->epoch);
 	co_return resp;
 }
 

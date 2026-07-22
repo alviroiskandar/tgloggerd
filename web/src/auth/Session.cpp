@@ -29,16 +29,18 @@ bool secure(void)
 }
 
 std::string encode(uint64_t uid, const std::string &username,
-		   const std::string &role, int64_t exp)
+		   const std::string &role, int64_t exp, uint32_t epoch)
 {
 	std::string payload = std::to_string(uid) + "\n" +
-			      std::to_string(exp) + "\n" + role + "\n" +
+			      std::to_string(exp) + "\n" +
+			      std::to_string(epoch) + "\n" + role + "\n" +
 			      username;
 	return token::make(payload);
 }
 
-/* Parse "<uid>\n<exp>\n<role>\n<username>"; username is the remainder so it may
- * contain anything. Returns false on a malformed payload. */
+/* Parse "<uid>\n<exp>\n<epoch>\n<role>\n<username>"; username is the remainder
+ * so it may contain anything. Returns false on a malformed payload (which
+ * includes the old 4-field format, so pre-epoch cookies force a re-login). */
 bool parse(const std::string &p, Session &out)
 {
 	size_t a = p.find('\n');
@@ -50,15 +52,19 @@ bool parse(const std::string &p, Session &out)
 	size_t c = p.find('\n', b + 1);
 	if (c == std::string::npos)
 		return false;
+	size_t d = p.find('\n', c + 1);
+	if (d == std::string::npos)
+		return false;
 
 	try {
 		out.uid = std::stoull(p.substr(0, a));
 		out.exp = std::stoll(p.substr(a + 1, b - a - 1));
+		out.epoch = (uint32_t)std::stoul(p.substr(b + 1, c - b - 1));
 	} catch (...) {
 		return false;
 	}
-	out.role = p.substr(b + 1, c - b - 1);
-	out.username = p.substr(c + 1);
+	out.role = p.substr(c + 1, d - c - 1);
+	out.username = p.substr(d + 1);
 	return true;
 }
 
@@ -101,12 +107,13 @@ bool isAdmin(const drogon::HttpRequestPtr &req)
 }
 
 void issue(const drogon::HttpResponsePtr &resp, uint64_t uid,
-	   const std::string &username, const std::string &role)
+	   const std::string &username, const std::string &role,
+	   uint32_t epoch)
 {
 	int age = maxAge();
 	int64_t exp = age > 0 ? (int64_t)std::time(nullptr) + age : 0;
 
-	drogon::Cookie c(kCookie, encode(uid, username, role, exp));
+	drogon::Cookie c(kCookie, encode(uid, username, role, exp, epoch));
 	c.setHttpOnly(true);
 	c.setSecure(secure());
 	c.setSameSite(drogon::Cookie::SameSite::kLax);

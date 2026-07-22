@@ -96,11 +96,16 @@ SettingsController::changePassword(drogon::HttpRequestPtr req)
 			"Could not process the new password. Please try again.",
 			false);
 
-	co_await dao::accounts::updatePassword(db, s->uid, hash);
+	/* Storing the new hash bumps session_epoch, invalidating every cookie
+	 * issued before now (sign out everywhere); re-issue this session's cookie
+	 * with the new epoch so the caller stays signed in. */
+	uint32_t epoch = co_await dao::accounts::setPassword(db, s->uid, hash);
 	co_await dao::audit::log(db, s->uid, "password_change", ip, s->username);
 
 	/* Post/redirect/get so a refresh does not resubmit the form. */
-	co_return drogon::HttpResponse::newRedirectionResponse("/settings?changed=1");
+	auto resp = drogon::HttpResponse::newRedirectionResponse("/settings?changed=1");
+	auth::session::issue(resp, s->uid, s->username, s->role, epoch);
+	co_return resp;
 }
 
 } /* namespace tgweb::controllers */

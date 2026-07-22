@@ -16,11 +16,14 @@
 namespace tgweb::auth::session {
 
 /*
- * Stateless authentication: the identity lives entirely in a signed cookie, so
- * there is no server-side session store and logins survive restarts. The cookie
- * is a token::make() token over "<uid>\n<exp>\n<role>\n<username>", so the
- * client cannot alter uid or role without invalidating the signature. `exp` is
- * an absolute Unix expiry (0 = no expiry).
+ * Near-stateless authentication: the identity lives in a signed cookie, so
+ * logins survive restarts with no server-side session store. The cookie is a
+ * token::make() token over "<uid>\n<exp>\n<epoch>\n<role>\n<username>", so the
+ * client cannot alter any field without invalidating the signature. `exp` is an
+ * absolute Unix expiry (0 = no expiry). `epoch` is the account's session epoch
+ * at issue time; a caller (the AuthFilter) compares it against the live
+ * web_users.session_epoch so a password change -- which bumps that column --
+ * invalidates every previously issued cookie.
  */
 
 constexpr const char *kCookie = "tgw_session";
@@ -30,6 +33,7 @@ struct Session {
 	std::string username;
 	std::string role;      /* "admin" or "viewer". */
 	int64_t     exp = 0;   /* absolute Unix expiry; 0 = never. */
+	uint32_t    epoch = 0; /* account session epoch carried by the cookie. */
 };
 
 /* The verified, unexpired session in the request's cookie, or std::nullopt. */
@@ -41,9 +45,11 @@ std::string rawCookie(const drogon::HttpRequestPtr &req);
 bool isLoggedIn(const drogon::HttpRequestPtr &req);
 bool isAdmin(const drogon::HttpRequestPtr &req);
 
-/* Set the signed session cookie on the response (call on successful login). */
+/* Set the signed session cookie on the response (call on successful login, or
+ * to re-issue with a bumped epoch after a password change). */
 void issue(const drogon::HttpResponsePtr &resp, uint64_t uid,
-	   const std::string &username, const std::string &role);
+	   const std::string &username, const std::string &role,
+	   uint32_t epoch);
 
 /* Expire the session cookie on the response (call on logout). */
 void clear(const drogon::HttpResponsePtr &resp);

@@ -22,6 +22,7 @@ struct WebUser {
 	std::string passwordHash;
 	std::string role;      /* "admin" or "viewer". */
 	bool        isActive;
+	uint32_t    epoch;     /* session_epoch: bumped to invalidate cookies. */
 };
 
 /*
@@ -54,12 +55,14 @@ drogon::Task<std::optional<WebUser>> findById(drogon::orm::DbClientPtr db,
 					      uint64_t id);
 
 /*
- * Replace an account's password hash. `passwordHash` must already be a
- * self-describing argon2id string (see auth::hashPassword). Throws
+ * Replace an account's password hash and, atomically, bump its session_epoch so
+ * every previously issued session cookie is invalidated. `passwordHash` must
+ * already be a self-describing argon2id string (see auth::hashPassword).
+ * Returns the new epoch (for re-issuing the caller's own cookie). Throws
  * drogon::orm::DrogonDbException on a database error.
  */
-drogon::Task<void> updatePassword(drogon::orm::DbClientPtr db, uint64_t id,
-				  std::string passwordHash);
+drogon::Task<uint32_t> setPassword(drogon::orm::DbClientPtr db, uint64_t id,
+				   std::string passwordHash);
 
 } /* namespace accounts */
 
