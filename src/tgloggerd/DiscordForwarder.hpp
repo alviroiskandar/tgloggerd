@@ -93,12 +93,11 @@ private:
 	std::string quote_prefix(const ForwardMessage &fm);
 	std::string build_payload(const Sender &s, const std::string &content,
 				  const std::string &embed) const;
-	/* POST to each webhook and record the created message ids + content
-	 * (for later edits/deletes). */
+	/* POST to each webhook and record the created message ids (so a later
+	 * edit/delete can find them; the content is re-derived, not stored). */
 	void post_and_record(const std::vector<std::string> &urls,
 			     const std::string &payload, int64_t chat_id,
-			     int64_t message_id, const char *kind,
-			     const std::string &content);
+			     int64_t message_id, const char *kind);
 
 	void do_text_forward(ForwardMessage fm, std::vector<std::string> urls);
 	void do_media_forward(int64_t chat_id, int64_t message_id, PendingMedia pm,

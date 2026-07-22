@@ -226,8 +226,7 @@ std::string DiscordForwarder::build_payload(const Sender &s,
 void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
 				       const std::string &payload,
 				       int64_t chat_id, int64_t message_id,
-				       const char *kind,
-				       const std::string &content)
+				       const char *kind)
 {
 	for (const auto &url : urls) {
 		DiscordResponse r = client_.post_json(url, payload);
@@ -238,12 +237,12 @@ void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
 				r.status, detail.c_str());
 			continue;
 		}
-		/* Remember the Discord message + content so a later Telegram edit
-		 * or delete can update it. */
+		/* Remember the Discord message so a later Telegram edit or delete
+		 * can find it (the content is re-derived, not stored). */
 		if (!r.message_id.empty()) {
 			try {
 				db_->recordSentMessage(chat_id, message_id, url,
-						       r.message_id, kind, content);
+						       r.message_id, kind);
 			} catch (const std::exception &e) {
 				pr_warn(l_, "discord: record sent-message failed: %s",
 					e.what());
@@ -290,7 +289,7 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
 		urls.size(), content.c_str());
 	post_and_record(urls, build_payload(s, content, std::string()),
-			fm.chat_id, fm.message_id, "text", content);
+			fm.chat_id, fm.message_id, "text");
 }
 
 void DiscordForwarder::forward_edit(const ForwardMessage &fm)
@@ -334,12 +333,6 @@ void DiscordForwarder::do_edit_forward(ForwardMessage fm)
 				r.status, detail.c_str());
 		}
 	}
-	/* Keep the stored content current so a later delete rebuilds correctly. */
-	try {
-		db_->updateSentContent(fm.chat_id, fm.message_id, "text", content);
-	} catch (const std::exception &e) {
-		pr_warn(l_, "discord: update sent content failed: %s", e.what());
-	}
 }
 
 void DiscordForwarder::forward_delete(int64_t chat_id, int64_t message_id)
@@ -361,15 +354,46 @@ void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
 		return;
 	}
 	if (sent.empty())
-		return; /* nothing forwarded, or already pruned */
+		return; /* nothing forwarded here */
+
+	/*
+	 * Re-derive what each part originally showed from the (still-present)
+	 * source message row, so the tombstone keeps the message rather than
+	 * blanking it. The content is not stored on the tracking row; it is
+	 * rebuilt exactly as the forward path built it:
+	 *   text  part = reply quote + message text
+	 *   media part = the media link (empty for an image, whose embed stays)
+	 */
+	std::string text_content, media_content;
+	try {
+		auto mf = db_->getMessageForward(chat_id, message_id);
+		if (mf) {
+			ForwardMessage q{};
+			q.chat_id = chat_id;
+			q.reply_to_chat_id = mf->reply_to_chat_id;
+			q.reply_to_msg_id = mf->reply_to_msg_id;
+			text_content = quote_prefix(q) + mf->text;
+
+			if (mf->file_id) {
+				auto fi = db_->getFileInfo(*mf->file_id);
+				if (fi && fi->on_disk &&
+				    !is_image(fi->file_type, fi->ext))
+					media_content = media_url(*mf->file_id);
+			}
+		}
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: delete re-render failed: %s", e.what());
+	}
 
 	pr_info(l_, "discord: tombstoning deleted chat_id=%lld msg_id=%lld "
 		"(%zu message(s))", (long long)chat_id, (long long)message_id,
 		sent.size());
 	for (const auto &s : sent) {
-		/* Prepend "(Deleted)" to the current content, then re-fit it into
+		const std::string &orig = s.kind == "media" ? media_content
+							    : text_content;
+		/* Prepend "(Deleted)" to the original content, then re-fit it into
 		 * Discord's 2000-char limit (the prefix is kept, the tail trimmed). */
-		std::string content = utf8_truncate("(Deleted)\n\n" + s.content, 2000);
+		std::string content = utf8_truncate("(Deleted)\n\n" + orig, 2000);
 		std::string payload = "{\"content\":\"" + json_escape(content) +
 				      "\",\"allowed_mentions\":{\"parse\":[]}}";
 		DiscordResponse r = client_.patch_json(s.webhook_url,
@@ -443,7 +467,7 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
 	pr_info(l_, "discord: forwarding media chat_id=%lld (%s) to %zu webhook(s)",
 		(long long)chat_id, fi->file_type.c_str(), urls.size());
 	post_and_record(urls, build_payload(s, content, embed), chat_id,
-			message_id, "media", content);
+			message_id, "media");
 }
 
 void DiscordForwarder::sweep_pending_locked(int64_t now)

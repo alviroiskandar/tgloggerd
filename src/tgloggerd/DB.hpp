@@ -67,7 +67,16 @@ struct FileInfo {
 struct SentMessage {
 	std::string webhook_url;
 	std::string discord_message_id;
-	std::string content; /* the content last posted, for edit/delete rebuild */
+	std::string kind; /* "text" or "media": how to re-derive its content */
+};
+
+/* The source-message fields needed to re-render a forward (for a delete
+ * tombstone, which rebuilds the content instead of storing it). */
+struct MessageForward {
+	std::string             text;              /* message text/caption */
+	int64_t                 reply_to_chat_id = 0;
+	int64_t                 reply_to_msg_id = 0;
+	std::optional<uint64_t> file_id;           /* media attachment, if any */
 };
 
 class DB {
@@ -87,19 +96,19 @@ public:
 	std::optional<QuotedMessage> getQuotedMessage(int64_t chat_id,
 						      int64_t message_id);
 	std::optional<FileInfo> getFileInfo(uint64_t files_id);
+	/* The source message's text/reply/file, to re-render it for a tombstone. */
+	std::optional<MessageForward> getMessageForward(int64_t chat_id,
+							int64_t message_id);
 
 	/* Record a forwarded Discord message so a later edit/delete can find it. */
 	void recordSentMessage(int64_t chat_id, int64_t message_id,
 			       const std::string &webhook_url,
 			       const std::string &discord_message_id,
-			       const char *kind, const std::string &content);
+			       const char *kind);
 	/* The Discord messages posted for a source message; kind=nullptr = all. */
 	std::vector<SentMessage> getSentMessages(int64_t chat_id,
 						 int64_t message_id,
 						 const char *kind);
-	/* Keep the stored content current after an edit (so a delete rebuilds it). */
-	void updateSentContent(int64_t chat_id, int64_t message_id,
-			       const char *kind, const std::string &content);
 	/* Drop the tracking rows for a message (after it is deleted/tombstoned). */
 	void deleteSentMessages(int64_t chat_id, int64_t message_id);
 

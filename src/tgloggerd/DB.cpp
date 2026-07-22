@@ -106,14 +106,14 @@ std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
 void DB::recordSentMessage(int64_t chat_id, int64_t message_id,
 			   const std::string &webhook_url,
 			   const std::string &discord_message_id,
-			   const char *kind, const std::string &content)
+			   const char *kind)
 {
 	db_.execute(
 		"INSERT INTO discord_sent_messages "
-		"(chat_id, message_id, webhook_url, discord_message_id, kind, "
-		"content) VALUES (?, ?, ?, ?, ?, ?)",
+		"(chat_id, message_id, webhook_url, discord_message_id, kind) "
+		"VALUES (?, ?, ?, ?, ?)",
 		{ chat_id, message_id, webhook_url, discord_message_id,
-		  std::string(kind), content });
+		  std::string(kind) });
 }
 
 std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
@@ -121,7 +121,7 @@ std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
 					     const char *kind)
 {
 	std::string sql =
-		"SELECT webhook_url, discord_message_id, content "
+		"SELECT webhook_url, discord_message_id, kind "
 		"FROM discord_sent_messages WHERE chat_id = ? AND message_id = ?";
 	std::vector<mysql::Param> params = { chat_id, message_id };
 	if (kind) {
@@ -135,18 +135,34 @@ std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
 	for (const auto &r : rows) {
 		if (!r[0].has_value() || !r[1].has_value())
 			continue;
-		out.push_back({ *r[0], *r[1], r[2].value_or("") });
+		out.push_back({ *r[0], *r[1], r[2].value_or("text") });
 	}
 	return out;
 }
 
-void DB::updateSentContent(int64_t chat_id, int64_t message_id,
-			   const char *kind, const std::string &content)
+std::optional<MessageForward> DB::getMessageForward(int64_t chat_id,
+						    int64_t message_id)
 {
-	db_.execute(
-		"UPDATE discord_sent_messages SET content = ? "
-		"WHERE chat_id = ? AND message_id = ? AND kind = ?",
-		{ content, chat_id, message_id, std::string(kind) });
+	/* Group ids are negative, private (peer user) ids positive. */
+	const char *sql = chat_id < 0
+		? "SELECT text, reply_to_chat_id, reply_to_msg_id, file_id "
+		  "FROM group_messages WHERE chat_id = ? AND message_id = ?"
+		: "SELECT text, reply_to_chat_id, reply_to_msg_id, file_id "
+		  "FROM private_messages WHERE chat_id = ? AND message_id = ?";
+
+	auto rows = db_.query(sql, { chat_id, message_id });
+	if (rows.empty())
+		return std::nullopt;
+
+	MessageForward mf;
+	mf.text = rows[0][0].value_or("");
+	if (rows[0][1].has_value())
+		mf.reply_to_chat_id = std::stoll(*rows[0][1]);
+	if (rows[0][2].has_value())
+		mf.reply_to_msg_id = std::stoll(*rows[0][2]);
+	if (rows[0][3].has_value())
+		mf.file_id = (uint64_t)std::stoull(*rows[0][3]);
+	return mf;
 }
 
 void DB::deleteSentMessages(int64_t chat_id, int64_t message_id)
