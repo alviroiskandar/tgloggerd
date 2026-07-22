@@ -637,6 +637,82 @@ void extract_message_content(const td_api::message &message,
 	}
 }
 
+/* The message's text/caption formattedText (carrying its entities), or nullptr
+ * for content that has none. Mirrors extract_message_content's text sources. */
+const td_api::formattedText *
+message_formatted_text(const td_api::message &message)
+{
+	if (!message.content_)
+		return nullptr;
+	switch (message.content_->get_id()) {
+	case td_api::messageText::ID:
+		return static_cast<const td_api::messageText &>(
+			*message.content_).text_.get();
+	case td_api::messagePhoto::ID:
+		return static_cast<const td_api::messagePhoto &>(
+			*message.content_).caption_.get();
+	case td_api::messageVideo::ID:
+		return static_cast<const td_api::messageVideo &>(
+			*message.content_).caption_.get();
+	case td_api::messageDocument::ID:
+		return static_cast<const td_api::messageDocument &>(
+			*message.content_).caption_.get();
+	case td_api::messageAudio::ID:
+		return static_cast<const td_api::messageAudio &>(
+			*message.content_).caption_.get();
+	case td_api::messageVoiceNote::ID:
+		return static_cast<const td_api::messageVoiceNote &>(
+			*message.content_).caption_.get();
+	case td_api::messageAnimation::ID:
+		return static_cast<const td_api::messageAnimation &>(
+			*message.content_).caption_.get();
+	default:
+		return nullptr;
+	}
+}
+
+/* Map a formattedText's entities to the Discord-renderable FmtEntity spans.
+ * Types Discord cannot render (mentions, links, hashtags, ...) are dropped;
+ * the covered text still forwards as plain text. */
+void extract_fmt_entities(const td_api::formattedText &ft,
+			  std::vector<FmtEntity> &out)
+{
+	for (const auto &e : ft.entities_) {
+		if (!e || !e->type_ || e->length_ <= 0)
+			continue;
+		FmtEntity fe;
+		fe.offset = e->offset_;
+		fe.length = e->length_;
+		switch (e->type_->get_id()) {
+		case td_api::textEntityTypeBold::ID:
+			fe.type = FmtEntity::Type::Bold; break;
+		case td_api::textEntityTypeItalic::ID:
+			fe.type = FmtEntity::Type::Italic; break;
+		case td_api::textEntityTypeUnderline::ID:
+			fe.type = FmtEntity::Type::Underline; break;
+		case td_api::textEntityTypeStrikethrough::ID:
+			fe.type = FmtEntity::Type::Strikethrough; break;
+		case td_api::textEntityTypeSpoiler::ID:
+			fe.type = FmtEntity::Type::Spoiler; break;
+		case td_api::textEntityTypeCode::ID:
+			fe.type = FmtEntity::Type::Code; break;
+		case td_api::textEntityTypePre::ID:
+			fe.type = FmtEntity::Type::Pre; break;
+		case td_api::textEntityTypePreCode::ID:
+			fe.type = FmtEntity::Type::Pre;
+			fe.language = static_cast<const td_api::textEntityTypePreCode &>(
+				*e->type_).language_;
+			break;
+		case td_api::textEntityTypeBlockQuote::ID:
+		case td_api::textEntityTypeExpandableBlockQuote::ID:
+			fe.type = FmtEntity::Type::BlockQuote; break;
+		default:
+			continue; /* not renderable -> leave as plain text */
+		}
+		out.push_back(std::move(fe));
+	}
+}
+
 /* Short content-kind label used by the Discord forwarder's placeholder text. */
 const char *forward_kind_str(models::MessageContentType t)
 {
@@ -1542,6 +1618,11 @@ void TDLib::Impl::build_forward_message(const td_api::message &message,
 	extract_message_content(message, mc);
 	if (mc.text.has_value())
 		fm.text = *mc.text;
+	/* Carry the formatting entities so the forwarder can render markdown.
+	 * They index into ft->text_, which is exactly fm.text here. */
+	const td_api::formattedText *ft = message_formatted_text(message);
+	if (ft && !ft->text_.empty())
+		extract_fmt_entities(*ft, fm.entities);
 	fm.kind = forward_kind_str(mc.content_type);
 	/* Media kinds carry a downloadable file (forwarded once stored). */
 	fm.has_file = !fm.kind.empty() && fm.kind != "text" &&

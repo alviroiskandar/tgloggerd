@@ -6,7 +6,9 @@
 
 #include "DB.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <exception>
 #include <optional>
@@ -59,17 +61,132 @@ std::string first_line(const std::string &s, size_t n)
  * which silently drops the angle brackets. Backticks/asterisks/underscores/
  * tildes/pipes are the inline-formatting markers.
  */
+bool is_md_special(char c)
+{
+	switch (c) {
+	case '\\': case '`': case '*': case '_':
+	case '~': case '|': case '<': case '>':
+		return true;
+	default:
+		return false;
+	}
+}
+
 std::string discord_escape(const std::string &s)
 {
-	static const std::string special = "\\`*_~|<>";
 	std::string o;
 	o.reserve(s.size() + s.size() / 8 + 4);
 	for (char c : s) {
-		if (special.find(c) != std::string::npos)
+		if (is_md_special(c))
 			o += '\\';
 		o += c;
 	}
 	return o;
+}
+
+/*
+ * Render Telegram text + formatting entities as escaped Discord markdown.
+ *
+ * Entity offsets/lengths are UTF-16 code units, so we walk the UTF-8 text code
+ * point by code point tracking the UTF-16 offset. At each offset we emit the
+ * markers for entities closing/opening there; between them, ordinary text is
+ * escaped, but the inside of a code/inline-code span is emitted verbatim (and
+ * other entities nested in it are dropped, since Discord code is literal).
+ * Blockquotes are rendered as a "> " prefix on each of their lines.
+ */
+std::string render_markdown(const std::string &text,
+			    const std::vector<FmtEntity> &ents)
+{
+	if (ents.empty())
+		return discord_escape(text);
+
+	auto in_range = [](const std::vector<std::pair<int32_t, int32_t>> &rs,
+			   int32_t u) {
+		for (const auto &r : rs)
+			if (u >= r.first && u < r.second)
+				return true;
+		return false;
+	};
+
+	std::vector<std::pair<int32_t, int32_t>> raw_ranges; /* code/pre */
+	std::vector<std::pair<int32_t, int32_t>> bq_ranges;  /* block quote */
+	for (const auto &e : ents) {
+		if (e.type == FmtEntity::Type::Code ||
+		    e.type == FmtEntity::Type::Pre)
+			raw_ranges.push_back({ e.offset, e.offset + e.length });
+		else if (e.type == FmtEntity::Type::BlockQuote)
+			bq_ranges.push_back({ e.offset, e.offset + e.length });
+	}
+
+	/* Marker insertions. kind 0 = close, 1 = open; key orders same-position
+	 * markers so spans nest (outer opens first / closes last). */
+	struct Ev { int32_t at; int kind; int32_t key; std::string mark; };
+	std::vector<Ev> evs;
+	for (const auto &e : ents) {
+		int32_t s = e.offset, en = e.offset + e.length;
+		std::string open, close;
+		switch (e.type) {
+		case FmtEntity::Type::Bold:          open = close = "**"; break;
+		case FmtEntity::Type::Italic:        open = close = "*";  break;
+		case FmtEntity::Type::Underline:     open = close = "__"; break;
+		case FmtEntity::Type::Strikethrough: open = close = "~~"; break;
+		case FmtEntity::Type::Spoiler:       open = close = "||"; break;
+		case FmtEntity::Type::Code:          open = close = "`";  break;
+		case FmtEntity::Type::Pre:
+			open = "```" + e.language + "\n";
+			close = "\n```";
+			break;
+		default:
+			continue; /* BlockQuote via bq_ranges; Other = plain */
+		}
+		/* A non-code span inside a code/pre range would print literally; drop it. */
+		if (e.type != FmtEntity::Type::Code && e.type != FmtEntity::Type::Pre &&
+		    (in_range(raw_ranges, s) || in_range(raw_ranges, en - 1)))
+			continue;
+		evs.push_back({ s,  1, -en, open });
+		evs.push_back({ en, 0, -s,  close });
+	}
+	std::sort(evs.begin(), evs.end(), [](const Ev &a, const Ev &b) {
+		if (a.at != b.at)     return a.at < b.at;
+		if (a.kind != b.kind) return a.kind < b.kind; /* close before open */
+		return a.key < b.key;
+	});
+
+	std::string out;
+	out.reserve(text.size() + text.size() / 4 + 16);
+	size_t ei = 0;
+	int32_t u = 0;            /* current UTF-16 offset */
+	bool line_start = true;
+	for (size_t i = 0; i < text.size();) {
+		if (line_start && in_range(bq_ranges, u))
+			out += "> ";
+		while (ei < evs.size() && evs[ei].at == u)
+			out += evs[ei++].mark;
+
+		unsigned char c0 = static_cast<unsigned char>(text[i]);
+		int len = 1;
+		uint32_t cp = c0;
+		if (c0 >= 0xF0)      { len = 4; cp = c0 & 0x07; }
+		else if (c0 >= 0xE0) { len = 3; cp = c0 & 0x0F; }
+		else if (c0 >= 0xC0) { len = 2; cp = c0 & 0x1F; }
+		if (i + (size_t)len > text.size())
+			len = 1;
+		for (int k = 1; k < len; k++)
+			cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
+
+		if (len == 1 && !in_range(raw_ranges, u) && is_md_special((char)c0))
+			out += '\\';
+		out.append(text, i, len);
+
+		line_start = (len == 1 && c0 == '\n');
+		u += (cp > 0xFFFF) ? 2 : 1;
+		i += (size_t)len;
+	}
+	/* Emit any remaining markers (closes at end; also any past-end from
+	 * malformed offsets, so nothing is left unbalanced). */
+	while (ei < evs.size())
+		out += evs[ei++].mark;
+	return out;
 }
 
 /* utf8_truncate that also never ends on a dangling escape backslash (which the
@@ -423,7 +540,8 @@ void DiscordForwarder::forward(const ForwardMessage &fm)
 void DiscordForwarder::do_text_forward(ForwardMessage fm,
 				       std::vector<std::string> urls)
 {
-	std::string content = truncate_escaped(discord_escape(fm.text), 2000);
+	std::string content =
+		truncate_escaped(render_markdown(fm.text, fm.entities), 2000);
 
 	/* No text to post: a media message with no caption (sticker/photo) or an
 	 * empty service message. Such a reply's preview is posted by
@@ -468,7 +586,8 @@ void DiscordForwarder::do_edit_forward(ForwardMessage fm)
 	if (sent.empty())
 		return; /* nothing forwarded, or expired, or media-only */
 
-	std::string content = truncate_escaped(discord_escape(fm.text), 2000);
+	std::string content =
+		truncate_escaped(render_markdown(fm.text, fm.entities), 2000);
 	if (content.empty())
 		return; /* edited to empty -> leave the Discord message as-is */
 

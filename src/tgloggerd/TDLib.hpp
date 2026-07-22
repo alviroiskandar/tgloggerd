@@ -109,6 +109,22 @@ struct MessageReply {
  * the content category ("text", "photo", ...) used to render a placeholder when
  * there is no text.
  */
+/*
+ * A formatting span over ForwardMessage::text. offset/length are UTF-16
+ * code-unit indices (as TDLib reports them). Only the types Discord can render
+ * are kept; everything else is Other and left as plain text.
+ */
+struct FmtEntity {
+	enum class Type {
+		Bold, Italic, Underline, Strikethrough, Spoiler,
+		Code, Pre, BlockQuote, Other,
+	};
+	int32_t     offset;
+	int32_t     length;
+	Type        type;
+	std::string language; /* Pre only: the code-block language, may be empty */
+};
+
 struct ForwardMessage {
 	int64_t		chat_id = 0;
 	int64_t		message_id = 0;
@@ -117,6 +133,7 @@ struct ForwardMessage {
 	std::string	sender_name;
 	std::string	sender_username;
 	std::string	text;	/* message text or media caption; may be empty */
+	std::vector<FmtEntity> entities; /* formatting over `text` (UTF-16 spans) */
 	std::string	kind;	/* content category; empty for plain unknown */
 	int64_t		reply_to_chat_id = 0; /* replied chat_id; 0 = same chat */
 	int64_t		reply_to_msg_id = 0;  /* replied server msg id; 0 = none */
