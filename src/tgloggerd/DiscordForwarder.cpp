@@ -52,6 +52,40 @@ std::string first_line(const std::string &s, size_t n)
 	return utf8_truncate(t, n);
 }
 
+/*
+ * Backslash-escape Discord markdown metacharacters so forwarded Telegram text
+ * renders verbatim. Notably `<...>` is otherwise consumed as an autolink
+ * (`<a@b.com>`, `<http://x>`) or a mention/emoji/timestamp token (`<@123>`),
+ * which silently drops the angle brackets. Backticks/asterisks/underscores/
+ * tildes/pipes are the inline-formatting markers.
+ */
+std::string discord_escape(const std::string &s)
+{
+	static const std::string special = "\\`*_~|<>";
+	std::string o;
+	o.reserve(s.size() + s.size() / 8 + 4);
+	for (char c : s) {
+		if (special.find(c) != std::string::npos)
+			o += '\\';
+		o += c;
+	}
+	return o;
+}
+
+/* utf8_truncate that also never ends on a dangling escape backslash (which the
+ * cut could leave behind after discord_escape). */
+std::string truncate_escaped(const std::string &s, size_t max_bytes)
+{
+	std::string t = utf8_truncate(s, max_bytes);
+	size_t bs = 0;
+	while (bs < t.size() &&
+	       static_cast<unsigned char>(t[t.size() - 1 - bs]) == '\\')
+		bs++;
+	if (bs & 1)
+		t.pop_back();
+	return t;
+}
+
 /* Whether a stored file should render as an inline Discord image embed. */
 bool is_image(const std::string &file_type, const std::string &ext)
 {
@@ -243,7 +277,8 @@ std::string DiscordForwarder::reply_embed(const ReplyInfo &ri,
 		e += ",\"icon_url\":\"" + json_escape(ri.sender.avatar_url) + "\"";
 	e += "}";
 	if (!ri.snippet.empty())
-		e += ",\"description\":\"" + json_escape(ri.snippet) + "\"";
+		e += ",\"description\":\"" +
+		     json_escape(discord_escape(ri.snippet)) + "\"";
 	e += "}]";
 	return e;
 }
@@ -388,7 +423,7 @@ void DiscordForwarder::forward(const ForwardMessage &fm)
 void DiscordForwarder::do_text_forward(ForwardMessage fm,
 				       std::vector<std::string> urls)
 {
-	std::string content = utf8_truncate(fm.text, 2000);
+	std::string content = truncate_escaped(discord_escape(fm.text), 2000);
 
 	/* No text to post: a media message with no caption (sticker/photo) or an
 	 * empty service message. Such a reply's preview is posted by
@@ -433,7 +468,7 @@ void DiscordForwarder::do_edit_forward(ForwardMessage fm)
 	if (sent.empty())
 		return; /* nothing forwarded, or expired, or media-only */
 
-	std::string content = utf8_truncate(fm.text, 2000);
+	std::string content = truncate_escaped(discord_escape(fm.text), 2000);
 	if (content.empty())
 		return; /* edited to empty -> leave the Discord message as-is */
 
@@ -489,7 +524,7 @@ void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
 	try {
 		auto mf = db_->getMessageForward(chat_id, message_id);
 		if (mf) {
-			text_content = mf->text;
+			text_content = discord_escape(mf->text);
 
 			if (mf->file_id) {
 				auto fi = db_->getFileInfo(*mf->file_id);
@@ -510,8 +545,9 @@ void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
 							    : text_content;
 		/* Prepend a bold "(Deleted)" to the original content, then re-fit
 		 * it into Discord's 2000-char limit (the self-contained bold prefix
-		 * is kept, the tail trimmed). */
-		std::string content = utf8_truncate("**(Deleted)**\n\n" + orig, 2000);
+		 * is kept, the tail trimmed). orig is already discord-escaped (text)
+		 * or a bare URL (media); the "**(Deleted)**" markdown is intentional. */
+		std::string content = truncate_escaped("**(Deleted)**\n\n" + orig, 2000);
 		std::string payload = "{\"content\":\"" + json_escape(content) +
 				      "\",\"allowed_mentions\":{\"parse\":[]}}";
 		DiscordResponse r = client_.patch_json(s.webhook_url,
