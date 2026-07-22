@@ -142,8 +142,8 @@ void DB::recordSentMessage(int64_t chat_id, int64_t message_id,
 	uint64_t endpoint_id = internEndpoint(webhook_url);
 	db_.execute(
 		"INSERT INTO discord_sent_messages "
-		"(chat_id, message_id, endpoint_id, discord_message_id, kind) "
-		"VALUES (?, ?, ?, ?, ?)",
+		"(telegram_chat_id, telegram_message_id, endpoint_id, message_id, "
+		"kind) VALUES (?, ?, ?, ?, ?)",
 		{ chat_id, message_id, endpoint_id, discord_message_id,
 		  std::string(kind) });
 }
@@ -153,10 +153,10 @@ std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
 					     const char *kind)
 {
 	std::string sql =
-		"SELECT e.webhook_url, m.discord_message_id, m.kind "
+		"SELECT e.webhook_url, m.message_id, m.kind "
 		"FROM discord_sent_messages m "
 		"JOIN discord_endpoints e ON e.id = m.endpoint_id "
-		"WHERE m.chat_id = ? AND m.message_id = ?";
+		"WHERE m.telegram_chat_id = ? AND m.telegram_message_id = ?";
 	std::vector<mysql::Param> params = { chat_id, message_id };
 	if (kind) {
 		sql += " AND m.kind = ?";
@@ -203,7 +203,7 @@ void DB::deleteSentMessages(int64_t chat_id, int64_t message_id)
 {
 	db_.execute(
 		"DELETE FROM discord_sent_messages "
-		"WHERE chat_id = ? AND message_id = ?",
+		"WHERE telegram_chat_id = ? AND telegram_message_id = ?",
 		{ chat_id, message_id });
 }
 
