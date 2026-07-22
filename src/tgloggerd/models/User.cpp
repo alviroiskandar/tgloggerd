@@ -38,10 +38,10 @@ void DB::upsertUser(const models::User &u)
 	 * created_at/updated_at columns are intentionally omitted here; the
 	 * photo reference is managed after download, and the birthday arrives
 	 * with userFullInfo. The sparse attributes (phone, appearance, ...)
-	 * live in user_extra_info, written by upsertUserExtraFromUser below.
+	 * live in telegram_user_extra_info, written by upsertUserExtraFromUser below.
 	 */
 	static const char *sql =
-		"INSERT INTO users ("
+		"INSERT INTO telegram_users ("
 		" id, first_name, last_name, type, accent_color_id,"
 		" is_verified, is_scam, is_fake, is_premium, is_support"
 		") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -59,13 +59,13 @@ void DB::upsertUser(const models::User &u)
 	db_.transaction([&](mysql::Transaction &tx) {
 		/*
 		 * Fetch the current name (users) and phone number
-		 * (user_extra_info) in one query so we can detect changes
+		 * (telegram_user_extra_info) in one query so we can detect changes
 		 * (existing user) or record first-seen values (new user).
 		 */
 		auto old = tx.query(
 			"SELECT u.first_name, u.last_name, e.phone_number"
-			" FROM users u"
-			" LEFT JOIN user_extra_info e ON e.user_id = u.id"
+			" FROM telegram_users u"
+			" LEFT JOIN telegram_user_extra_info e ON e.user_id = u.id"
 			" WHERE u.id = ?",
 			{ (int64_t)u.id });
 
@@ -87,12 +87,12 @@ void DB::upsertUser(const models::User &u)
 			 * First time seeing this user - record initial
 			 * values. Runs after the UPSERT so the FK exists.
 			 */
-			tx.insert("INSERT INTO user_hist_name"
+			tx.insert("INSERT INTO telegram_user_hist_name"
 				  " (user_id, first_name, last_name)"
 				  " VALUES (?, ?, ?)",
 				  { (int64_t)u.id, u.first_name,
 				    u.last_name });
-			tx.insert("INSERT INTO user_hist_phone_num"
+			tx.insert("INSERT INTO telegram_user_hist_phone_num"
 				  " (user_id, phone_number)"
 				  " VALUES (?, ?)",
 				  { (int64_t)u.id, u.phone_number });
@@ -101,7 +101,7 @@ void DB::upsertUser(const models::User &u)
 			std::string of = r[0].value_or("");
 			std::string ol = r[1].value_or("");
 			if (of != u.first_name || ol != u.last_name) {
-				tx.insert("INSERT INTO user_hist_name"
+				tx.insert("INSERT INTO telegram_user_hist_name"
 					  " (user_id, first_name,"
 					  " last_name)"
 					  " VALUES (?, ?, ?)",
@@ -110,7 +110,7 @@ void DB::upsertUser(const models::User &u)
 
 			std::string op = r[2].value_or("");
 			if (op != u.phone_number) {
-				tx.insert("INSERT INTO user_hist_phone_num"
+				tx.insert("INSERT INTO telegram_user_hist_phone_num"
 					  " (user_id, phone_number)"
 					  " VALUES (?, ?)",
 					  { (int64_t)u.id, op });
@@ -135,7 +135,7 @@ void DB::upsertUserExtraFromUser(mysql::Transaction &tx, const models::User &u)
 	/* Only the columns sourced from the user object; bio/personal_chat_id
 	 * are owned by the full-info path and left untouched. */
 	tx.execute(
-		"INSERT INTO user_extra_info ("
+		"INSERT INTO telegram_user_extra_info ("
 		" user_id, phone_number, background_custom_emoji_id,"
 		" profile_accent_color_id, profile_background_custom_emoji_id,"
 		" emoji_status_custom_emoji_id, emoji_status_expiration_date,"
@@ -183,14 +183,14 @@ void DB::upsertUserExtraFromFullInfo(mysql::Transaction &tx,
 	 */
 	mysql::Param personal = std::monostate{};
 	if (fi.personal_chat_id != 0) {
-		auto g = tx.query("SELECT id FROM `groups` WHERE id = ?",
+		auto g = tx.query("SELECT id FROM `telegram_groups` WHERE id = ?",
 				  { (int64_t)fi.personal_chat_id });
 		if (!g.empty())
 			personal = (int64_t)fi.personal_chat_id;
 	}
 
 	tx.execute(
-		"INSERT INTO user_extra_info (user_id, bio, personal_chat_id)"
+		"INSERT INTO telegram_user_extra_info (user_id, bio, personal_chat_id)"
 		" VALUES (?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
 		" bio = new.bio, personal_chat_id = new.personal_chat_id",
 		{ (int64_t)fi.user_id, fi.bio, personal });
@@ -204,7 +204,7 @@ void DB::pruneUserExtraIfEmpty(mysql::Transaction &tx, int64_t user_id)
 	 * (the "empty" sentinel documented per column); otherwise it is dropped
 	 * so unset users cost no storage. */
 	tx.execute(
-		"DELETE FROM user_extra_info WHERE user_id = ?"
+		"DELETE FROM telegram_user_extra_info WHERE user_id = ?"
 		" AND bio = '' AND phone_number = ''"
 		" AND background_custom_emoji_id = 0"
 		" AND profile_accent_color_id = -1"
@@ -222,7 +222,7 @@ void DB::setUserProfilePhoto(int64_t user_id, uint64_t file_id)
 {
 	db_.transaction([&](mysql::Transaction &tx) {
 		trackProfilePhotoChange(tx, user_id, file_id);
-		tx.execute("UPDATE users SET profile_photo_file_id = ?"
+		tx.execute("UPDATE telegram_users SET profile_photo_file_id = ?"
 			   " WHERE id = ?",
 			   { (int64_t)file_id, (int64_t)user_id });
 	});
@@ -241,7 +241,7 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 	 * be diffed against them to record the individual changes.
 	 */
 	auto old_rows = tx.query(
-		"SELECT username, kind, position, is_collectible FROM user_usernames"
+		"SELECT username, kind, position, is_collectible FROM telegram_user_usernames"
 		" WHERE user_id = ?",
 		{ (int64_t)u.id });
 
@@ -288,7 +288,7 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 	}
 
 	static const char *ev =
-		"INSERT INTO user_hist_usernames_events"
+		"INSERT INTO telegram_user_hist_usernames_events"
 		" (user_id, username, action, kind, position, is_collectible)"
 		" VALUES (?, ?, ?, ?, ?, ?)";
 
@@ -324,7 +324,7 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 		tx.execute(ev, { (int64_t)u.id, o.first,
 				 std::string("removed"), std::monostate{},
 				 std::monostate{}, std::monostate{} });
-		tx.execute("UPDATE user_usernames SET user_id = NULL"
+		tx.execute("UPDATE telegram_user_usernames SET user_id = NULL"
 			   " WHERE user_id = ? AND username = ?",
 			   { (int64_t)u.id, o.first });
 	}
@@ -335,7 +335,7 @@ void DB::syncUsernames(mysql::Transaction &tx, const models::User &u)
 	 * existing one, and update its kind, position and collectible flag.
 	 */
 	static const char *ins =
-		"INSERT INTO user_usernames"
+		"INSERT INTO telegram_user_usernames"
 		" (user_id, username, kind, position, is_collectible)"
 		" VALUES (?, ?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
 		" user_id = new.user_id, kind = new.kind,"
@@ -351,7 +351,7 @@ void DB::trackProfilePhotoChange(mysql::Transaction &tx,
 				 int64_t user_id, uint64_t file_id)
 {
 	auto rows = tx.query(
-		"SELECT profile_photo_file_id FROM users WHERE id = ?",
+		"SELECT profile_photo_file_id FROM telegram_users WHERE id = ?",
 		{ user_id });
 	if (rows.empty())
 		return;
@@ -359,7 +359,7 @@ void DB::trackProfilePhotoChange(mysql::Transaction &tx,
 	auto &val = rows[0][0];
 	if (!val.has_value()) {
 		/* First profile photo — record it. */
-		tx.insert("INSERT INTO user_hist_profile_photo"
+		tx.insert("INSERT INTO telegram_user_hist_profile_photo"
 			  " (user_id, file_id) VALUES (?, ?)",
 			  { user_id, (int64_t)file_id });
 		return;
@@ -369,7 +369,7 @@ void DB::trackProfilePhotoChange(mysql::Transaction &tx,
 	if (old_id == file_id)
 		return;
 
-	tx.insert("INSERT INTO user_hist_profile_photo"
+	tx.insert("INSERT INTO telegram_user_hist_profile_photo"
 		  " (user_id, file_id) VALUES (?, ?)",
 		  { user_id, (int64_t)old_id });
 }
@@ -382,7 +382,7 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 		 * before full info is fetched. If it is somehow not present
 		 * yet, skip rather than create a partial row.
 		 */
-		auto exists = tx.query("SELECT 1 FROM users WHERE id = ?",
+		auto exists = tx.query("SELECT 1 FROM telegram_users WHERE id = ?",
 				       { (int64_t)fi.user_id });
 		if (exists.empty())
 			return;
@@ -393,7 +393,7 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 		 * the plain user object), so recording it here captures the
 		 * initial bio and every later change, and never an empty row.
 		 */
-		recordTextHistory(tx, "user_hist_bio", "user_id", "bio",
+		recordTextHistory(tx, "telegram_user_hist_bio", "user_id", "bio",
 				  fi.user_id, fi.bio);
 
 		mysql::Param bday = std::monostate{};
@@ -407,9 +407,9 @@ void DB::upsertUserFullInfo(const models::UserFullInfo &fi)
 			byear = (int64_t)*fi.birthday_year;
 
 		/* Birthday stays on the users row; bio and personal_chat_id go
-		 * to user_extra_info. */
+		 * to telegram_user_extra_info. */
 		tx.execute(
-			"UPDATE users SET birthday_day = ?, birthday_month = ?,"
+			"UPDATE telegram_users SET birthday_day = ?, birthday_month = ?,"
 			" birthday_year = ? WHERE id = ?",
 			{ bday, bmon, byear, (int64_t)fi.user_id });
 

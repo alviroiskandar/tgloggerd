@@ -9,7 +9,7 @@
 
 namespace tgweb::controllers {
 
-/* Browse the stored (de-duplicated) files. Requires a session. */
+/* Browse the stored (de-duplicated) telegram_files. Requires a session. */
 class FilesController : public drogon::HttpController<FilesController> {
 public:
 	METHOD_LIST_BEGIN

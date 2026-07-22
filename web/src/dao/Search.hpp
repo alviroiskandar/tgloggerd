@@ -92,7 +92,7 @@ struct DisplayCol {
 };
 
 struct SearchSchema {
-	std::string_view fromJoin;     /* "users u LEFT JOIN user_extra_info e ON ..." */
+	std::string_view fromJoin;     /* "users u LEFT JOIN telegram_user_extra_info e ON ..." */
 	std::string_view selectCols;   /* display projection for the page query */
 	std::string_view idCol;        /* "u.id": tiebreaker + Exists join target */
 	std::string_view exFk;         /* FK column in Exists tables ("user_id") */

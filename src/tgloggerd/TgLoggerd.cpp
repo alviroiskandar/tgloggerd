@@ -202,7 +202,7 @@ int TgLoggerd::start(void)
 		 (unsigned long long)max_store_file_size_);
 
 	/*
-	 * Seed the tg_file_id -> files.id index so the loop thread can link a
+	 * Seed the tg_file_id -> telegram_files.id index so the loop thread can link a
 	 * message to a file we already recorded instead of re-downloading it.
 	 */
 	try {
@@ -443,7 +443,7 @@ int TgLoggerd::start(void)
 	 * Background message backfiller. It walks every accessible chat's
 	 * history newest->oldest, round-robin and gently paced, feeding messages
 	 * through the same handlers as real time. Progress is persisted to
-	 * chat_backfill_state (fire-and-forget on serial_) and reloaded here so
+	 * telegram_chat_backfill_state (fire-and-forget on serial_) and reloaded here so
 	 * each chat's walk resumes across restarts. Interval <= 0 disables it.
 	 */
 	double bf_interval = atof(env("TG_BACKFILL_INTERVAL", "3").c_str());

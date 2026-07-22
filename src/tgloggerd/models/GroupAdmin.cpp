@@ -56,7 +56,7 @@ void push_rights(std::vector<mysql::Param> &p, const models::GroupAdmin &a)
 void DB::syncGroupAdmins(const models::GroupAdminList &list)
 {
 	static const char *upsert_sql =
-		"INSERT INTO group_admins ("
+		"INSERT INTO telegram_group_admins ("
 		" group_id, user_id, status, custom_title, inviter_user_id,"
 		" joined_date, can_manage_chat, can_change_info, can_post_messages,"
 		" can_edit_messages, can_delete_messages, can_invite_users,"
@@ -80,7 +80,7 @@ void DB::syncGroupAdmins(const models::GroupAdminList &list)
 		" can_manage_tags = new.can_manage_tags, is_anonymous = new.is_anonymous";
 
 	static const char *hist_sql =
-		"INSERT INTO group_admin_hist ("
+		"INSERT INTO telegram_group_admin_hist ("
 		" group_id, user_id, action, status, custom_title,"
 		" can_manage_chat, can_change_info, can_post_messages, can_edit_messages,"
 		" can_delete_messages, can_invite_users, can_restrict_members, can_pin_messages,"
@@ -104,7 +104,7 @@ void DB::syncGroupAdmins(const models::GroupAdminList &list)
 			" can_promote_members, can_manage_video_chats, can_post_stories,"
 			" can_edit_stories, can_delete_stories, can_manage_direct_messages,"
 			" can_manage_tags, is_anonymous"
-			" FROM group_admins WHERE group_id = ?",
+			" FROM telegram_group_admins WHERE group_id = ?",
 			{ gid });
 
 		std::unordered_map<int64_t, const mysql::Row *> old_map;
@@ -186,7 +186,7 @@ void DB::syncGroupAdmins(const models::GroupAdminList &list)
 				h.push_back((int64_t)(r[3 + i].value_or("0") == "1"));
 			tx.execute(hist_sql, h);
 
-			tx.execute("DELETE FROM group_admins"
+			tx.execute("DELETE FROM telegram_group_admins"
 				   " WHERE group_id = ? AND user_id = ?",
 				   { gid, uid });
 		}

@@ -61,7 +61,7 @@ struct GroupPhoto {
 /*
  * A message's media attachment whose download has completed, ready to be
  * stored and linked to its message row. is_group selects the target
- * table (group_messages vs private_messages).
+ * table (telegram_group_messages vs telegram_private_messages).
  */
 struct MessageFile {
 	int64_t		chat_id;
@@ -71,7 +71,7 @@ struct MessageFile {
 	std::string	tg_file_id;	/* remote id (string), for DB dedup */
 	int32_t		tg_local_file_id; /* local id, for TDLib deleteFile */
 	int64_t		file_size;
-	std::string	content_type;	/* files.file_type: "photo", ... */
+	std::string	content_type;	/* telegram_files.file_type: "photo", ... */
 	std::string	orig_file_name;	/* original Telegram name; empty if none */
 };
 
@@ -84,7 +84,7 @@ struct MessageFileLink {
 	int64_t		chat_id;
 	int64_t		message_id;
 	bool		is_group;
-	uint64_t	file_id;	/* existing files.id */
+	uint64_t	file_id;	/* existing telegram_files.id */
 };
 
 /*
@@ -129,7 +129,7 @@ struct ForwardMessage {
  *
  * Since TDLib contains very heavy header files, keep tgloggerd
  * compilation time low by not including TDLib header files in
- * other tgloggerd files. Expose only used functions in
+ * other tgloggerd telegram_files. Expose only used functions in
  * tgloggerd::TDLib class.
  */
 class TDLib {
@@ -189,7 +189,7 @@ public:
 
 	/*
 	 * Predicate used before downloading a message's media: given the file's
-	 * remote id, return the existing files.id if it is already recorded, so
+	 * remote id, return the existing telegram_files.id if it is already recorded, so
 	 * the file can be linked without a re-download. Runs on the loop thread.
 	 */
 	void setFileLookup(

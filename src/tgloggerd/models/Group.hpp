@@ -26,7 +26,7 @@ enum class GroupType {
 /*
  * A snapshot of a Telegram group chat, assembled from the TDLib chat,
  * supergroup/basicGroup and full-info objects. Maps to the groups and
- * group_usernames tables. Uses only plain types.
+ * telegram_group_usernames tables. Uses only plain types.
  */
 struct Group {
 	int64_t		id = 0;
@@ -34,7 +34,7 @@ struct Group {
 	std::string	title;
 	std::string	description;
 
-	/* files.id of the current group photo; resolved after download. */
+	/* telegram_files.id of the current group photo; resolved after download. */
 	std::optional<uint64_t>	photo_file_id;
 
 	/* td_api::usernames (supergroups/channels only). */

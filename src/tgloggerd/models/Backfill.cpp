@@ -13,7 +13,7 @@ std::vector<models::BackfillState> DB::loadBackfillState(void)
 {
 	auto rows = db_.query(
 		"SELECT chat_id, scope, cursor_msg_id, done, priority"
-		" FROM chat_backfill_state");
+		" FROM telegram_chat_backfill_state");
 
 	std::vector<models::BackfillState> out;
 	out.reserve(rows.size());
@@ -39,7 +39,7 @@ void DB::upsertBackfillState(const models::BackfillState &st)
 		cursor_param = (int64_t)*st.cursor_msg_id;
 
 	db_.execute(
-		"INSERT INTO chat_backfill_state"
+		"INSERT INTO telegram_chat_backfill_state"
 		" (chat_id, scope, cursor_msg_id, done, priority, last_fetch_at)"
 		" VALUES (?, ?, ?, ?, ?, NOW()) AS new ON DUPLICATE KEY UPDATE"
 		" scope = new.scope, cursor_msg_id = new.cursor_msg_id,"

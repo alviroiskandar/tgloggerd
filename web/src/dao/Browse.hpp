@@ -26,7 +26,7 @@ namespace tgweb::dao::browse {
  * it a data-layer invariant that no template author can forget.
  */
 
-/* Dashboard totals: {users, groups, private_messages, group_messages, files}. */
+/* Dashboard totals: {users, groups, telegram_private_messages, telegram_group_messages, files}. */
 drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db);
 
 /*
@@ -102,8 +102,8 @@ drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 					      int64_t id);
 
 /*
- * Header for a chat-history page. scope is "group" (chatId is a groups.id) or
- * "private" (chatId is the peer users.id). Returns {kind, id, title, type,
+ * Header for a chat-history page. scope is "group" (chatId is a telegram_groups.id) or
+ * "private" (chatId is the peer telegram_users.id). Returns {kind, id, title, type,
  * photo_file_id?} with strings escaped, or std::nullopt when no such chat.
  */
 drogon::Task<std::optional<nlohmann::json>>

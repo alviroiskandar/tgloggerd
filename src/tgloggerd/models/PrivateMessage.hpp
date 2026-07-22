@@ -15,9 +15,9 @@ namespace tgloggerd {
 namespace models {
 
 /*
- * A private-chat message, as stored in the private_messages,
- * private_message_edits, and private_message_fwd_info tables. Its
- * chat_id is the peer user's id (a valid users.id).
+ * A private-chat message, as stored in the telegram_private_messages,
+ * telegram_private_message_edits, and telegram_private_message_fwd_info tables. Its
+ * chat_id is the peer user's id (a valid telegram_users.id).
  */
 struct PrivateMessage {
 	int64_t		chat_id = 0;

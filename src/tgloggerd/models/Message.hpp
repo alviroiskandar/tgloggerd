@@ -91,7 +91,7 @@ struct MessageContent {
 	 */
 	std::optional<std::string>	service_type;
 
-	/* files.id for media attachments; nullopt if none. */
+	/* telegram_files.id for media attachments; nullopt if none. */
 	std::optional<uint64_t>		file_id;
 };
 

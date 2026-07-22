@@ -225,7 +225,7 @@ const SearchField kUserFields[] = {
 	{ "id",         "User ID",   FType::Int,      FKind::Column, "u.id",        "", "", "", INT_OPS,  true,  true,  "" },
 	{ "first_name", "First name", FType::Text,    FKind::Column, "u.first_name","", "", "", TEXT_OPS, true,  true,  "" },
 	{ "last_name",  "Last name",  FType::Text,    FKind::Column, "u.last_name", "", "", "", TEXT_OPS, false, true,  "" },
-	{ "username",   "Username (current)", FType::Text, FKind::Exists, "", "user_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
+	{ "username",   "Username (current)", FType::Text, FKind::Exists, "", "telegram_user_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
 	{ "type",       "Type",      FType::Enum,     FKind::Column, "u.type",      "", "", "", ENUM_OPS, true,  true,  "regular,deleted,bot,unknown" },
 	{ "msg_count",  "Messages",  FType::Int,      FKind::Column, "u.msg_count", "", "", "", INT_OPS,  true,  true,  "" },
 	{ "has_photo",  "Has photo", FType::Bool,     FKind::Column, "u.profile_photo_file_id", "", "", "", NULL_OPS, false, false, "" },
@@ -245,11 +245,11 @@ const SearchField kUserFields[] = {
 	{ "paid_star_count", "Paid message stars", FType::Int, FKind::Column, "COALESCE(e.paid_message_star_count,0)", "", "", "", INT_OPS, true, false, "" },
 	{ "personal_chat_id", "Personal chat", FType::Int, FKind::Column, "e.personal_chat_id", "", "", "", OP_EQ | OP_NE | NULL_OPS, false, false, "" },
 	{ "emoji_status", "Emoji status", FType::Int, FKind::Column, "e.emoji_status_custom_emoji_id", "", "", "", NULL_OPS, false, false, "" },
-	{ "hist_username",   "Username (ever)",   FType::Text, FKind::Exists, "", "user_hist_usernames_events x", "x.username",     "", EXISTS_OPS, false, false, "" },
-	{ "hist_first_name", "First name (ever)", FType::Text, FKind::Exists, "", "user_hist_name x",             "x.first_name",   "", EXISTS_POS, false, false, "" },
-	{ "hist_last_name",  "Last name (ever)",  FType::Text, FKind::Exists, "", "user_hist_name x",             "x.last_name",    "", EXISTS_POS, false, false, "" },
-	{ "hist_bio",        "Bio (ever)",        FType::Text, FKind::Exists, "", "user_hist_bio x",              "x.bio",          "", EXISTS_POS, false, false, "" },
-	{ "hist_phone",      "Phone (ever)",      FType::Text, FKind::Exists, "", "user_hist_phone_num x",        "x.phone_number", "", EXISTS_POS, false, false, "" },
+	{ "hist_username",   "Username (ever)",   FType::Text, FKind::Exists, "", "telegram_user_hist_usernames_events x", "x.username",     "", EXISTS_OPS, false, false, "" },
+	{ "hist_first_name", "First name (ever)", FType::Text, FKind::Exists, "", "telegram_user_hist_name x",             "x.first_name",   "", EXISTS_POS, false, false, "" },
+	{ "hist_last_name",  "Last name (ever)",  FType::Text, FKind::Exists, "", "telegram_user_hist_name x",             "x.last_name",    "", EXISTS_POS, false, false, "" },
+	{ "hist_bio",        "Bio (ever)",        FType::Text, FKind::Exists, "", "telegram_user_hist_bio x",              "x.bio",          "", EXISTS_POS, false, false, "" },
+	{ "hist_phone",      "Phone (ever)",      FType::Text, FKind::Exists, "", "telegram_user_hist_phone_num x",        "x.phone_number", "", EXISTS_POS, false, false, "" },
 };
 
 /*
@@ -319,12 +319,12 @@ nlohmann::json mapRowUser(const drogon::orm::Row &r)
 }
 
 const SearchSchema kUsersSchema = {
-	/* fromJoin   */ "users u LEFT JOIN user_extra_info e ON e.user_id = u.id",
+	/* fromJoin   */ "telegram_users u LEFT JOIN telegram_user_extra_info e ON e.user_id = u.id",
 	/* selectCols */ "u.id, u.first_name, u.last_name, u.type, u.is_verified, "
 			 "u.is_premium, u.is_scam, u.is_fake, u.is_support, "
 			 "u.profile_photo_file_id, u.created_at, u.updated_at, "
 			 "u.msg_count, "
-			 "(SELECT un.username FROM user_usernames un "
+			 "(SELECT un.username FROM telegram_user_usernames un "
 			 "WHERE un.user_id = u.id AND un.kind='active' "
 			 "ORDER BY un.position LIMIT 1) AS username, "
 			 "COALESCE(e.phone_number,'') AS phone, "
@@ -348,7 +348,7 @@ const SearchSchema kUsersSchema = {
 };
 
 /* --- groups registry ------------------------------------------------------ */
-/* `groups` is a reserved word (backticked); group ids are negative Telegram
+/* `telegram_groups` is a reserved word (backticked); group ids are negative Telegram
  * chat ids; there is no group_extra table (description lives on groups). */
 
 const SearchField kGroupFields[] = {
@@ -360,10 +360,10 @@ const SearchField kGroupFields[] = {
 	{ "has_photo",   "Has photo",  FType::Bool,     FKind::Column, "g.photo_file_id","", "", "", NULL_OPS, false, false, "" },
 	{ "created_at",  "Created",    FType::Datetime, FKind::Column, "g.created_at",  "", "", "", DT_OPS,   true,  true,  "" },
 	{ "updated_at",  "Updated",    FType::Datetime, FKind::Column, "g.updated_at",  "", "", "", DT_OPS,   true,  true,  "" },
-	{ "username",    "Username (current)", FType::Text, FKind::Exists, "", "group_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
-	{ "hist_title",       "Title (ever)",       FType::Text, FKind::Exists, "", "group_hist_title x",            "x.title",       "", EXISTS_POS, false, false, "" },
-	{ "hist_description", "Description (ever)",  FType::Text, FKind::Exists, "", "group_hist_description x",      "x.description", "", EXISTS_POS, false, false, "" },
-	{ "hist_username",    "Username (ever)",     FType::Text, FKind::Exists, "", "group_hist_usernames_events x", "x.username",    "", EXISTS_OPS, false, false, "" },
+	{ "username",    "Username (current)", FType::Text, FKind::Exists, "", "telegram_group_usernames x", "x.username", "AND x.kind='active'", EXISTS_OPS, false, true, "" },
+	{ "hist_title",       "Title (ever)",       FType::Text, FKind::Exists, "", "telegram_group_hist_title x",            "x.title",       "", EXISTS_POS, false, false, "" },
+	{ "hist_description", "Description (ever)",  FType::Text, FKind::Exists, "", "telegram_group_hist_description x",      "x.description", "", EXISTS_POS, false, false, "" },
+	{ "hist_username",    "Username (ever)",     FType::Text, FKind::Exists, "", "telegram_group_hist_usernames_events x", "x.username",    "", EXISTS_OPS, false, false, "" },
 };
 
 const DisplayCol kGroupCols[] = {
@@ -399,13 +399,13 @@ nlohmann::json mapRowGroup(const drogon::orm::Row &r)
 }
 
 const SearchSchema kGroupsSchema = {
-	/* fromJoin   */ "`groups` g",
+	/* fromJoin   */ "`telegram_groups` g",
 	/* selectCols */ "g.id, g.title, g.description, g.type, g.photo_file_id, "
 			 "g.created_at, g.updated_at, g.msg_count, "
-			 "(SELECT gu.username FROM group_usernames gu "
+			 "(SELECT gu.username FROM telegram_group_usernames gu "
 			 "WHERE gu.group_id = g.id AND gu.kind='active' "
 			 "ORDER BY gu.position LIMIT 1) AS username, "
-			 "(SELECT COUNT(*) FROM group_admins ga "
+			 "(SELECT COUNT(*) FROM telegram_group_admins ga "
 			 "WHERE ga.group_id = g.id) AS admin_count",
 	/* idCol      */ "g.id",
 	/* exFk       */ "group_id",
@@ -476,7 +476,7 @@ nlohmann::json mapRowFile(const drogon::orm::Row &r)
 }
 
 const SearchSchema kFilesSchema = {
-	/* fromJoin   */ "files f",
+	/* fromJoin   */ "telegram_files f",
 	/* selectCols */ "f.id, f.file_type, f.file_ext, f.orig_file_name, "
 			 "f.file_size, f.hit_count, f.on_disk, f.created_at, "
 			 "f.tg_file_id, HEX(f.sha256) AS sha256_hex",

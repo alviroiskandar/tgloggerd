@@ -14,7 +14,7 @@ namespace models {
 
 /*
  * Progress of the background message backfiller for one chat, mirrored in the
- * chat_backfill_state table so a chat's newest->oldest history walk resumes
+ * telegram_chat_backfill_state table so a chat's newest->oldest history walk resumes
  * across restarts.
  */
 struct BackfillState {

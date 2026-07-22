@@ -16,7 +16,7 @@ namespace tgweb::controllers {
  * Serve a stored file at /files/<token>. The token is the encrypted file id
  * (see auth::filetoken), so this route is public -- no session is required and
  * the file id is never exposed in the clear or enumerable. The on-disk path is
- * resolved from files.id -> SHA-256 -> the daemon's 5-level hex fan-out, all
+ * resolved from telegram_files.id -> SHA-256 -> the daemon's 5-level hex fan-out, all
  * derived from the database, never from the request.
  */
 class MediaController : public drogon::HttpController<MediaController> {

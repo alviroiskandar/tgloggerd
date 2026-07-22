@@ -21,12 +21,12 @@ mysql::Param b(bool v)
 /*
  * Upsert a private message.
  *
- * On first insert: creates the row in private_messages and, if forward
- * info is present, inserts into private_message_fwd_info.
+ * On first insert: creates the row in telegram_private_messages and, if forward
+ * info is present, inserts into telegram_private_message_fwd_info.
  *
  * On update (same chat_id + message_id):
  *   - If edit_date increased and content differs, copy the old content
- *     into private_message_edits before updating private_messages.
+ *     into telegram_private_message_edits before updating telegram_private_messages.
  *   - If the message became deleted, only stamp deleted_at.
  *   - If forward_info is present and not already recorded, insert it.
  */
@@ -40,7 +40,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 	 * otherwise reset the link to NULL).
 	 */
 	static const char *upsert_sql =
-		"INSERT INTO private_messages ("
+		"INSERT INTO telegram_private_messages ("
 		" chat_id, message_id, sender_id, is_outgoing, date,"
 		" edit_date, content_type, text, entities, service_type,"
 		" is_forwarded, media_album_id"
@@ -68,7 +68,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
 			"       deleted_at, entities"
-			" FROM private_messages"
+			" FROM telegram_private_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
 
@@ -125,14 +125,14 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 			 * Retrieve the auto-generated id for the forward info.
 			 */
 			auto new_rows = tx.query(
-				"SELECT id FROM private_messages"
+				"SELECT id FROM telegram_private_messages"
 				" WHERE chat_id = ? AND message_id = ?",
 				{ (int64_t)msg.chat_id,
 				  (int64_t)msg.message_id });
 			if (!new_rows.empty() && new_rows[0][0].has_value() &&
 			    msg.forward_info.has_value()) {
 				uint64_t pm_id = std::stoull(*new_rows[0][0]);
-				insertForwardInfo(tx, "private_message_fwd_info",
+				insertForwardInfo(tx, "telegram_private_message_fwd_info",
 						  "private_message_id", pm_id,
 						  *msg.forward_info);
 			}
@@ -141,10 +141,10 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 			 * Genuinely new message: bump the sender user's counter.
 			 * sender_id is NULL for our own outgoing messages, which
 			 * therefore count for no user -- matching the COUNT(1)
-			 * prefill (private_messages WHERE sender_id = user).
+			 * prefill (telegram_private_messages WHERE sender_id = user).
 			 */
 			if (msg.sender_id.has_value() &&
-			    bumpMsgCount(tx, "users", *msg.sender_id))
+			    bumpMsgCount(tx, "telegram_users", *msg.sender_id))
 				refetch.user = *msg.sender_id;
 			return;
 		}
@@ -166,7 +166,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		 */
 		if (msg.is_deleted && !old_deleted) {
 			tx.execute(
-				"UPDATE private_messages SET deleted_at = NOW()"
+				"UPDATE telegram_private_messages SET deleted_at = NOW()"
 				" WHERE id = ? AND deleted_at IS NULL",
 				{ (int64_t)pm_id });
 			return;
@@ -174,7 +174,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 
 		/*
 		 * If the edit_date increased and content changed, copy the old
-		 * content into private_message_edits first.
+		 * content into telegram_private_message_edits first.
 		 */
 		models::MessageContent old_content;
 		old_content.content_type =
@@ -187,13 +187,13 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		if (old[4].has_value())
 			old_content.file_id = std::stoull(*old[4]);
 
-		snapshotMessageEditIfChanged(tx, "private_message_edits",
+		snapshotMessageEditIfChanged(tx, "telegram_private_message_edits",
 					     "private_message_id", pm_id,
 					     old_content, old_edit_date,
 					     msg.content, msg.edit_date);
 
 		/*
-		 * Update the private_messages row.
+		 * Update the telegram_private_messages row.
 		 */
 		tx.execute(upsert_sql, {
 			(int64_t)msg.chat_id,
@@ -214,7 +214,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 		 * Insert forward info if present and not already recorded.
 		 */
 		if (msg.forward_info.has_value())
-			insertForwardInfo(tx, "private_message_fwd_info",
+			insertForwardInfo(tx, "telegram_private_message_fwd_info",
 					  "private_message_id", pm_id,
 					  *msg.forward_info);
 	});
@@ -225,7 +225,7 @@ MsgCountRefetch DB::upsertPrivateMessage(const models::PrivateMessage &msg)
 void DB::setPrivateMessageFile(int64_t chat_id, int64_t message_id,
 			       uint64_t file_id)
 {
-	db_.execute("UPDATE private_messages SET file_id = ?"
+	db_.execute("UPDATE telegram_private_messages SET file_id = ?"
 		    " WHERE chat_id = ? AND message_id = ?",
 		    { (int64_t)file_id, (int64_t)chat_id, (int64_t)message_id });
 }
@@ -240,8 +240,8 @@ void DB::setPrivateMessageReply(int64_t chat_id, int64_t message_id,
 	 * NULL for a cross-table reply or an as-yet-unsaved target).
 	 */
 	db_.execute(
-		"UPDATE private_messages AS m"
-		" LEFT JOIN private_messages AS r"
+		"UPDATE telegram_private_messages AS m"
+		" LEFT JOIN telegram_private_messages AS r"
 		"   ON r.chat_id = ? AND r.message_id = ?"
 		" SET m.reply_to_chat_id = ?, m.reply_to_msg_id = ?,"
 		"     m.reply_to_id = r.id"

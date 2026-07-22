@@ -241,8 +241,8 @@ bool map_admin(const td_api::chatMember &m, models::GroupAdmin &out)
  * positive, whereas basic groups, supergroups and channels use negative
  * ids. Secret chats are disabled (use_secret_chats_ = false), so a
  * positive id is unambiguously a private chat. Only private chats are
- * logged to private_messages, whose chat_id foreign key references
- * users.id; routing group/channel messages there (negative chat ids) is
+ * logged to telegram_private_messages, whose chat_id foreign key references
+ * telegram_users.id; routing group/channel messages there (negative chat ids) is
  * what violates that constraint.
  */
 bool is_private_chat(int64_t chat_id)
@@ -716,7 +716,7 @@ extract_forward_info(const td_api::message &message)
 /*
  * Return the primary downloadable file of a message's content, or nullptr
  * if the content carries no file. On success, *category is set to the
- * matching files.file_type value. For photos, the largest size is chosen.
+ * matching telegram_files.file_type value. For photos, the largest size is chosen.
  */
 const td_api::file *message_content_file(const td_api::MessageContent &content,
 					 const char **category,
@@ -1123,7 +1123,7 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 							     u.user_id_);
 				/*
 				 * The personal chat is a channel referenced by
-				 * user_extra_info.personal_chat_id (FK to groups).
+				 * telegram_user_extra_info.personal_chat_id (FK to groups).
 				 * Make sure it is saved first so the link resolves;
 				 * for a known chat this persists it synchronously
 				 * (ahead of the full-info upsert on the serial
@@ -1432,9 +1432,9 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 {
 	/*
 	 * Route by chat kind: private (positive) chat ids go to
-	 * private_messages (chat_id is a users.id); group, supergroup and
-	 * channel chats (negative ids) go to group_messages (chat_id is a
-	 * groups.id).
+	 * telegram_private_messages (chat_id is a telegram_users.id); group, supergroup and
+	 * channel chats (negative ids) go to telegram_group_messages (chat_id is a
+	 * telegram_groups.id).
 	 */
 	if (is_private_chat(message.chat_id_))
 		handle_message_for_private_chat(message, 0);
@@ -1484,7 +1484,7 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 		}
 	}
 
-	/* Resolve the sender name and username from the cached users. */
+	/* Resolve the sender name and username from the cached telegram_users. */
 	auto it = users_.find(msg.sender_id);
 	if (it != users_.end() && it->second) {
 		const auto &user = *it->second;
@@ -1692,11 +1692,11 @@ void TDLib::Impl::handle_update_message_content(int64_t chat_id,
 	 * For now, we send a getMessage query to fetch the full message
 	 * so we can determine edit_date. But this adds latency and
 	 * complexity. Simpler: just record the content update as a
-	 * potential edit. We check private_messages for the existing
+	 * potential edit. We check telegram_private_messages for the existing
 	 * row and compare content.
 	 *
 	 * Actually, the simplest approach for now: we know the message
-	 * already exists in private_messages. We can just update the
+	 * already exists in telegram_private_messages. We can just update the
 	 * content fields. But we need edit_date. Let's use a simpler
 	 * strategy: request getMessage to get the full object.
 	 *
@@ -1769,10 +1769,10 @@ void TDLib::Impl::build_private_message(const td_api::message &message,
 
 	/*
 	 * Resolve the sender. Messages sent by the logged-in account are
-	 * recorded with a NULL sender_id, as the private_messages schema
+	 * recorded with a NULL sender_id, as the telegram_private_messages schema
 	 * prescribes. Incoming private-chat messages are always sent by the
 	 * peer user; a messageSenderChat is not expected here and is ignored
-	 * (its chat id is not a valid users.id).
+	 * (its chat id is not a valid telegram_users.id).
 	 */
 	if (!message.is_outgoing_ && message.sender_id_ &&
 	    message.sender_id_->get_id() == td_api::messageSenderUser::ID) {
@@ -1850,7 +1850,7 @@ void TDLib::Impl::ensure_user_saved(int64_t user_id)
 	if (it != users_.end() && it->second) {
 		/*
 		 * Already known: persist synchronously so the forward-info FK
-		 * to users.id resolves before the message row is written.
+		 * to telegram_users.id resolves before the message row is written.
 		 */
 		user_handler_(map_user(*it->second));
 		return;
@@ -2164,7 +2164,7 @@ void TDLib::Impl::handle_new_chat(const td_api::chat &chat, bool from_chat_list)
 		break;
 	}
 	default:
-		/* Private and secret chats are not groups. */
+		/* Private and secret chats are not telegram_groups. */
 		return;
 	}
 

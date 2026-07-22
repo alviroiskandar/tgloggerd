@@ -244,11 +244,11 @@ drogon::Task<nlohmann::json> counts(drogon::orm::DbClientPtr db)
 {
 	auto r = co_await db->execSqlCoro(
 		"SELECT "
-		"(SELECT COUNT(*) FROM users)            AS users, "
-		"(SELECT COUNT(*) FROM `groups`)         AS `groups`, "
-		"(SELECT COUNT(*) FROM private_messages) AS private_messages, "
-		"(SELECT COUNT(*) FROM group_messages)   AS group_messages, "
-		"(SELECT COUNT(*) FROM files)            AS files");
+		"(SELECT COUNT(*) FROM telegram_users)            AS users, "
+		"(SELECT COUNT(*) FROM `telegram_groups`)         AS `groups`, "
+		"(SELECT COUNT(*) FROM telegram_private_messages) AS private_messages, "
+		"(SELECT COUNT(*) FROM telegram_group_messages)   AS group_messages, "
+		"(SELECT COUNT(*) FROM telegram_files)            AS files");
 
 	const auto &row = r[0];
 	nlohmann::json j;
@@ -269,7 +269,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 		"u.is_premium, u.is_support, u.accent_color_id, "
 		"u.birthday_day, u.birthday_month, u.birthday_year, "
 		"u.msg_count, u.created_at, u.updated_at, "
-		/* Sparse fields live in user_extra_info; a missing row reads as
+		/* Sparse fields live in telegram_user_extra_info; a missing row reads as
 		 * all-default, so COALESCE to the same sentinels. */
 		"COALESCE(e.phone_number, '') AS phone_number, "
 		"COALESCE(e.bio, '') AS bio, "
@@ -287,7 +287,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 		"   FROM_UNIXTIME(e.emoji_status_expiration_date), NULL) "
 		"   AS emoji_status_expires, "
 		"e.personal_chat_id "
-		"FROM users u LEFT JOIN user_extra_info e ON e.user_id = u.id "
+		"FROM telegram_users u LEFT JOIN telegram_user_extra_info e ON e.user_id = u.id "
 		"WHERE u.id = ?",
 		id);
 
@@ -352,7 +352,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Current usernames. */
 	auto un = co_await db->execSqlCoro(
-		"SELECT username, kind, position, is_collectible FROM user_usernames "
+		"SELECT username, kind, position, is_collectible FROM telegram_user_usernames "
 		"WHERE user_id = ? ORDER BY kind, position",
 		id);
 	nlohmann::json usernames = nlohmann::json::array();
@@ -368,7 +368,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Name history. */
 	auto nh = co_await db->execSqlCoro(
-		"SELECT first_name, last_name, created_at FROM user_hist_name "
+		"SELECT first_name, last_name, created_at FROM telegram_user_hist_name "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json nameHist = nlohmann::json::array();
@@ -383,7 +383,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 	/* Username events. */
 	auto ue = co_await db->execSqlCoro(
 		"SELECT username, action, kind, position, is_collectible, created_at "
-		"FROM user_hist_usernames_events "
+		"FROM telegram_user_hist_usernames_events "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json unEvents = nlohmann::json::array();
@@ -402,7 +402,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Bio history. */
 	auto bh = co_await db->execSqlCoro(
-		"SELECT bio, created_at FROM user_hist_bio "
+		"SELECT bio, created_at FROM telegram_user_hist_bio "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json bioHist = nlohmann::json::array();
@@ -416,7 +416,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Phone number history. */
 	auto ph = co_await db->execSqlCoro(
-		"SELECT phone_number, created_at FROM user_hist_phone_num "
+		"SELECT phone_number, created_at FROM telegram_user_hist_phone_num "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json phoneHist = nlohmann::json::array();
@@ -430,7 +430,7 @@ drogon::Task<std::optional<nlohmann::json>> getUser(drogon::orm::DbClientPtr db,
 
 	/* Profile photo history (file ids resolve to /files/<token>). */
 	auto phot = co_await db->execSqlCoro(
-		"SELECT file_id, created_at FROM user_hist_profile_photo "
+		"SELECT file_id, created_at FROM telegram_user_hist_profile_photo "
 		"WHERE user_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json photoHist = nlohmann::json::array();
@@ -451,7 +451,7 @@ userHistory(drogon::orm::DbClientPtr db, int64_t id, int limit, int offset)
 {
 	{
 		auto ex = co_await db->execSqlCoro(
-			"SELECT 1 FROM users WHERE id = ?", id);
+			"SELECT 1 FROM telegram_users WHERE id = ?", id);
 		if (ex.empty())
 			co_return std::nullopt;
 	}
@@ -470,15 +470,15 @@ userHistory(drogon::orm::DbClientPtr db, int64_t id, int limit, int offset)
 		"  SELECT 'name' AS kind, id, created_at, "
 		"         TRIM(CONCAT_WS(' ', first_name, last_name)) AS detail, "
 		"         NULL AS action, NULL AS file_id "
-		"  FROM user_hist_name WHERE user_id = ? "
+		"  FROM telegram_user_hist_name WHERE user_id = ? "
 		"  UNION ALL SELECT 'bio', id, created_at, bio, NULL, NULL "
-		"  FROM user_hist_bio WHERE user_id = ? "
+		"  FROM telegram_user_hist_bio WHERE user_id = ? "
 		"  UNION ALL SELECT 'phone', id, created_at, phone_number, NULL, NULL "
-		"  FROM user_hist_phone_num WHERE user_id = ? "
+		"  FROM telegram_user_hist_phone_num WHERE user_id = ? "
 		"  UNION ALL SELECT 'username', id, created_at, username, action, NULL "
-		"  FROM user_hist_usernames_events WHERE user_id = ? "
+		"  FROM telegram_user_hist_usernames_events WHERE user_id = ? "
 		"  UNION ALL SELECT 'photo', id, created_at, NULL, NULL, file_id "
-		"  FROM user_hist_profile_photo WHERE user_id = ? "
+		"  FROM telegram_user_hist_profile_photo WHERE user_id = ? "
 		") t ORDER BY created_at DESC, kind, id DESC LIMIT ? OFFSET ?";
 	auto rows = co_await db->execSqlCoro(q, id, id, id, id, id,
 					     limit + 1, offset);
@@ -530,7 +530,7 @@ const Perm kPerms[] = {
 	{"can_manage_tags",           "manage tags"},
 };
 
-/* Names of the permissions granted (value 1) in a group_admins row. */
+/* Names of the permissions granted (value 1) in a telegram_group_admins row. */
 nlohmann::json grantedPerms(const drogon::orm::Row &r)
 {
 	nlohmann::json perms = nlohmann::json::array();
@@ -548,7 +548,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 {
 	auto gr = co_await db->execSqlCoro(
 		"SELECT id, type, title, description, photo_file_id, "
-		"msg_count, created_at, updated_at FROM `groups` WHERE id = ?",
+		"msg_count, created_at, updated_at FROM `telegram_groups` WHERE id = ?",
 		id);
 
 	if (gr.empty())
@@ -572,7 +572,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Current usernames. */
 	auto un = co_await db->execSqlCoro(
-		"SELECT username, kind, position, is_collectible FROM group_usernames "
+		"SELECT username, kind, position, is_collectible FROM telegram_group_usernames "
 		"WHERE group_id = ? ORDER BY kind, position",
 		id);
 	nlohmann::json usernames = nlohmann::json::array();
@@ -588,10 +588,10 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	/* Current admins, joined to the user for a display name. */
 	auto ad = co_await db->execSqlCoro(
 		"SELECT ga.*, u.first_name, u.last_name, "
-		"(SELECT un.username FROM user_usernames un "
+		"(SELECT un.username FROM telegram_user_usernames un "
 		" WHERE un.user_id = ga.user_id AND un.kind = 'active' "
 		" ORDER BY un.position LIMIT 1) AS username "
-		"FROM group_admins ga LEFT JOIN users u ON u.id = ga.user_id "
+		"FROM telegram_group_admins ga LEFT JOIN telegram_users u ON u.id = ga.user_id "
 		"WHERE ga.group_id = ? ORDER BY ga.status, ga.user_id",
 		id);
 	nlohmann::json admins = nlohmann::json::array();
@@ -610,7 +610,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Title history. */
 	auto th = co_await db->execSqlCoro(
-		"SELECT title, created_at FROM group_hist_title "
+		"SELECT title, created_at FROM telegram_group_hist_title "
 		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json titleHist = nlohmann::json::array();
@@ -624,7 +624,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Description history. */
 	auto dh = co_await db->execSqlCoro(
-		"SELECT description, created_at FROM group_hist_description "
+		"SELECT description, created_at FROM telegram_group_hist_description "
 		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json descHist = nlohmann::json::array();
@@ -639,7 +639,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	/* Username events. */
 	auto ue = co_await db->execSqlCoro(
 		"SELECT username, action, kind, is_collectible, created_at "
-		"FROM group_hist_usernames_events "
+		"FROM telegram_group_hist_usernames_events "
 		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json unEvents = nlohmann::json::array();
@@ -658,7 +658,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 
 	/* Photo history. */
 	auto ph = co_await db->execSqlCoro(
-		"SELECT file_id, created_at FROM group_hist_photo "
+		"SELECT file_id, created_at FROM telegram_group_hist_photo "
 		"WHERE group_id = ? ORDER BY id DESC LIMIT 100",
 		id);
 	nlohmann::json photoHist = nlohmann::json::array();
@@ -675,7 +675,7 @@ drogon::Task<std::optional<nlohmann::json>> getGroup(drogon::orm::DbClientPtr db
 	auto ah = co_await db->execSqlCoro(
 		"SELECT ah.user_id, ah.action, ah.status, ah.custom_title, "
 		"ah.created_at, u.first_name, u.last_name "
-		"FROM group_admin_hist ah LEFT JOIN users u ON u.id = ah.user_id "
+		"FROM telegram_group_admin_hist ah LEFT JOIN telegram_users u ON u.id = ah.user_id "
 		"WHERE ah.group_id = ? ORDER BY ah.id DESC LIMIT 100",
 		id);
 	nlohmann::json adminHist = nlohmann::json::array();
@@ -698,7 +698,7 @@ drogon::Task<std::optional<nlohmann::json>>
 getGroupAdmins(drogon::orm::DbClientPtr db, int64_t id)
 {
 	auto gr = co_await db->execSqlCoro(
-		"SELECT id, type, title FROM `groups` WHERE id = ?", id);
+		"SELECT id, type, title FROM `telegram_groups` WHERE id = ?", id);
 	if (gr.empty())
 		co_return std::nullopt;
 
@@ -712,10 +712,10 @@ getGroupAdmins(drogon::orm::DbClientPtr db, int64_t id)
 	/* Same projection as getGroup's admin block; see grantedPerms/kPerms. */
 	auto ad = co_await db->execSqlCoro(
 		"SELECT ga.*, u.first_name, u.last_name, "
-		"(SELECT un.username FROM user_usernames un "
+		"(SELECT un.username FROM telegram_user_usernames un "
 		" WHERE un.user_id = ga.user_id AND un.kind = 'active' "
 		" ORDER BY un.position LIMIT 1) AS username "
-		"FROM group_admins ga LEFT JOIN users u ON u.id = ga.user_id "
+		"FROM telegram_group_admins ga LEFT JOIN telegram_users u ON u.id = ga.user_id "
 		"WHERE ga.group_id = ? ORDER BY ga.status, ga.user_id",
 		id);
 	nlohmann::json admins = nlohmann::json::array();
@@ -775,9 +775,9 @@ std::string privSelect(const char *textProj)
 		"m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"cu.first_name AS chat_first, cu.last_name AS chat_last, "
 		"su.first_name AS sender_first, su.last_name AS sender_last "
-		"FROM private_messages m "
-		"LEFT JOIN users cu ON cu.id = m.chat_id "
-		"LEFT JOIN users su ON su.id = m.sender_id ";
+		"FROM telegram_private_messages m "
+		"LEFT JOIN telegram_users cu ON cu.id = m.chat_id "
+		"LEFT JOIN telegram_users su ON su.id = m.sender_id ";
 }
 
 std::string groupSelect(const char *textProj)
@@ -785,7 +785,7 @@ std::string groupSelect(const char *textProj)
 	return std::string(
 		"SELECT m.id, m.message_id, m.chat_id, m.sender_user_id, "
 		"m.sender_chat_id, m.is_channel_post, m.author_signature, "
-		/* group_messages has no is_outgoing (irrelevant for public group
+		/* telegram_group_messages has no is_outgoing (irrelevant for public group
 		 * logging); a constant keeps the shared row shape. */
 		"0 AS is_outgoing, IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
 		"m.edit_date, m.content_type, ") + textProj + ", "
@@ -794,10 +794,10 @@ std::string groupSelect(const char *textProj)
 		"g.title AS chat_title, "
 		"su.first_name AS sender_first, su.last_name AS sender_last, "
 		"sg.title AS sender_chat_title "
-		"FROM group_messages m "
-		"LEFT JOIN `groups` g ON g.id = m.chat_id "
-		"LEFT JOIN users su ON su.id = m.sender_user_id "
-		"LEFT JOIN `groups` sg ON sg.id = m.sender_chat_id ";
+		"FROM telegram_group_messages m "
+		"LEFT JOIN `telegram_groups` g ON g.id = m.chat_id "
+		"LEFT JOIN telegram_users su ON su.id = m.sender_user_id "
+		"LEFT JOIN `telegram_groups` sg ON sg.id = m.sender_chat_id ";
 }
 
 /* Fields shared by list and detail rendering. */
@@ -954,8 +954,8 @@ drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr 
 	j["message"] = std::move(msg);
 
 	/* Edit history. */
-	std::string editTable = group ? "group_message_edits"
-				      : "private_message_edits";
+	std::string editTable = group ? "telegram_group_message_edits"
+				      : "telegram_private_message_edits";
 	std::string editFk = group ? "group_message_id" : "private_message_id";
 	std::string editQuery =
 		"SELECT content_type, LEFT(text, 500) AS snippet, file_id, "
@@ -976,8 +976,8 @@ drogon::Task<std::optional<nlohmann::json>> getMessage(drogon::orm::DbClientPtr 
 	j["edits"] = std::move(edits);
 
 	/* Forward info (at most one row). */
-	std::string fwdTable = group ? "group_message_fwd_info"
-				     : "private_message_fwd_info";
+	std::string fwdTable = group ? "telegram_group_message_fwd_info"
+				     : "telegram_private_message_fwd_info";
 	std::string fwdFk = group ? "group_message_id" : "private_message_id";
 	std::string fwdQuery =
 		"SELECT origin_type, origin_sender_user_id, origin_sender_name, "
@@ -1026,7 +1026,7 @@ drogon::Task<std::optional<FileMeta>> getFile(drogon::orm::DbClientPtr db,
 {
 	std::string q =
 		"SELECT LOWER(HEX(sha256)) AS hex, file_ext, file_type, "
-		"orig_file_name, file_size, on_disk FROM files WHERE id = ?";
+		"orig_file_name, file_size, on_disk FROM telegram_files WHERE id = ?";
 	auto r = co_await db->execSqlCoro(q, id);
 	if (r.empty())
 		co_return std::nullopt;
@@ -1201,7 +1201,7 @@ chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId)
 	nlohmann::json h;
 	if (scope == "group") {
 		auto r = co_await db->execSqlCoro(
-			"SELECT id, type, title, photo_file_id FROM `groups` WHERE id = ?",
+			"SELECT id, type, title, photo_file_id FROM `telegram_groups` WHERE id = ?",
 			chatId);
 		if (r.empty())
 			co_return std::nullopt;
@@ -1216,7 +1216,7 @@ chatHeader(drogon::orm::DbClientPtr db, std::string scope, int64_t chatId)
 	} else {
 		auto r = co_await db->execSqlCoro(
 			"SELECT id, type, first_name, last_name, profile_photo_file_id "
-			"FROM users WHERE id = ?",
+			"FROM telegram_users WHERE id = ?",
 			chatId);
 		if (r.empty())
 			co_return std::nullopt;
@@ -1237,7 +1237,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 					 std::optional<int64_t> afterTs)
 {
 	bool group = scope == "group";
-	const char *mtable = group ? "group_messages" : "private_messages";
+	const char *mtable = group ? "telegram_group_messages" : "telegram_private_messages";
 
 	/*
 	 * A time cursor takes precedence over a message cursor: resolve it to
@@ -1262,7 +1262,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 	 * group-only columns) so a single builder handles both. */
 	std::string base = group ?
 		"SELECT m.id, m.message_id, m.sender_user_id, m.sender_chat_id, "
-		/* group_messages has no is_outgoing; a constant keeps the shared
+		/* telegram_group_messages has no is_outgoing; a constant keeps the shared
 		 * builder's row shape (a public group has no "own" perspective). */
 		"0 AS is_outgoing, m.is_channel_post, m.author_signature, "
 		"IF(m.date>0, FROM_UNIXTIME(m.date), NULL) AS date_str, "
@@ -1272,7 +1272,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
-		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_user_id "
+		"(SELECT un.username FROM telegram_user_usernames un WHERE un.user_id = m.sender_user_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"sg.title AS sg_title, sg.photo_file_id AS sg_photo, "
 		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, f.on_disk AS f_on_disk, "
@@ -1282,14 +1282,14 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"rm.content_type AS r_ctype, LEFT(rm.text,120) AS r_snippet, "
 		"rsu.first_name AS r_su_first, rsu.last_name AS r_su_last, "
 		"rsg.title AS r_sg_title "
-		"FROM group_messages m "
-		"LEFT JOIN users su ON su.id = m.sender_user_id "
-		"LEFT JOIN `groups` sg ON sg.id = m.sender_chat_id "
-		"LEFT JOIN files f ON f.id = m.file_id "
-		"LEFT JOIN group_message_fwd_info fw ON fw.group_message_id = m.id "
-		"LEFT JOIN group_messages rm ON rm.id = m.reply_to_id "
-		"LEFT JOIN users rsu ON rsu.id = rm.sender_user_id "
-		"LEFT JOIN `groups` rsg ON rsg.id = rm.sender_chat_id "
+		"FROM telegram_group_messages m "
+		"LEFT JOIN telegram_users su ON su.id = m.sender_user_id "
+		"LEFT JOIN `telegram_groups` sg ON sg.id = m.sender_chat_id "
+		"LEFT JOIN telegram_files f ON f.id = m.file_id "
+		"LEFT JOIN telegram_group_message_fwd_info fw ON fw.group_message_id = m.id "
+		"LEFT JOIN telegram_group_messages rm ON rm.id = m.reply_to_id "
+		"LEFT JOIN telegram_users rsu ON rsu.id = rm.sender_user_id "
+		"LEFT JOIN `telegram_groups` rsg ON rsg.id = rm.sender_chat_id "
 		:
 		"SELECT m.id, m.message_id, m.sender_id AS sender_user_id, "
 		"NULL AS sender_chat_id, m.is_outgoing, 0 AS is_channel_post, "
@@ -1301,7 +1301,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"m.is_forwarded, m.media_album_id, m.reply_to_id, m.reply_to_chat_id, m.reply_to_msg_id, "
 		"su.first_name AS su_first, su.last_name AS su_last, "
 		"su.profile_photo_file_id AS su_photo, "
-		"(SELECT un.username FROM user_usernames un WHERE un.user_id = m.sender_id "
+		"(SELECT un.username FROM telegram_user_usernames un WHERE un.user_id = m.sender_id "
 		" AND un.kind='active' ORDER BY un.position LIMIT 1) AS su_username, "
 		"NULL AS sg_title, NULL AS sg_photo, "
 		"f.file_type AS f_type, f.file_ext AS f_ext, f.orig_file_name AS f_name, f.file_size AS f_size, f.on_disk AS f_on_disk, "
@@ -1311,12 +1311,12 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 		"rm.content_type AS r_ctype, LEFT(rm.text,120) AS r_snippet, "
 		"rsu.first_name AS r_su_first, rsu.last_name AS r_su_last, "
 		"NULL AS r_sg_title "
-		"FROM private_messages m "
-		"LEFT JOIN users su ON su.id = m.sender_id "
-		"LEFT JOIN files f ON f.id = m.file_id "
-		"LEFT JOIN private_message_fwd_info fw ON fw.private_message_id = m.id "
-		"LEFT JOIN private_messages rm ON rm.id = m.reply_to_id "
-		"LEFT JOIN users rsu ON rsu.id = rm.sender_id ";
+		"FROM telegram_private_messages m "
+		"LEFT JOIN telegram_users su ON su.id = m.sender_id "
+		"LEFT JOIN telegram_files f ON f.id = m.file_id "
+		"LEFT JOIN telegram_private_message_fwd_info fw ON fw.private_message_id = m.id "
+		"LEFT JOIN telegram_private_messages rm ON rm.id = m.reply_to_id "
+		"LEFT JOIN telegram_users rsu ON rsu.id = rm.sender_id ";
 
 	/*
 	 * The page window. With a cursor, take the oldest `limit` messages newer
@@ -1362,7 +1362,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 			idlist += std::to_string(editedIds[i]);
 		}
 		std::string fk  = group ? "group_message_id" : "private_message_id";
-		std::string tbl = group ? "group_message_edits" : "private_message_edits";
+		std::string tbl = group ? "telegram_group_message_edits" : "telegram_private_message_edits";
 		std::string eq =
 			"SELECT e." + fk + " AS mid, e.content_type, "
 			"LEFT(e.text, 4000) AS snippet, e.entities, e.file_id, "
@@ -1370,7 +1370,7 @@ drogon::Task<nlohmann::json> chatHistory(drogon::orm::DbClientPtr db,
 			"f.file_size AS f_size, f.on_disk AS f_on_disk, "
 			"IF(e.edit_date>0, FROM_UNIXTIME(e.edit_date), NULL) AS edit_date_str "
 			"FROM " + tbl + " e "
-			"LEFT JOIN files f ON f.id = e.file_id "
+			"LEFT JOIN telegram_files f ON f.id = e.file_id "
 			"WHERE e." + fk + " IN (" + idlist + ") ORDER BY e.id DESC";
 		auto er = co_await db->execSqlCoro(eq);
 

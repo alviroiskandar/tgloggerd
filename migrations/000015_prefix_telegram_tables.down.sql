@@ -1,0 +1,25 @@
+-- Revert the telegram_ prefixing (see the .up migration).
+ALTER TABLE telegram_chat_backfill_state          RENAME TO chat_backfill_state;
+ALTER TABLE telegram_files                         RENAME TO files;
+ALTER TABLE telegram_group_message_fwd_info        RENAME TO group_message_fwd_info;
+ALTER TABLE telegram_group_message_edits           RENAME TO group_message_edits;
+ALTER TABLE telegram_group_messages                RENAME TO group_messages;
+ALTER TABLE telegram_private_message_fwd_info       RENAME TO private_message_fwd_info;
+ALTER TABLE telegram_private_message_edits          RENAME TO private_message_edits;
+ALTER TABLE telegram_private_messages               RENAME TO private_messages;
+ALTER TABLE telegram_group_hist_usernames_events    RENAME TO group_hist_usernames_events;
+ALTER TABLE telegram_group_hist_photo               RENAME TO group_hist_photo;
+ALTER TABLE telegram_group_hist_description         RENAME TO group_hist_description;
+ALTER TABLE telegram_group_hist_title               RENAME TO group_hist_title;
+ALTER TABLE telegram_group_admin_hist               RENAME TO group_admin_hist;
+ALTER TABLE telegram_group_admins                   RENAME TO group_admins;
+ALTER TABLE telegram_group_usernames                RENAME TO group_usernames;
+ALTER TABLE telegram_user_hist_usernames_events     RENAME TO user_hist_usernames_events;
+ALTER TABLE telegram_user_hist_profile_photo        RENAME TO user_hist_profile_photo;
+ALTER TABLE telegram_user_hist_phone_num            RENAME TO user_hist_phone_num;
+ALTER TABLE telegram_user_hist_name                 RENAME TO user_hist_name;
+ALTER TABLE telegram_user_hist_bio                  RENAME TO user_hist_bio;
+ALTER TABLE telegram_user_extra_info                RENAME TO user_extra_info;
+ALTER TABLE telegram_user_usernames                 RENAME TO user_usernames;
+ALTER TABLE telegram_users                          RENAME TO users;
+ALTER TABLE telegram_groups                         RENAME TO `groups`;

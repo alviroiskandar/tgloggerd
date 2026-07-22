@@ -113,7 +113,7 @@ drogon::Task<std::optional<ChatRef>> resolveChat(drogon::orm::DbClientPtr db,
 	 * the matching table (a chat_id is unique to one of them). */
 	if (chatId < 0) {
 		auto g = co_await db->execSqlCoro(
-			"SELECT title FROM `groups` WHERE id = ?", chatId);
+			"SELECT title FROM `telegram_groups` WHERE id = ?", chatId);
 		if (!g.empty()) {
 			std::string t = colStr(g[0], "title");
 			co_return ChatRef{ chatId, "group",
@@ -123,7 +123,7 @@ drogon::Task<std::optional<ChatRef>> resolveChat(drogon::orm::DbClientPtr db,
 	}
 
 	auto u = co_await db->execSqlCoro(
-		"SELECT first_name, last_name FROM users WHERE id = ?", chatId);
+		"SELECT first_name, last_name FROM telegram_users WHERE id = ?", chatId);
 	if (!u.empty())
 		co_return ChatRef{ chatId, "private", userName(u[0]) };
 	co_return std::nullopt;
@@ -141,7 +141,7 @@ drogon::Task<nlohmann::json> searchChats(drogon::orm::DbClientPtr db,
 
 	/* Groups / channels first (the common forwarding source). */
 	auto gs = co_await db->execSqlCoro(
-		"SELECT id, title, type FROM `groups` "
+		"SELECT id, title, type FROM `telegram_groups` "
 		"WHERE title LIKE ? OR id = ? ORDER BY title LIMIT ?",
 		like, qid, limit);
 	for (const auto &r : gs) {
@@ -159,7 +159,7 @@ drogon::Task<nlohmann::json> searchChats(drogon::orm::DbClientPtr db,
 
 	/* Then private chats (users). */
 	auto us = co_await db->execSqlCoro(
-		"SELECT id, first_name, last_name FROM users "
+		"SELECT id, first_name, last_name FROM telegram_users "
 		"WHERE CONCAT_WS(' ', first_name, last_name) LIKE ? OR id = ? "
 		"ORDER BY first_name LIMIT ?",
 		like, qid, limit);

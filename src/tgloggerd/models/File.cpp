@@ -31,17 +31,17 @@ uint64_t DB::upsertFile(const models::File &f)
 	uint64_t id = 0;
 	db_.transaction([&](mysql::Transaction &tx) {
 		id = tx.insert(
-			"INSERT INTO files (tg_file_id, file_type, file_size,"
+			"INSERT INTO telegram_files (tg_file_id, file_type, file_size,"
 			" sha256, file_ext, orig_file_name, on_disk)"
 			" VALUES (?, ?, ?, UNHEX(?), ?, ?, ?) AS new"
 			" ON DUPLICATE KEY UPDATE"
 			" id = LAST_INSERT_ID(id),"
 			" hit_count = hit_count + 1,"
-			" orig_file_name = IF(files.orig_file_name = '',"
-			" new.orig_file_name, files.orig_file_name),"
+			" orig_file_name = IF(telegram_files.orig_file_name = '',"
+			" new.orig_file_name, telegram_files.orig_file_name),"
 			/* Once stored, stay stored; a metadata-only re-store
 			 * must not clear a copy that is already on disk. */
-			" on_disk = files.on_disk OR new.on_disk",
+			" on_disk = telegram_files.on_disk OR new.on_disk",
 			{
 				f.tg_file_id,
 				f.file_type,
@@ -57,7 +57,7 @@ uint64_t DB::upsertFile(const models::File &f)
 
 std::unordered_map<std::string, uint64_t> DB::loadFileIndex(void)
 {
-	auto rows = db_.query("SELECT tg_file_id, id FROM files");
+	auto rows = db_.query("SELECT tg_file_id, id FROM telegram_files");
 
 	std::unordered_map<std::string, uint64_t> out;
 	out.reserve(rows.size());

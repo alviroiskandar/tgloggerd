@@ -32,14 +32,14 @@ void DB::upsertGroup(const models::Group &g)
 	 * is managed by setGroupPhoto once the photo has been downloaded.
 	 */
 	static const char *sql =
-		"INSERT INTO `groups` (id, type, title, description)"
+		"INSERT INTO `telegram_groups` (id, type, title, description)"
 		" VALUES (?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
 		" type = new.type, title = new.title,"
 		" description = new.description";
 
 	db_.transaction([&](mysql::Transaction &tx) {
 		auto old = tx.query(
-			"SELECT title, description FROM `groups` WHERE id = ?",
+			"SELECT title, description FROM `telegram_groups` WHERE id = ?",
 			{ (int64_t)g.id });
 
 		tx.execute(sql, {
@@ -54,13 +54,13 @@ void DB::upsertGroup(const models::Group &g)
 			 * title. The description is handled below: it is empty
 			 * here (it only arrives later with full info), so it
 			 * must not be snapshotted as a blank initial value. */
-			tx.insert("INSERT INTO group_hist_title"
+			tx.insert("INSERT INTO telegram_group_hist_title"
 				  " (group_id, title) VALUES (?, ?)",
 				  { (int64_t)g.id, g.title });
 		} else {
 			std::string ot = old[0][0].value_or("");
 			if (ot != g.title) {
-				tx.insert("INSERT INTO group_hist_title"
+				tx.insert("INSERT INTO telegram_group_hist_title"
 					  " (group_id, title) VALUES (?, ?)",
 					  { (int64_t)g.id, ot });
 			}
@@ -72,7 +72,7 @@ void DB::upsertGroup(const models::Group &g)
 		 * arrives with full info after the row already exists -- is
 		 * captured instead of a run of blank rows.
 		 */
-		recordTextHistory(tx, "group_hist_description", "group_id",
+		recordTextHistory(tx, "telegram_group_hist_description", "group_id",
 				  "description", g.id, g.description);
 
 		syncGroupUsernames(tx, g);
@@ -83,7 +83,7 @@ void DB::setGroupPhoto(int64_t group_id, uint64_t file_id)
 {
 	db_.transaction([&](mysql::Transaction &tx) {
 		trackGroupPhotoChange(tx, group_id, file_id);
-		tx.execute("UPDATE `groups` SET photo_file_id = ?"
+		tx.execute("UPDATE `telegram_groups` SET photo_file_id = ?"
 			   " WHERE id = ?",
 			   { (int64_t)file_id, (int64_t)group_id });
 	});
@@ -93,7 +93,7 @@ void DB::trackGroupPhotoChange(mysql::Transaction &tx,
 			       int64_t group_id, uint64_t file_id)
 {
 	auto rows = tx.query(
-		"SELECT photo_file_id FROM `groups` WHERE id = ?",
+		"SELECT photo_file_id FROM `telegram_groups` WHERE id = ?",
 		{ group_id });
 	if (rows.empty())
 		return;
@@ -101,7 +101,7 @@ void DB::trackGroupPhotoChange(mysql::Transaction &tx,
 	auto &val = rows[0][0];
 	if (!val.has_value()) {
 		/* First group photo — record it. */
-		tx.insert("INSERT INTO group_hist_photo"
+		tx.insert("INSERT INTO telegram_group_hist_photo"
 			  " (group_id, file_id) VALUES (?, ?)",
 			  { group_id, (int64_t)file_id });
 		return;
@@ -111,7 +111,7 @@ void DB::trackGroupPhotoChange(mysql::Transaction &tx,
 	if (old_id == file_id)
 		return;
 
-	tx.insert("INSERT INTO group_hist_photo"
+	tx.insert("INSERT INTO telegram_group_hist_photo"
 		  " (group_id, file_id) VALUES (?, ?)",
 		  { group_id, (int64_t)old_id });
 }
@@ -126,7 +126,7 @@ void DB::syncGroupUsernames(mysql::Transaction &tx, const models::Group &g)
 
 	/* Usernames the group currently owns, to diff against the new set. */
 	auto old_rows = tx.query(
-		"SELECT username, kind, position, is_collectible FROM group_usernames"
+		"SELECT username, kind, position, is_collectible FROM telegram_group_usernames"
 		" WHERE group_id = ?",
 		{ (int64_t)g.id });
 
@@ -168,7 +168,7 @@ void DB::syncGroupUsernames(mysql::Transaction &tx, const models::Group &g)
 	}
 
 	static const char *ev =
-		"INSERT INTO group_hist_usernames_events"
+		"INSERT INTO telegram_group_hist_usernames_events"
 		" (group_id, username, action, kind, position, is_collectible)"
 		" VALUES (?, ?, ?, ?, ?, ?)";
 
@@ -202,13 +202,13 @@ void DB::syncGroupUsernames(mysql::Transaction &tx, const models::Group &g)
 		tx.execute(ev, { (int64_t)g.id, o.first,
 				 std::string("removed"), std::monostate{},
 				 std::monostate{}, std::monostate{} });
-		tx.execute("UPDATE group_usernames SET group_id = NULL"
+		tx.execute("UPDATE telegram_group_usernames SET group_id = NULL"
 			   " WHERE group_id = ? AND username = ?",
 			   { (int64_t)g.id, o.first });
 	}
 
 	static const char *ins =
-		"INSERT INTO group_usernames"
+		"INSERT INTO telegram_group_usernames"
 		" (group_id, username, kind, position, is_collectible)"
 		" VALUES (?, ?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE"
 		" group_id = new.group_id, kind = new.kind,"

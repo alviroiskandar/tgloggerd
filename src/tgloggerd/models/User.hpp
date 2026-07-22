@@ -25,7 +25,7 @@ enum class UserType {
 
 /*
  * A snapshot of a Telegram user (td_api::user), as stored in the users
- * and user_usernames tables. Only publicly meaningful, account
+ * and telegram_user_usernames tables. Only publicly meaningful, account
  * independent attributes are kept. Uses only plain types so it can be
  * shared between the TDLib and database layers.
  */
@@ -36,7 +36,7 @@ struct User {
 	std::string	phone_number;
 	UserType	type = UserType::Unknown;
 
-	/* files.id of the current profile photo; resolved after download. */
+	/* telegram_files.id of the current profile photo; resolved after download. */
 	std::optional<uint64_t>	profile_photo_file_id;
 
 	int32_t		accent_color_id = 0;
@@ -71,7 +71,7 @@ struct User {
 /*
  * Extra user attributes from td_api::userFullInfo, which is fetched
  * separately from the user object. Applied onto the existing users row;
- * bio changes are tracked in user_hist_bio.
+ * bio changes are tracked in telegram_user_hist_bio.
  */
 struct UserFullInfo {
 	int64_t		user_id = 0;

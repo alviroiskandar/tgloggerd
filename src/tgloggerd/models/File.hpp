@@ -19,7 +19,7 @@ namespace models {
 struct File {
 	/* TDLib persistent remote file identifier (remoteFile.id_). */
 	std::string	tg_file_id;
-	/* files.file_type enum value, e.g. "photo". */
+	/* telegram_files.file_type enum value, e.g. "photo". */
 	std::string	file_type = "unknown";
 	uint64_t	file_size = 0;
 	/* 64-character lowercase hex of the SHA-256 digest. */

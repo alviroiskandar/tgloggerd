@@ -58,8 +58,8 @@ drogon::Task<void> remove(drogon::orm::DbClientPtr db, uint64_t id);
 
 /*
  * Resolve a Telegram chat_id to its (type, title) by looking it up in the
- * logged schema: a negative id is a group/channel (`groups`), a positive id is
- * a private chat (`users`). Returns nullopt when the chat is not in the DB --
+ * logged schema: a negative id is a group/channel (`telegram_groups`), a positive id is
+ * a private chat (`telegram_users`). Returns nullopt when the chat is not in the DB --
  * i.e. the account has never seen it, so it is treated as inaccessible.
  */
 drogon::Task<std::optional<ChatRef>> resolveChat(drogon::orm::DbClientPtr db,

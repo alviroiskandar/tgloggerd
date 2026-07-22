@@ -16,8 +16,8 @@ namespace models {
 
 /*
  * A group-chat message (basic group, supergroup or channel), as stored
- * in the group_messages, group_message_edits, and group_message_fwd_info
- * tables. Its chat_id is the group's chat_id (a valid groups.id).
+ * in the telegram_group_messages, telegram_group_message_edits, and telegram_group_message_fwd_info
+ * tables. Its chat_id is the group's chat_id (a valid telegram_groups.id).
  *
  * Unlike a private message, the sender may be a user or a chat/channel,
  * so exactly one of sender_user_id / sender_chat_id is set.

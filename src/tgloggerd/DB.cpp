@@ -41,7 +41,7 @@ std::vector<DiscordWebhook> DB::loadDiscordWebhooks(void)
 std::optional<uint64_t> DB::getUserPhotoFileId(int64_t user_id)
 {
 	auto rows = db_.query(
-		"SELECT profile_photo_file_id FROM users WHERE id = ?",
+		"SELECT profile_photo_file_id FROM telegram_users WHERE id = ?",
 		{ user_id });
 	if (rows.empty() || !rows[0][0].has_value())
 		return std::nullopt;
@@ -52,7 +52,7 @@ ChatPhoto DB::getGroupPhoto(int64_t chat_id)
 {
 	ChatPhoto out;
 	auto rows = db_.query(
-		"SELECT photo_file_id, title FROM `groups` WHERE id = ?",
+		"SELECT photo_file_id, title FROM `telegram_groups` WHERE id = ?",
 		{ chat_id });
 	if (rows.empty())
 		return out;
@@ -68,12 +68,12 @@ std::optional<QuotedMessage> DB::getQuotedMessage(int64_t chat_id,
 	/* Group ids are negative, private (peer user) ids positive. */
 	const char *sql = chat_id < 0
 		? "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
-		  "gm.text FROM group_messages gm "
-		  "LEFT JOIN users u ON u.id = gm.sender_user_id "
+		  "gm.text FROM telegram_group_messages gm "
+		  "LEFT JOIN telegram_users u ON u.id = gm.sender_user_id "
 		  "WHERE gm.chat_id = ? AND gm.message_id = ?"
 		: "SELECT COALESCE(u.first_name,''), COALESCE(u.last_name,''), "
-		  "pm.text FROM private_messages pm "
-		  "LEFT JOIN users u ON u.id = pm.sender_id "
+		  "pm.text FROM telegram_private_messages pm "
+		  "LEFT JOIN telegram_users u ON u.id = pm.sender_id "
 		  "WHERE pm.chat_id = ? AND pm.message_id = ?";
 
 	auto rows = db_.query(sql, { chat_id, message_id });
@@ -93,7 +93,7 @@ std::optional<QuotedMessage> DB::getQuotedMessage(int64_t chat_id,
 std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
 {
 	auto rows = db_.query(
-		"SELECT file_type, file_ext, on_disk FROM files WHERE id = ?",
+		"SELECT file_type, file_ext, on_disk FROM telegram_files WHERE id = ?",
 		{ files_id });
 	if (rows.empty())
 		return std::nullopt;
@@ -174,9 +174,9 @@ std::optional<MessageForward> DB::getMessageForward(int64_t chat_id,
 	/* Group ids are negative, private (peer user) ids positive. */
 	const char *sql = chat_id < 0
 		? "SELECT text, reply_to_chat_id, reply_to_msg_id, file_id "
-		  "FROM group_messages WHERE chat_id = ? AND message_id = ?"
+		  "FROM telegram_group_messages WHERE chat_id = ? AND message_id = ?"
 		: "SELECT text, reply_to_chat_id, reply_to_msg_id, file_id "
-		  "FROM private_messages WHERE chat_id = ? AND message_id = ?";
+		  "FROM telegram_private_messages WHERE chat_id = ? AND message_id = ?";
 
 	auto rows = db_.query(sql, { chat_id, message_id });
 	if (rows.empty())

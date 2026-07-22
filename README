@@ -91,6 +91,9 @@ secrets. The daemon variables are prefixed `TG_`, the web variables
         models/                   Data models (.hpp) and their SQL query
                                   implementations (.cpp) (User, File, ...).
     migrations/                golang-migrate SQL migrations for the schema.
+                               Tables that store a messaging platform's data are
+                               prefixed per platform (telegram_*, discord_*); see
+                               web/docs/db-naming.md before adding tables.
     submodules/                Third-party dependencies vendored as git
                                submodules: TDLib (td), MySQL Connector/C++
                                (mysql-connector-cpp), Drogon, and MariaDB

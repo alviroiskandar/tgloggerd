@@ -36,7 +36,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 	 * otherwise reset the link to NULL).
 	 */
 	static const char *upsert_sql =
-		"INSERT INTO group_messages ("
+		"INSERT INTO telegram_group_messages ("
 		" chat_id, message_id, sender_user_id, sender_chat_id,"
 		" is_channel_post, author_signature, date,"
 		" edit_date, content_type, text, entities, service_type,"
@@ -64,7 +64,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 		auto old_rows = tx.query(
 			"SELECT id, edit_date, content_type, text, file_id,"
 			"       deleted_at, entities"
-			" FROM group_messages"
+			" FROM telegram_group_messages"
 			" WHERE chat_id = ? AND message_id = ?",
 			{ (int64_t)msg.chat_id, (int64_t)msg.message_id });
 
@@ -129,14 +129,14 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 			tx.execute(upsert_sql, bind_all());
 
 			auto new_rows = tx.query(
-				"SELECT id FROM group_messages"
+				"SELECT id FROM telegram_group_messages"
 				" WHERE chat_id = ? AND message_id = ?",
 				{ (int64_t)msg.chat_id,
 				  (int64_t)msg.message_id });
 			if (!new_rows.empty() && new_rows[0][0].has_value() &&
 			    msg.forward_info.has_value()) {
 				uint64_t gm_id = std::stoull(*new_rows[0][0]);
-				insertForwardInfo(tx, "group_message_fwd_info",
+				insertForwardInfo(tx, "telegram_group_message_fwd_info",
 						  "group_message_id", gm_id,
 						  *msg.forward_info);
 			}
@@ -148,10 +148,10 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 			 * One increment per recorded row -- matches the COUNT(1)
 			 * prefill in scripts/prefill_msg_count.py.
 			 */
-			if (bumpMsgCount(tx, "`groups`", msg.chat_id))
+			if (bumpMsgCount(tx, "`telegram_groups`", msg.chat_id))
 				refetch.group = msg.chat_id;
 			if (msg.sender_user_id.has_value() &&
-			    bumpMsgCount(tx, "users", *msg.sender_user_id))
+			    bumpMsgCount(tx, "telegram_users", *msg.sender_user_id))
 				refetch.user = *msg.sender_user_id;
 			return;
 		}
@@ -169,7 +169,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 		 */
 		if (msg.is_deleted && !old_deleted) {
 			tx.execute(
-				"UPDATE group_messages SET deleted_at = NOW()"
+				"UPDATE telegram_group_messages SET deleted_at = NOW()"
 				" WHERE id = ? AND deleted_at IS NULL",
 				{ (int64_t)gm_id });
 			return;
@@ -186,7 +186,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 		if (old[4].has_value())
 			old_content.file_id = std::stoull(*old[4]);
 
-		snapshotMessageEditIfChanged(tx, "group_message_edits",
+		snapshotMessageEditIfChanged(tx, "telegram_group_message_edits",
 					     "group_message_id", gm_id,
 					     old_content, old_edit_date,
 					     msg.content, msg.edit_date);
@@ -194,7 +194,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 		tx.execute(upsert_sql, bind_all());
 
 		if (msg.forward_info.has_value())
-			insertForwardInfo(tx, "group_message_fwd_info",
+			insertForwardInfo(tx, "telegram_group_message_fwd_info",
 					  "group_message_id", gm_id,
 					  *msg.forward_info);
 	});
@@ -205,7 +205,7 @@ MsgCountRefetch DB::upsertGroupMessage(const models::GroupMessage &msg)
 void DB::setGroupMessageFile(int64_t chat_id, int64_t message_id,
 			     uint64_t file_id)
 {
-	db_.execute("UPDATE group_messages SET file_id = ?"
+	db_.execute("UPDATE telegram_group_messages SET file_id = ?"
 		    " WHERE chat_id = ? AND message_id = ?",
 		    { (int64_t)file_id, (int64_t)chat_id, (int64_t)message_id });
 }
@@ -220,8 +220,8 @@ void DB::setGroupMessageReply(int64_t chat_id, int64_t message_id,
 	 * NULL for a cross-table reply or an as-yet-unsaved target).
 	 */
 	db_.execute(
-		"UPDATE group_messages AS m"
-		" LEFT JOIN group_messages AS r"
+		"UPDATE telegram_group_messages AS m"
+		" LEFT JOIN telegram_group_messages AS r"
 		"   ON r.chat_id = ? AND r.message_id = ?"
 		" SET m.reply_to_chat_id = ?, m.reply_to_msg_id = ?,"
 		"     m.reply_to_id = r.id"

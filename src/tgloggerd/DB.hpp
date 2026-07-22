@@ -51,7 +51,7 @@ struct QuotedMessage {
 	std::string text;        /* may be empty (media with no caption) */
 };
 
-/* A chat's current photo (files.id) and title, for a channel/group sender. */
+/* A chat's current photo (telegram_files.id) and title, for a channel/group sender. */
 struct ChatPhoto {
 	std::optional<uint64_t> photo_file_id;
 	std::string             title;
@@ -59,7 +59,7 @@ struct ChatPhoto {
 
 /* A stored file's category/extension/availability, for media forwarding. */
 struct FileInfo {
-	std::string file_type; /* files.file_type: "photo", "video", ... */
+	std::string file_type; /* telegram_files.file_type: "photo", "video", ... */
 	std::string ext;       /* lowercase extension without dot; may be empty */
 	bool        on_disk;   /* false = metadata-only, no servable bytes */
 };
@@ -116,7 +116,7 @@ public:
 
 	/*
 	 * Insert or update a user together with its usernames, atomically.
-	 * Does not touch users.profile_photo_file_id, which is managed
+	 * Does not touch telegram_users.profile_photo_file_id, which is managed
 	 * separately once the profile photo has been downloaded.
 	 */
 	void upsertUser(const models::User &u);
@@ -124,18 +124,18 @@ public:
 	/*
 	 * Apply td_api::userFullInfo fields (bio, birthdate, personal chat)
 	 * onto an existing users row, recording the previous bio in
-	 * user_hist_bio when it changes. No-op if the user row is absent.
+	 * telegram_user_hist_bio when it changes. No-op if the user row is absent.
 	 */
 	void upsertUserFullInfo(const models::UserFullInfo &fi);
 
 	/*
 	 * Insert a file, or, if a row with the same SHA-256 already exists,
-	 * bump its hit_count. Returns the files.id in both cases.
+	 * bump its hit_count. Returns the telegram_files.id in both cases.
 	 */
 	uint64_t upsertFile(const models::File &f);
 
 	/*
-	 * Load the full tg_file_id -> files.id index, so the daemon can link a
+	 * Load the full tg_file_id -> telegram_files.id index, so the daemon can link a
 	 * message to a file it already recorded without re-downloading it.
 	 */
 	std::unordered_map<std::string, uint64_t> loadFileIndex(void);
@@ -146,7 +146,7 @@ public:
 	/*
 	 * Insert or update a group together with its usernames, atomically,
 	 * recording title/description/username changes in the history
-	 * tables. Does not touch groups.photo_file_id, which is managed by
+	 * tables. Does not touch telegram_groups.photo_file_id, which is managed by
 	 * setGroupPhoto.
 	 */
 	void upsertGroup(const models::Group &g);
@@ -157,7 +157,7 @@ public:
 	/*
 	 * Replace a group's stored administrator set with a freshly fetched
 	 * one, recording added/removed/privilege-change events in
-	 * group_admin_hist. Only call with a genuinely fetched list: an empty
+	 * telegram_group_admin_hist. Only call with a genuinely fetched list: an empty
 	 * list removes all stored admins, so an errored fetch must not reach
 	 * here.
 	 */
@@ -166,17 +166,17 @@ public:
 	/*
 	 * Insert or update a private-chat message. Handles:
 	 *  - First-seen messages (insert).
-	 *  - Edits (copies old row into private_message_edits, then
-	 *    updates private_messages).
+	 *  - Edits (copies old row into telegram_private_message_edits, then
+	 *    updates telegram_private_messages).
 	 *  - Deletions (stamps deleted_at, keeps the row).
-	 *  - Forward info (inserts into private_message_fwd_info if
+	 *  - Forward info (inserts into telegram_private_message_fwd_info if
 	 *    present and not already recorded).
 	 */
 	MsgCountRefetch upsertPrivateMessage(const models::PrivateMessage &msg);
 
 	/*
 	 * Insert or update a group-chat message. Same semantics as
-	 * upsertPrivateMessage, targeting the group_messages tables.
+	 * upsertPrivateMessage, targeting the telegram_group_messages tables.
 	 */
 	MsgCountRefetch upsertGroupMessage(const models::GroupMessage &msg);
 
@@ -222,7 +222,7 @@ private:
 				     int64_t user_id, uint64_t file_id);
 
 	/*
-	 * user_extra_info holds the sparse per-user fields split out of the
+	 * telegram_user_extra_info holds the sparse per-user fields split out of the
 	 * users table. It is written from two sources -- the user object (most
 	 * fields) and userFullInfo (bio, personal_chat_id) -- so each helper
 	 * upserts only the columns it owns and never clobbers the other's.

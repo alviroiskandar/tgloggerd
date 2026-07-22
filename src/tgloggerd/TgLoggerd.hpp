@@ -54,7 +54,7 @@ private:
 	 */
 	uint64_t max_store_file_size_ = 1073741824ULL;
 	/*
-	 * In-memory tg_file_id -> files.id index. Lets the loop thread decide,
+	 * In-memory tg_file_id -> telegram_files.id index. Lets the loop thread decide,
 	 * without a DB round-trip, that a message's file is already recorded
 	 * and can be linked instead of re-downloaded. Seeded at startup and
 	 * updated on each store; guarded because file-pool workers write it
