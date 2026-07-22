@@ -415,7 +415,10 @@ const SearchField kFileFields[] = {
 	{ "hits",       "Hits",      FType::Int,      FKind::Column, "f.hit_count",      "", "", "", INT_OPS,  true,  true,  "" },
 	{ "stored",     "Stored",    FType::Bool,     FKind::Column, "f.on_disk",        "", "", "", BOOL_OPS, false, true,  "" },
 	{ "tg_file_id", "TG file id",FType::Text,     FKind::Column, "f.tg_file_id",     "", "", "", TEXT_OPS, false, false, "" },
-	{ "sha256",     "SHA-256",   FType::Text,     FKind::Column, "HEX(f.sha256)",    "", "", "", TEXT_OPS, false, false, "" },
+	/* Match the BINARY(32) digest via UNHEX(?) so the unique sha256 index is
+	 * used (a functional HEX(sha256) LHS would force a full scan). Exact only:
+	 * UNHEX has no prefix form. Accepts upper/lower hex; bad hex -> no match. */
+	{ "sha256",     "SHA-256",   FType::Text,     FKind::Column, "f.sha256",         "", "", "", OP_EQ | OP_NE, false, false, "", "UNHEX(?)" },
 	{ "created_at", "Created",   FType::Datetime, FKind::Column, "f.created_at",     "", "", "", DT_OPS,   true,  true,  "" },
 	{ "updated_at", "Updated",   FType::Datetime, FKind::Column, "f.updated_at",     "", "", "", DT_OPS,   true,  false, "" },
 };
@@ -594,7 +597,10 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 				frag += f->expr;
 				frag += " ";
 				frag += ot->sqlTok;
-				frag += " ?)";
+				frag += " ";
+				frag += f->bindTmpl.empty() ? std::string_view("?")
+							    : f->bindTmpl;
+				frag += ")";
 			} else { /* Exists */
 				if (++existsCount > MAX_EXISTS) {
 					err = "too many history conditions (max " +

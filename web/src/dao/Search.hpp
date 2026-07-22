@@ -67,6 +67,12 @@ struct SearchField {
 	bool             sortable;
 	bool             display;  /* part of the default result columns */
 	std::string_view enumVals; /* Enum: CSV of allowed values, else "" */
+	/* Column only: SQL for the bound value on the RHS of the comparison; must
+	 * contain exactly one `?`. Empty means a plain "?". Lets a field wrap its
+	 * parameter, e.g. "UNHEX(?)" to match a BINARY column against a hex string
+	 * while still using its index (a functional LHS like HEX(col) could not).
+	 * Defaulted so existing field tables need not list it. */
+	std::string_view bindTmpl = {};
 };
 
 /*
