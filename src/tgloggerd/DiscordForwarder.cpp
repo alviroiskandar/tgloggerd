@@ -233,7 +233,8 @@ std::string DiscordForwarder::build_payload(const Sender &s,
 void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
 				       const std::string &payload,
 				       int64_t chat_id, int64_t message_id,
-				       const char *kind)
+				       const char *kind,
+				       const std::string &content)
 {
 	for (const auto &url : urls) {
 		DiscordResponse r = client_.post_json(url, payload);
@@ -244,11 +245,12 @@ void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
 				r.status, detail.c_str());
 			continue;
 		}
-		/* Remember the Discord message so a later Telegram edit finds it. */
+		/* Remember the Discord message + content so a later Telegram edit
+		 * or delete can update it. */
 		if (!r.message_id.empty()) {
 			try {
 				db_->recordSentMessage(chat_id, message_id, url,
-						       r.message_id, kind);
+						       r.message_id, kind, content);
 			} catch (const std::exception &e) {
 				pr_warn(l_, "discord: record sent-message failed: %s",
 					e.what());
@@ -295,7 +297,7 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
 		urls.size(), content.c_str());
 	post_and_record(urls, build_payload(s, content, std::string()),
-			fm.chat_id, fm.message_id, "text");
+			fm.chat_id, fm.message_id, "text", content);
 }
 
 void DiscordForwarder::forward_edit(const ForwardMessage &fm)
@@ -338,6 +340,60 @@ void DiscordForwarder::do_edit_forward(ForwardMessage fm)
 			pr_warn(l_, "discord: edit PATCH failed (status=%ld): %s",
 				r.status, detail.c_str());
 		}
+	}
+	/* Keep the stored content current so a later delete rebuilds correctly. */
+	try {
+		db_->updateSentContent(fm.chat_id, fm.message_id, "text", content);
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: update sent content failed: %s", e.what());
+	}
+}
+
+void DiscordForwarder::forward_delete(int64_t chat_id, int64_t message_id)
+{
+	if (webhooks_for(chat_id).empty())
+		return;
+	pool_.post([this, chat_id, message_id] {
+		do_delete_forward(chat_id, message_id);
+	});
+}
+
+void DiscordForwarder::do_delete_forward(int64_t chat_id, int64_t message_id)
+{
+	std::vector<SentMessage> sent;
+	try {
+		sent = db_->getSentMessages(chat_id, message_id, nullptr);
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: delete lookup failed: %s", e.what());
+		return;
+	}
+	if (sent.empty())
+		return; /* nothing forwarded, or already pruned */
+
+	pr_info(l_, "discord: tombstoning deleted chat_id=%lld msg_id=%lld "
+		"(%zu message(s))", (long long)chat_id, (long long)message_id,
+		sent.size());
+	for (const auto &s : sent) {
+		/* Prepend "(Deleted)" to the current content, then re-fit it into
+		 * Discord's 2000-char limit (the prefix is kept, the tail trimmed). */
+		std::string content = utf8_truncate("(Deleted)\n\n" + s.content, 2000);
+		std::string payload = "{\"content\":\"" + json_escape(content) +
+				      "\",\"allowed_mentions\":{\"parse\":[]}}";
+		DiscordResponse r = client_.patch_json(s.webhook_url,
+						       s.discord_message_id, payload);
+		if (!r.ok()) {
+			std::string detail = r.status ? r.body.substr(0, 200)
+						      : r.error;
+			pr_warn(l_, "discord: delete PATCH failed (status=%ld): %s",
+				r.status, detail.c_str());
+		}
+	}
+	/* Deletion is terminal: drop the tracking rows so nothing edits or
+	 * re-tombstones them later. */
+	try {
+		db_->deleteSentMessages(chat_id, message_id);
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: delete tracking rows failed: %s", e.what());
 	}
 }
 
@@ -394,7 +450,7 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
 	pr_info(l_, "discord: forwarding media chat_id=%lld (%s) to %zu webhook(s)",
 		(long long)chat_id, fi->file_type.c_str(), urls.size());
 	post_and_record(urls, build_payload(s, content, embed), chat_id,
-			message_id, "media");
+			message_id, "media", content);
 }
 
 void DiscordForwarder::sweep_pending_locked(int64_t now)

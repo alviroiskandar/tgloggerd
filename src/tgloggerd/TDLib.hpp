@@ -175,6 +175,13 @@ public:
 	void setEditForwardHandler(std::function<void(const ForwardMessage &)> cb);
 
 	/*
+	 * Set the callback invoked when a live message is permanently deleted
+	 * (chat_id, server message id), so the forwarder can tombstone the
+	 * corresponding Discord message. Runs on the event thread.
+	 */
+	void setDeleteForwardHandler(std::function<void(int64_t, int64_t)> cb);
+
+	/*
 	 * Set the callback invoked when a message's media attachment has
 	 * finished downloading, so it can be stored and linked.
 	 */

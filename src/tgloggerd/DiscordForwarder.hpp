@@ -58,6 +58,10 @@ public:
 	/* A live message was edited: update its forwarded Discord message(s). */
 	void forward_edit(const ForwardMessage &fm);
 
+	/* A live message was deleted (for everyone): tombstone its forwarded
+	 * Discord message(s) with a "(Deleted)" prefix instead of removing them. */
+	void forward_delete(int64_t chat_id, int64_t message_id);
+
 	/*
 	 * A media file finished downloading/linking. If it belongs to a live
 	 * message we recorded, forward it. Called from the file pipeline (files_
@@ -89,15 +93,18 @@ private:
 	std::string quote_prefix(const ForwardMessage &fm);
 	std::string build_payload(const Sender &s, const std::string &content,
 				  const std::string &embed) const;
-	/* POST to each webhook and record the created message ids (for edits). */
+	/* POST to each webhook and record the created message ids + content
+	 * (for later edits/deletes). */
 	void post_and_record(const std::vector<std::string> &urls,
 			     const std::string &payload, int64_t chat_id,
-			     int64_t message_id, const char *kind);
+			     int64_t message_id, const char *kind,
+			     const std::string &content);
 
 	void do_text_forward(ForwardMessage fm, std::vector<std::string> urls);
 	void do_media_forward(int64_t chat_id, int64_t message_id, PendingMedia pm,
 			      uint64_t files_id, std::vector<std::string> urls);
 	void do_edit_forward(ForwardMessage fm);
+	void do_delete_forward(int64_t chat_id, int64_t message_id);
 	void sweep_pending_locked(int64_t now);
 
 	DB		*db_;

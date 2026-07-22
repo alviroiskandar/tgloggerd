@@ -18,6 +18,8 @@ CREATE TABLE discord_sent_messages (
 	                                   COMMENT 'Discord message snowflake, for editing.',
 	kind               ENUM('text', 'media') NOT NULL DEFAULT 'text'
 	                                   COMMENT 'Which forwarded part this row is.',
+	content            TEXT            NULL
+	                                   COMMENT 'Content posted (kept current on edit), so a delete can prepend "(Deleted)".',
 
 	created_at         DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

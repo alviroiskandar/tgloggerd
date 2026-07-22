@@ -337,6 +337,10 @@ int TgLoggerd::start(void)
 	tdlib_->setEditForwardHandler([this](const ForwardMessage &fm) {
 		discord_->forward_edit(fm);
 	});
+	/* Tombstone the forwarded Discord message when the source is deleted. */
+	tdlib_->setDeleteForwardHandler([this](int64_t chat_id, int64_t msg_id) {
+		discord_->forward_delete(chat_id, msg_id);
+	});
 	tdlib_->setPrivateMessageHandler([this](const models::PrivateMessage &pm) {
 		serial_->post([this, pm] {
 			try {

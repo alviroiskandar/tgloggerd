@@ -106,32 +106,55 @@ std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
 void DB::recordSentMessage(int64_t chat_id, int64_t message_id,
 			   const std::string &webhook_url,
 			   const std::string &discord_message_id,
-			   const char *kind)
+			   const char *kind, const std::string &content)
 {
 	db_.execute(
 		"INSERT INTO discord_sent_messages "
-		"(chat_id, message_id, webhook_url, discord_message_id, kind) "
-		"VALUES (?, ?, ?, ?, ?)",
+		"(chat_id, message_id, webhook_url, discord_message_id, kind, "
+		"content) VALUES (?, ?, ?, ?, ?, ?)",
 		{ chat_id, message_id, webhook_url, discord_message_id,
-		  std::string(kind) });
+		  std::string(kind), content });
 }
 
 std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
 					     int64_t message_id,
 					     const char *kind)
 {
-	auto rows = db_.query(
-		"SELECT webhook_url, discord_message_id FROM discord_sent_messages "
-		"WHERE chat_id = ? AND message_id = ? AND kind = ?",
-		{ chat_id, message_id, std::string(kind) });
+	std::string sql =
+		"SELECT webhook_url, discord_message_id, content "
+		"FROM discord_sent_messages WHERE chat_id = ? AND message_id = ?";
+	std::vector<mysql::Param> params = { chat_id, message_id };
+	if (kind) {
+		sql += " AND kind = ?";
+		params.push_back(std::string(kind));
+	}
+
+	auto rows = db_.query(sql, params);
 	std::vector<SentMessage> out;
 	out.reserve(rows.size());
 	for (const auto &r : rows) {
 		if (!r[0].has_value() || !r[1].has_value())
 			continue;
-		out.push_back({ *r[0], *r[1] });
+		out.push_back({ *r[0], *r[1], r[2].value_or("") });
 	}
 	return out;
+}
+
+void DB::updateSentContent(int64_t chat_id, int64_t message_id,
+			   const char *kind, const std::string &content)
+{
+	db_.execute(
+		"UPDATE discord_sent_messages SET content = ? "
+		"WHERE chat_id = ? AND message_id = ? AND kind = ?",
+		{ content, chat_id, message_id, std::string(kind) });
+}
+
+void DB::deleteSentMessages(int64_t chat_id, int64_t message_id)
+{
+	db_.execute(
+		"DELETE FROM discord_sent_messages "
+		"WHERE chat_id = ? AND message_id = ?",
+		{ chat_id, message_id });
 }
 
 void DB::pruneSentMessages(int days)

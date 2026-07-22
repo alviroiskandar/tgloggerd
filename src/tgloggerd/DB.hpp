@@ -63,10 +63,11 @@ struct FileInfo {
 	bool        on_disk;   /* false = metadata-only, no servable bytes */
 };
 
-/* A Discord message the forwarder posted, for applying a later edit. */
+/* A Discord message the forwarder posted, for applying a later edit/delete. */
 struct SentMessage {
 	std::string webhook_url;
 	std::string discord_message_id;
+	std::string content; /* the content last posted, for edit/delete rebuild */
 };
 
 class DB {
@@ -87,15 +88,20 @@ public:
 						      int64_t message_id);
 	std::optional<FileInfo> getFileInfo(uint64_t files_id);
 
-	/* Record a forwarded Discord message so a later edit can find it. */
+	/* Record a forwarded Discord message so a later edit/delete can find it. */
 	void recordSentMessage(int64_t chat_id, int64_t message_id,
 			       const std::string &webhook_url,
 			       const std::string &discord_message_id,
-			       const char *kind);
-	/* The Discord messages posted for a source message + part ("text"). */
+			       const char *kind, const std::string &content);
+	/* The Discord messages posted for a source message; kind=nullptr = all. */
 	std::vector<SentMessage> getSentMessages(int64_t chat_id,
 						 int64_t message_id,
 						 const char *kind);
+	/* Keep the stored content current after an edit (so a delete rebuilds it). */
+	void updateSentContent(int64_t chat_id, int64_t message_id,
+			       const char *kind, const std::string &content);
+	/* Drop the tracking rows for a message (after it is deleted/tombstoned). */
+	void deleteSentMessages(int64_t chat_id, int64_t message_id);
 	/* Drop tracking rows older than `days` (edits rarely happen that late). */
 	void pruneSentMessages(int days);
 

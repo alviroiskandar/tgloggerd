@@ -849,6 +849,7 @@ struct TDLib::Impl {
 	std::function<void(const TextMessage &)>	msg_handler_;
 	std::function<void(const ForwardMessage &)>	forward_handler_;
 	std::function<void(const ForwardMessage &)>	edit_forward_handler_;
+	std::function<void(int64_t, int64_t)>		delete_forward_handler_;
 	std::function<void(const models::PrivateMessage &)> private_msg_handler_;
 	std::function<void(const models::GroupMessage &)> group_msg_handler_;
 	std::function<void(const MessageFile &)>	message_file_handler_;
@@ -1748,6 +1749,9 @@ void TDLib::Impl::handle_delete_messages(int64_t chat_id,
 			gm.is_deleted = true;
 			group_msg_handler_(gm);
 		}
+		/* Tombstone the forwarded Discord message too. */
+		if (delete_forward_handler_)
+			delete_forward_handler_(chat_id, sid);
 	}
 }
 
@@ -2633,6 +2637,11 @@ void TDLib::setForwardHandler(std::function<void(const ForwardMessage &)> cb)
 void TDLib::setEditForwardHandler(std::function<void(const ForwardMessage &)> cb)
 {
 	impl_->edit_forward_handler_ = std::move(cb);
+}
+
+void TDLib::setDeleteForwardHandler(std::function<void(int64_t, int64_t)> cb)
+{
+	impl_->delete_forward_handler_ = std::move(cb);
 }
 
 void TDLib::setPrivateMessageHandler(
