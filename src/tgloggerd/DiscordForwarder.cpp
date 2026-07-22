@@ -393,15 +393,31 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
 		ri.ok ? "+reply" : "", urls.size(), content.c_str());
 
-	/* The reply embed's jump link is per-channel, so build one payload per
-	 * webhook (without a reply, the embed is empty and payloads are equal). */
 	for (const auto &url : urls) {
-		std::string embed;
-		if (ri.ok)
-			embed = reply_embed(ri,
+		/* The replied-message preview is posted first, as its own message,
+		 * so it renders ABOVE the reply (Discord always draws a message's
+		 * content above its embeds). It is not tracked: it mirrors another,
+		 * still-present message, so edits/deletes of this reply never touch
+		 * it. Its jump link is per-channel, so it is built inside the loop. */
+		if (ri.ok) {
+			std::string embed = reply_embed(ri,
 				reply_jump_url(url, ri.chat_id, ri.message_id));
-		post_one_and_record(url, build_payload(s, content, embed),
-				    fm.chat_id, fm.message_id, "text");
+			DiscordResponse r = client_.post_json(url,
+				build_payload(s, std::string(), embed));
+			if (!r.ok()) {
+				std::string detail = r.status ? r.body.substr(0, 200)
+							      : r.error;
+				pr_warn(l_, "discord: reply preview POST failed "
+					"(status=%ld): %s", r.status, detail.c_str());
+			}
+		}
+
+		/* Then the reply text itself (tracked for later edit/delete). A
+		 * media-only reply has no text here; its image follows separately. */
+		if (!content.empty())
+			post_one_and_record(url, build_payload(s, content,
+					    std::string()), fm.chat_id,
+					    fm.message_id, "text");
 	}
 }
 
