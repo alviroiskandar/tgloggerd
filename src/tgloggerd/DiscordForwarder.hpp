@@ -80,6 +80,9 @@ private:
 		int64_t     sender_id;
 		int64_t     sender_chat_id;
 		std::string sender_name;
+		int64_t     reply_to_chat_id; /* the message this media replies to, */
+		int64_t     reply_to_msg_id;  /* so its preview is posted with the media */
+		bool        has_caption;      /* if so, do_text_forward showed the preview */
 	};
 	/* A webhook's guild/channel, to build a message jump link (from a
 	 * one-time GET of the webhook, cached in webhook_info_). */
@@ -118,6 +121,10 @@ private:
 				   int64_t reply_chat_id, int64_t reply_msg_id);
 	/* Guild/channel of a webhook (cached; one GET per webhook). */
 	WebhookInfo webhook_info(const std::string &webhook_url);
+	/* Post the replied-message preview as its own (untracked) message to one
+	 * webhook, so a following post renders below it. */
+	void post_reply_preview(const std::string &webhook_url, const Sender &s,
+				const ReplyInfo &ri);
 	std::string build_payload(const Sender &s, const std::string &content,
 				  const std::string &embed) const;
 	/* POST one payload to a webhook and record the created message id (so a
@@ -125,10 +132,6 @@ private:
 	void post_one_and_record(const std::string &url, const std::string &payload,
 				 int64_t chat_id, int64_t message_id,
 				 const char *kind);
-	/* Post the same payload to each webhook. */
-	void post_and_record(const std::vector<std::string> &urls,
-			     const std::string &payload, int64_t chat_id,
-			     int64_t message_id, const char *kind);
 
 	void do_text_forward(ForwardMessage fm, std::vector<std::string> urls);
 	void do_media_forward(int64_t chat_id, int64_t message_id, PendingMedia pm,

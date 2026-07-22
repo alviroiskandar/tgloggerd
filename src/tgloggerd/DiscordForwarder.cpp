@@ -306,6 +306,23 @@ std::string DiscordForwarder::reply_jump_url(const std::string &webhook_url,
 	       wi.channel_id + "/" + msg_id;
 }
 
+void DiscordForwarder::post_reply_preview(const std::string &webhook_url,
+					  const Sender &s, const ReplyInfo &ri)
+{
+	/* Own message, empty content + the reply embed, so the caller's next
+	 * post to the same webhook lands below it. Not tracked: it mirrors
+	 * another, still-present message. Jump link is per-channel. */
+	std::string embed = reply_embed(ri,
+		reply_jump_url(webhook_url, ri.chat_id, ri.message_id));
+	DiscordResponse r = client_.post_json(webhook_url,
+		build_payload(s, std::string(), embed));
+	if (!r.ok()) {
+		std::string detail = r.status ? r.body.substr(0, 200) : r.error;
+		pr_warn(l_, "discord: reply preview POST failed (status=%ld): %s",
+			r.status, detail.c_str());
+	}
+}
+
 std::string DiscordForwarder::build_payload(const Sender &s,
 					    const std::string &content,
 					    const std::string &embed) const
@@ -346,15 +363,6 @@ void DiscordForwarder::post_one_and_record(const std::string &url,
 	}
 }
 
-void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
-				       const std::string &payload,
-				       int64_t chat_id, int64_t message_id,
-				       const char *kind)
-{
-	for (const auto &url : urls)
-		post_one_and_record(url, payload, chat_id, message_id, kind);
-}
-
 void DiscordForwarder::forward(const ForwardMessage &fm)
 {
 	std::vector<std::string> urls = webhooks_for(fm.chat_id);
@@ -368,7 +376,9 @@ void DiscordForwarder::forward(const ForwardMessage &fm)
 		sweep_pending_locked(now_epoch());
 		pending_media_[{ fm.chat_id, fm.message_id }] = PendingMedia{
 			now_epoch() + media_ttl_, fm.sender_id,
-			fm.sender_chat_id, fm.sender_name };
+			fm.sender_chat_id, fm.sender_name,
+			fm.reply_to_chat_id, fm.reply_to_msg_id,
+			!fm.text.empty() };
 	}
 
 	/* A caption/quote (if any) is sent now; the media (if any) follows. */
@@ -379,14 +389,14 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 				       std::vector<std::string> urls)
 {
 	std::string content = utf8_truncate(fm.text, 2000);
-	ReplyInfo ri = resolve_reply(fm);
 
-	/* Nothing to show: media with no caption and not a reply -- the image
-	 * follows in do_media_forward -- or an empty service message. A reply is
-	 * always shown (its embed carries the context) even without text. */
-	if (content.empty() && !ri.ok)
+	/* No text to post: a media message with no caption (sticker/photo) or an
+	 * empty service message. Such a reply's preview is posted by
+	 * do_media_forward, right before the media, so it stays above it. */
+	if (content.empty())
 		return;
 
+	ReplyInfo ri = resolve_reply(fm);
 	Sender s = resolve_sender(fm.chat_id, fm.sender_id, fm.sender_chat_id,
 				  fm.sender_name);
 	pr_info(l_, "discord: forwarding chat_id=%lld (%s%s) to %zu webhook(s): %.60s",
@@ -394,30 +404,13 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 		ri.ok ? "+reply" : "", urls.size(), content.c_str());
 
 	for (const auto &url : urls) {
-		/* The replied-message preview is posted first, as its own message,
-		 * so it renders ABOVE the reply (Discord always draws a message's
-		 * content above its embeds). It is not tracked: it mirrors another,
-		 * still-present message, so edits/deletes of this reply never touch
-		 * it. Its jump link is per-channel, so it is built inside the loop. */
-		if (ri.ok) {
-			std::string embed = reply_embed(ri,
-				reply_jump_url(url, ri.chat_id, ri.message_id));
-			DiscordResponse r = client_.post_json(url,
-				build_payload(s, std::string(), embed));
-			if (!r.ok()) {
-				std::string detail = r.status ? r.body.substr(0, 200)
-							      : r.error;
-				pr_warn(l_, "discord: reply preview POST failed "
-					"(status=%ld): %s", r.status, detail.c_str());
-			}
-		}
-
-		/* Then the reply text itself (tracked for later edit/delete). A
-		 * media-only reply has no text here; its image follows separately. */
-		if (!content.empty())
-			post_one_and_record(url, build_payload(s, content,
-					    std::string()), fm.chat_id,
-					    fm.message_id, "text");
+		/* The replied-message preview goes first (own message), so the reply
+		 * text lands below it -- Discord draws content above embeds, so they
+		 * cannot share one message. Jump link is per-channel. */
+		if (ri.ok)
+			post_reply_preview(url, s, ri);
+		post_one_and_record(url, build_payload(s, content, std::string()),
+				    fm.chat_id, fm.message_id, "text");
 	}
 }
 
@@ -582,6 +575,19 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
 	Sender s = resolve_sender(chat_id, pm.sender_id, pm.sender_chat_id,
 				  pm.sender_name);
 
+	/* If this media is a reply with no caption, its preview was not posted by
+	 * do_text_forward; post it here, right before the media, so it stays
+	 * above it. (A captioned reply already showed the preview in the text
+	 * message.) Posting both from this one task keeps them ordered. */
+	ReplyInfo ri;
+	if (pm.reply_to_msg_id != 0 && !pm.has_caption) {
+		ForwardMessage q{};
+		q.chat_id = chat_id;
+		q.reply_to_chat_id = pm.reply_to_chat_id;
+		q.reply_to_msg_id = pm.reply_to_msg_id;
+		ri = resolve_reply(q);
+	}
+
 	std::string content, embed;
 	if (is_image(fi->file_type, fi->ext))
 		embed = "\"embeds\":[{\"image\":{\"url\":\"" +
@@ -589,10 +595,15 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
 	else
 		content = url; /* video auto-embeds; documents render as a link */
 
-	pr_info(l_, "discord: forwarding media chat_id=%lld (%s) to %zu webhook(s)",
-		(long long)chat_id, fi->file_type.c_str(), urls.size());
-	post_and_record(urls, build_payload(s, content, embed), chat_id,
-			message_id, "media");
+	pr_info(l_, "discord: forwarding media chat_id=%lld (%s%s) to %zu webhook(s)",
+		(long long)chat_id, fi->file_type.c_str(),
+		ri.ok ? "+reply" : "", urls.size());
+	for (const auto &hook : urls) {
+		if (ri.ok)
+			post_reply_preview(hook, s, ri);
+		post_one_and_record(hook, build_payload(s, content, embed),
+				    chat_id, message_id, "media");
+	}
 }
 
 void DiscordForwarder::sweep_pending_locked(int64_t now)
