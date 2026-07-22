@@ -10,9 +10,10 @@
 namespace tgloggerd {
 
 struct DiscordResponse {
-	long		status = 0; /* HTTP status; 0 = transport error. */
-	std::string	body;       /* response body (may hold a Discord error). */
-	std::string	error;      /* transport error message when status == 0. */
+	long		status = 0;  /* HTTP status; 0 = transport error. */
+	std::string	body;        /* response body (may hold a Discord error). */
+	std::string	error;       /* transport error message when status == 0. */
+	std::string	message_id;  /* created Discord message id (POST ?wait). */
 
 	bool ok(void) const { return status >= 200 && status < 300; }
 };
@@ -33,15 +34,26 @@ public:
 
 	/*
 	 * POST `json_body` (Content-Type: application/json) to the webhook `url`.
-	 * Retries a few times on HTTP 429, honoring the retry_after hint. Returns
-	 * the last response, or a transport error (status == 0).
+	 * Uses ?wait=true so the created message id comes back in
+	 * DiscordResponse::message_id. Retries a few times on HTTP 429, honoring
+	 * the retry_after hint. Returns the last response, or a transport error.
 	 */
 	DiscordResponse post_json(const std::string &url,
 				  const std::string &json_body);
 
+	/*
+	 * Edit a previously-sent webhook message:
+	 * PATCH <webhook_url>/messages/<message_id> with `json_body`.
+	 */
+	DiscordResponse patch_json(const std::string &webhook_url,
+				   const std::string &message_id,
+				   const std::string &json_body);
+
 private:
-	DiscordResponse post_once(const std::string &url,
-				  const std::string &json_body);
+	DiscordResponse request(const char *method, const std::string &url,
+				const std::string &json_body);
+	DiscordResponse with_retry(const char *method, const std::string &url,
+				   const std::string &json_body);
 };
 
 } /* namespace tgloggerd */

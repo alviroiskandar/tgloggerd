@@ -63,6 +63,12 @@ struct FileInfo {
 	bool        on_disk;   /* false = metadata-only, no servable bytes */
 };
 
+/* A Discord message the forwarder posted, for applying a later edit. */
+struct SentMessage {
+	std::string webhook_url;
+	std::string discord_message_id;
+};
+
 class DB {
 public:
 	explicit DB(const mysql::Config &cfg);
@@ -80,6 +86,18 @@ public:
 	std::optional<QuotedMessage> getQuotedMessage(int64_t chat_id,
 						      int64_t message_id);
 	std::optional<FileInfo> getFileInfo(uint64_t files_id);
+
+	/* Record a forwarded Discord message so a later edit can find it. */
+	void recordSentMessage(int64_t chat_id, int64_t message_id,
+			       const std::string &webhook_url,
+			       const std::string &discord_message_id,
+			       const char *kind);
+	/* The Discord messages posted for a source message + part ("text"). */
+	std::vector<SentMessage> getSentMessages(int64_t chat_id,
+						 int64_t message_id,
+						 const char *kind);
+	/* Drop tracking rows older than `days` (edits rarely happen that late). */
+	void pruneSentMessages(int days);
 
 	/*
 	 * Insert or update a user together with its usernames, atomically.

@@ -103,6 +103,45 @@ std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
 	return fi;
 }
 
+void DB::recordSentMessage(int64_t chat_id, int64_t message_id,
+			   const std::string &webhook_url,
+			   const std::string &discord_message_id,
+			   const char *kind)
+{
+	db_.execute(
+		"INSERT INTO discord_sent_messages "
+		"(chat_id, message_id, webhook_url, discord_message_id, kind) "
+		"VALUES (?, ?, ?, ?, ?)",
+		{ chat_id, message_id, webhook_url, discord_message_id,
+		  std::string(kind) });
+}
+
+std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
+					     int64_t message_id,
+					     const char *kind)
+{
+	auto rows = db_.query(
+		"SELECT webhook_url, discord_message_id FROM discord_sent_messages "
+		"WHERE chat_id = ? AND message_id = ? AND kind = ?",
+		{ chat_id, message_id, std::string(kind) });
+	std::vector<SentMessage> out;
+	out.reserve(rows.size());
+	for (const auto &r : rows) {
+		if (!r[0].has_value() || !r[1].has_value())
+			continue;
+		out.push_back({ *r[0], *r[1] });
+	}
+	return out;
+}
+
+void DB::pruneSentMessages(int days)
+{
+	db_.execute(
+		"DELETE FROM discord_sent_messages "
+		"WHERE created_at < (UTC_TIMESTAMP() - INTERVAL ? DAY)",
+		{ (int64_t)days });
+}
+
 void DB::recordTextHistory(mysql::Transaction &tx, const char *table,
 			   const char *fk_column, const char *value_column,
 			   int64_t entity_id, const std::string &value)

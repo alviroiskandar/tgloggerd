@@ -333,6 +333,10 @@ int TgLoggerd::start(void)
 	tdlib_->setForwardHandler([this](const ForwardMessage &fm) {
 		discord_->forward(fm);
 	});
+	/* Apply live edits to the already-forwarded Discord message. */
+	tdlib_->setEditForwardHandler([this](const ForwardMessage &fm) {
+		discord_->forward_edit(fm);
+	});
 	tdlib_->setPrivateMessageHandler([this](const models::PrivateMessage &pm) {
 		serial_->post([this, pm] {
 			try {

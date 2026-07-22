@@ -60,6 +60,20 @@ double parse_retry_after(const std::string &body)
 	return std::atof(body.c_str() + p + 1);
 }
 
+/* The message id from a Discord message JSON: the first top-level "id":"..."
+ * (it precedes channel_id/webhook_id/author.id in the response). */
+std::string extract_message_id(const std::string &body)
+{
+	size_t p = body.find("\"id\":\"");
+	if (p == std::string::npos)
+		return std::string();
+	p += 6;
+	size_t e = p;
+	while (e < body.size() && body[e] >= '0' && body[e] <= '9')
+		e++;
+	return body.substr(p, e - p);
+}
+
 } /* namespace */
 
 void DiscordClient::global_init(void)
@@ -67,8 +81,9 @@ void DiscordClient::global_init(void)
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
-DiscordResponse DiscordClient::post_once(const std::string &url,
-					 const std::string &json_body)
+DiscordResponse DiscordClient::request(const char *method,
+				       const std::string &url,
+				       const std::string &json_body)
 {
 	DiscordResponse r;
 	CURL *curl = curl_easy_init();
@@ -82,7 +97,7 @@ DiscordResponse DiscordClient::post_once(const std::string &url,
 	hdrs = curl_slist_append(hdrs, "User-Agent: tgloggerd-discord/1.0");
 
 	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-	curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method); /* POST or PATCH */
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)json_body.size());
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
@@ -101,6 +116,8 @@ DiscordResponse DiscordClient::post_once(const std::string &url,
 		long code = 0;
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
 		r.status = code;
+		if (r.ok())
+			r.message_id = extract_message_id(r.body);
 	}
 
 	curl_slist_free_all(hdrs);
@@ -108,12 +125,13 @@ DiscordResponse DiscordClient::post_once(const std::string &url,
 	return r;
 }
 
-DiscordResponse DiscordClient::post_json(const std::string &url,
-					 const std::string &json_body)
+DiscordResponse DiscordClient::with_retry(const char *method,
+					  const std::string &url,
+					  const std::string &json_body)
 {
 	DiscordResponse r;
 	for (int attempt = 0; attempt < 4; attempt++) {
-		r = post_once(url, json_body);
+		r = request(method, url, json_body);
 		if (r.status != 429)
 			return r;
 
@@ -126,6 +144,23 @@ DiscordResponse DiscordClient::post_json(const std::string &url,
 			std::chrono::milliseconds((int)(wait * 1000) + 50));
 	}
 	return r;
+}
+
+DiscordResponse DiscordClient::post_json(const std::string &url,
+					 const std::string &json_body)
+{
+	/* ?wait=true so the created message id is returned (for later edits). */
+	std::string u = url +
+		(url.find('?') == std::string::npos ? "?wait=true" : "&wait=true");
+	return with_retry("POST", u, json_body);
+}
+
+DiscordResponse DiscordClient::patch_json(const std::string &webhook_url,
+					  const std::string &message_id,
+					  const std::string &json_body)
+{
+	return with_retry("PATCH", webhook_url + "/messages/" + message_id,
+			  json_body);
 }
 
 } /* namespace tgloggerd */

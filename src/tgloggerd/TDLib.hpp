@@ -168,6 +168,13 @@ public:
 	void setForwardHandler(std::function<void(const ForwardMessage &)> cb);
 
 	/*
+	 * Set the callback invoked when a live message is edited
+	 * (updateMessageEdited), carrying the updated content, so the forwarder
+	 * can edit the corresponding Discord message. Runs on the event thread.
+	 */
+	void setEditForwardHandler(std::function<void(const ForwardMessage &)> cb);
+
+	/*
 	 * Set the callback invoked when a message's media attachment has
 	 * finished downloading, so it can be stored and linked.
 	 */

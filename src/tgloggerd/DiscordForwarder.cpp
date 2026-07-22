@@ -129,6 +129,13 @@ void DiscordForwarder::reload(void)
 	}
 	pr_info(l_, "discord: loaded %zu webhook(s) across %zu chat(s)",
 		n_hooks, n_chats);
+
+	/* Age out old edit-tracking rows (Telegram edits stop after ~48h). */
+	try {
+		db_->pruneSentMessages(sent_retention_days_);
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: prune sent-messages failed: %s", e.what());
+	}
 }
 
 void DiscordForwarder::refresh_loop(void)
@@ -223,8 +230,10 @@ std::string DiscordForwarder::build_payload(const Sender &s,
 	return p;
 }
 
-void DiscordForwarder::post_all(const std::vector<std::string> &urls,
-				const std::string &payload)
+void DiscordForwarder::post_and_record(const std::vector<std::string> &urls,
+				       const std::string &payload,
+				       int64_t chat_id, int64_t message_id,
+				       const char *kind)
 {
 	for (const auto &url : urls) {
 		DiscordResponse r = client_.post_json(url, payload);
@@ -233,6 +242,17 @@ void DiscordForwarder::post_all(const std::vector<std::string> &urls,
 						      : r.error;
 			pr_warn(l_, "discord: webhook POST failed (status=%ld): %s",
 				r.status, detail.c_str());
+			continue;
+		}
+		/* Remember the Discord message so a later Telegram edit finds it. */
+		if (!r.message_id.empty()) {
+			try {
+				db_->recordSentMessage(chat_id, message_id, url,
+						       r.message_id, kind);
+			} catch (const std::exception &e) {
+				pr_warn(l_, "discord: record sent-message failed: %s",
+					e.what());
+			}
 		}
 	}
 }
@@ -274,7 +294,51 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 	pr_info(l_, "discord: forwarding chat_id=%lld (%s) to %zu webhook(s): %.60s",
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
 		urls.size(), content.c_str());
-	post_all(urls, build_payload(s, content, std::string()));
+	post_and_record(urls, build_payload(s, content, std::string()),
+			fm.chat_id, fm.message_id, "text");
+}
+
+void DiscordForwarder::forward_edit(const ForwardMessage &fm)
+{
+	if (webhooks_for(fm.chat_id).empty())
+		return;
+	pool_.post([this, fm] { do_edit_forward(fm); });
+}
+
+void DiscordForwarder::do_edit_forward(ForwardMessage fm)
+{
+	std::vector<SentMessage> sent;
+	try {
+		sent = db_->getSentMessages(fm.chat_id, fm.message_id, "text");
+	} catch (const std::exception &e) {
+		pr_warn(l_, "discord: edit lookup failed: %s", e.what());
+		return;
+	}
+	if (sent.empty())
+		return; /* nothing forwarded, or expired, or media-only */
+
+	std::string content = quote_prefix(fm);
+	content += fm.text;
+	if (content.empty())
+		return; /* edited to empty -> leave the Discord message as-is */
+	content = utf8_truncate(content, 2000);
+
+	/* A webhook message edit changes only content (not username/avatar). */
+	std::string payload = "{\"content\":\"" + json_escape(content) +
+			      "\",\"allowed_mentions\":{\"parse\":[]}}";
+
+	pr_info(l_, "discord: editing chat_id=%lld msg_id=%lld (%zu message(s))",
+		(long long)fm.chat_id, (long long)fm.message_id, sent.size());
+	for (const auto &s : sent) {
+		DiscordResponse r = client_.patch_json(s.webhook_url,
+						       s.discord_message_id, payload);
+		if (!r.ok()) {
+			std::string detail = r.status ? r.body.substr(0, 200)
+						      : r.error;
+			pr_warn(l_, "discord: edit PATCH failed (status=%ld): %s",
+				r.status, detail.c_str());
+		}
+	}
 }
 
 void DiscordForwarder::on_media_stored(int64_t chat_id, int64_t message_id,
@@ -294,13 +358,13 @@ void DiscordForwarder::on_media_stored(int64_t chat_id, int64_t message_id,
 	if (urls.empty())
 		return;
 
-	pool_.post([this, chat_id, pm, files_id, urls] {
-		do_media_forward(chat_id, pm, files_id, urls);
+	pool_.post([this, chat_id, message_id, pm, files_id, urls] {
+		do_media_forward(chat_id, message_id, pm, files_id, urls);
 	});
 }
 
-void DiscordForwarder::do_media_forward(int64_t chat_id, PendingMedia pm,
-					uint64_t files_id,
+void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
+					PendingMedia pm, uint64_t files_id,
 					std::vector<std::string> urls)
 {
 	std::optional<FileInfo> fi;
@@ -329,7 +393,8 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, PendingMedia pm,
 
 	pr_info(l_, "discord: forwarding media chat_id=%lld (%s) to %zu webhook(s)",
 		(long long)chat_id, fi->file_type.c_str(), urls.size());
-	post_all(urls, build_payload(s, content, embed));
+	post_and_record(urls, build_payload(s, content, embed), chat_id,
+			message_id, "media");
 }
 
 void DiscordForwarder::sweep_pending_locked(int64_t now)

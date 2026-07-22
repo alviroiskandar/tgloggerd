@@ -55,6 +55,9 @@ public:
 	/* Forward one live message. Called on the TDLib thread; returns fast. */
 	void forward(const ForwardMessage &fm);
 
+	/* A live message was edited: update its forwarded Discord message(s). */
+	void forward_edit(const ForwardMessage &fm);
+
 	/*
 	 * A media file finished downloading/linking. If it belongs to a live
 	 * message we recorded, forward it. Called from the file pipeline (files_
@@ -86,12 +89,15 @@ private:
 	std::string quote_prefix(const ForwardMessage &fm);
 	std::string build_payload(const Sender &s, const std::string &content,
 				  const std::string &embed) const;
-	void post_all(const std::vector<std::string> &urls,
-		      const std::string &payload);
+	/* POST to each webhook and record the created message ids (for edits). */
+	void post_and_record(const std::vector<std::string> &urls,
+			     const std::string &payload, int64_t chat_id,
+			     int64_t message_id, const char *kind);
 
 	void do_text_forward(ForwardMessage fm, std::vector<std::string> urls);
-	void do_media_forward(int64_t chat_id, PendingMedia pm, uint64_t files_id,
-			      std::vector<std::string> urls);
+	void do_media_forward(int64_t chat_id, int64_t message_id, PendingMedia pm,
+			      uint64_t files_id, std::vector<std::string> urls);
+	void do_edit_forward(ForwardMessage fm);
 	void sweep_pending_locked(int64_t now);
 
 	DB		*db_;
@@ -99,6 +105,7 @@ private:
 	int		refresh_secs_;
 	std::string	public_url_;   /* e.g. https://tgd.gnuweeb.org (no slash) */
 	int64_t		media_ttl_ = 120; /* seconds to wait for a media file */
+	int		sent_retention_days_ = 2; /* prune edit-tracking rows after */
 
 	DiscordClient	client_;
 	FileToken	token_;
