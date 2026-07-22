@@ -6,6 +6,7 @@
 
 #include <string>
 #include <cstdint>
+#include <stdexcept>
 
 namespace tgloggerd {
 
@@ -103,16 +104,41 @@ std::optional<FileInfo> DB::getFileInfo(uint64_t files_id)
 	return fi;
 }
 
+uint64_t DB::internEndpoint(const std::string &webhook_url)
+{
+	{
+		std::lock_guard<std::mutex> lk(endpoint_mtx_);
+		auto it = endpoint_ids_.find(webhook_url);
+		if (it != endpoint_ids_.end())
+			return it->second;
+	}
+
+	/* Insert-or-ignore then look up by the UNIQUE url: pool-safe (no
+	 * LAST_INSERT_ID, which would need the same connection). */
+	db_.execute("INSERT IGNORE INTO discord_endpoints (webhook_url) "
+		    "VALUES (?)", { webhook_url });
+	auto rows = db_.query("SELECT id FROM discord_endpoints WHERE "
+			      "webhook_url = ?", { webhook_url });
+	if (rows.empty() || !rows[0][0].has_value())
+		throw std::runtime_error("discord_endpoints intern failed");
+	uint64_t id = (uint64_t)std::stoull(*rows[0][0]);
+
+	std::lock_guard<std::mutex> lk(endpoint_mtx_);
+	endpoint_ids_[webhook_url] = id;
+	return id;
+}
+
 void DB::recordSentMessage(int64_t chat_id, int64_t message_id,
 			   const std::string &webhook_url,
 			   const std::string &discord_message_id,
 			   const char *kind)
 {
+	uint64_t endpoint_id = internEndpoint(webhook_url);
 	db_.execute(
 		"INSERT INTO discord_sent_messages "
-		"(chat_id, message_id, webhook_url, discord_message_id, kind) "
+		"(chat_id, message_id, endpoint_id, discord_message_id, kind) "
 		"VALUES (?, ?, ?, ?, ?)",
-		{ chat_id, message_id, webhook_url, discord_message_id,
+		{ chat_id, message_id, endpoint_id, discord_message_id,
 		  std::string(kind) });
 }
 
@@ -121,11 +147,13 @@ std::vector<SentMessage> DB::getSentMessages(int64_t chat_id,
 					     const char *kind)
 {
 	std::string sql =
-		"SELECT webhook_url, discord_message_id, kind "
-		"FROM discord_sent_messages WHERE chat_id = ? AND message_id = ?";
+		"SELECT e.webhook_url, m.discord_message_id, m.kind "
+		"FROM discord_sent_messages m "
+		"JOIN discord_endpoints e ON e.id = m.endpoint_id "
+		"WHERE m.chat_id = ? AND m.message_id = ?";
 	std::vector<mysql::Param> params = { chat_id, message_id };
 	if (kind) {
-		sql += " AND kind = ?";
+		sql += " AND m.kind = ?";
 		params.push_back(std::string(kind));
 	}
 

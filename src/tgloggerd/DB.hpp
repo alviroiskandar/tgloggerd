@@ -17,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -100,7 +101,8 @@ public:
 	std::optional<MessageForward> getMessageForward(int64_t chat_id,
 							int64_t message_id);
 
-	/* Record a forwarded Discord message so a later edit/delete can find it. */
+	/* Record a forwarded Discord message so a later edit/delete can find it.
+	 * The webhook URL is interned into discord_endpoints and stored by id. */
 	void recordSentMessage(int64_t chat_id, int64_t message_id,
 			       const std::string &webhook_url,
 			       const std::string &discord_message_id,
@@ -277,7 +279,17 @@ private:
 	 */
 	bool bumpMsgCount(mysql::Transaction &tx, const char *table, int64_t id);
 
+	/*
+	 * Return discord_endpoints.id for a webhook URL, inserting it on first
+	 * use. The dictionary is tiny and append-only, so results are memoized
+	 * in endpoint_ids_ (guarded by endpoint_mtx_) to keep recording cheap.
+	 */
+	uint64_t internEndpoint(const std::string &webhook_url);
+
 	mysql::Database db_;
+
+	std::mutex				endpoint_mtx_;
+	std::unordered_map<std::string, uint64_t> endpoint_ids_;
 };
 
 } /* namespace tgloggerd */
