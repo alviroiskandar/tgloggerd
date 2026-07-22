@@ -111,7 +111,7 @@ the response, so a client can build its UI from the registry.
 | `hist_bio` | Bio (ever) | text | E | `= LIKE %LIKE%` |
 | `hist_phone` | Phone (ever) | text | E | `= LIKE %LIKE%` |
 
-Column fields on `user_extra_info` are `COALESCE`'d to their schema default, so a
+Column fields on `telegram_user_extra_info` are `COALESCE`'d to their schema default, so a
 user whose extra-info row is absent (the daemon deletes all-default rows) still
 matches e.g. `bio = ''`. Sortable keys: `id, first_name, type, created_at,
 updated_at, msg_count, paid_star_count`.
@@ -215,7 +215,7 @@ columns once, and each entry in `rows` is a **positional array aligned to
 
 ```json
 "debug": {
-  "sql":       "SELECT ... FROM users u LEFT JOIN ... WHERE (u.type = ?) OR (u.is_scam = ?) ORDER BY u.id DESC LIMIT 1 OFFSET 0",
+  "sql":       "SELECT ... FROM telegram_users u LEFT JOIN ... WHERE (u.type = ?) OR (u.is_scam = ?) ORDER BY u.id DESC LIMIT 1 OFFSET 0",
   "count_sql": "SELECT ... COUNT(*) ...",
   "bind":      ["bot", "1"],
   "explain":   [ { "id": "1", "select_type": "SIMPLE", ... } ]
