@@ -102,8 +102,6 @@ public:
 			       const char *kind, const std::string &content);
 	/* Drop the tracking rows for a message (after it is deleted/tombstoned). */
 	void deleteSentMessages(int64_t chat_id, int64_t message_id);
-	/* Drop tracking rows older than `days` (edits rarely happen that late). */
-	void pruneSentMessages(int days);
 
 	/*
 	 * Insert or update a user together with its usernames, atomically.

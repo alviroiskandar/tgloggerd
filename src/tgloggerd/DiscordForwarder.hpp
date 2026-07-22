@@ -112,7 +112,6 @@ private:
 	int		refresh_secs_;
 	std::string	public_url_;   /* e.g. https://tgd.gnuweeb.org (no slash) */
 	int64_t		media_ttl_ = 120; /* seconds to wait for a media file */
-	int		sent_retention_days_ = 2; /* prune edit-tracking rows after */
 
 	DiscordClient	client_;
 	FileToken	token_;

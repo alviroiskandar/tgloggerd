@@ -129,13 +129,6 @@ void DiscordForwarder::reload(void)
 	}
 	pr_info(l_, "discord: loaded %zu webhook(s) across %zu chat(s)",
 		n_hooks, n_chats);
-
-	/* Age out old edit-tracking rows (Telegram edits stop after ~48h). */
-	try {
-		db_->pruneSentMessages(sent_retention_days_);
-	} catch (const std::exception &e) {
-		pr_warn(l_, "discord: prune sent-messages failed: %s", e.what());
-	}
 }
 
 void DiscordForwarder::refresh_loop(void)
