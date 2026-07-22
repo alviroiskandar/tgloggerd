@@ -103,6 +103,23 @@ struct MessageReply {
 };
 
 /*
+ * A live, newly-received message flattened for the Discord forwarder. Emitted
+ * once per updateNewMessage only (never for edits, deletes or backfill), with
+ * the sender name already resolved and the text/caption extracted. `kind` is
+ * the content category ("text", "photo", ...) used to render a placeholder when
+ * there is no text.
+ */
+struct ForwardMessage {
+	int64_t		chat_id = 0;
+	int64_t		sender_id = 0;
+	std::string	sender_name;
+	std::string	sender_username;
+	std::string	text;	/* message text or media caption; may be empty */
+	std::string	kind;	/* content category; empty for plain unknown */
+	bool		is_outgoing = false;
+};
+
+/*
  * tgloggerd::TDLib is a wrapper class for TDLib.
  *
  * Since TDLib contains very heavy header files, keep tgloggerd
@@ -137,6 +154,13 @@ public:
 	 */
 	void setGroupMessageHandler(
 		std::function<void(const models::GroupMessage &)> cb);
+
+	/*
+	 * Set the callback invoked once for every live, newly-received message
+	 * (updateNewMessage only), for forwarding to external sinks (Discord).
+	 * Runs on the TDLib event thread, so it must return quickly.
+	 */
+	void setForwardHandler(std::function<void(const ForwardMessage &)> cb);
 
 	/*
 	 * Set the callback invoked when a message's media attachment has

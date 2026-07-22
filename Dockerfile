@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # start; wget fetches golang-migrate below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		build-essential cmake git ca-certificates pkg-config wget \
-		gperf libssl-dev zlib1g-dev libmysqlclient-dev \
+		gperf libssl-dev zlib1g-dev libmysqlclient-dev libcurl4-openssl-dev \
 		libsodium-dev libjsoncpp-dev uuid-dev libbrotli-dev \
 	&& rm -rf /var/lib/apt/lists/*
 

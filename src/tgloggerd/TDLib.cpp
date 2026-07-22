@@ -637,6 +637,23 @@ void extract_message_content(const td_api::message &message,
 	}
 }
 
+/* Short content-kind label used by the Discord forwarder's placeholder text. */
+const char *forward_kind_str(models::MessageContentType t)
+{
+	switch (t) {
+	case models::MessageContentType::Text:      return "text";
+	case models::MessageContentType::Photo:     return "photo";
+	case models::MessageContentType::Video:     return "video";
+	case models::MessageContentType::Document:  return "document";
+	case models::MessageContentType::Audio:     return "audio";
+	case models::MessageContentType::Voice:     return "voice";
+	case models::MessageContentType::Sticker:   return "sticker";
+	case models::MessageContentType::Animation: return "animation";
+	case models::MessageContentType::Service:   return "service";
+	default:                                    return "";
+	}
+}
+
 /*
  * Extract forwarded-message origin info from a td_api::message. Returns
  * nullopt for non-forwarded messages. Shared by private and group
@@ -830,6 +847,7 @@ struct TDLib::Impl {
 	bool		purge_started_ = false;
 
 	std::function<void(const TextMessage &)>	msg_handler_;
+	std::function<void(const ForwardMessage &)>	forward_handler_;
 	std::function<void(const models::PrivateMessage &)> private_msg_handler_;
 	std::function<void(const models::GroupMessage &)> group_msg_handler_;
 	std::function<void(const MessageFile &)>	message_file_handler_;
@@ -1412,6 +1430,41 @@ void TDLib::Impl::handle_new_message(td_api::message &message)
 		handle_message_for_private_chat(message, 0);
 	else
 		handle_message_for_group_chat(message, 0);
+
+	/*
+	 * Forwarder path: emit every live new message (any content type) so the
+	 * Discord forwarder can mirror it. This runs only here (updateNewMessage),
+	 * never for edits/deletes/backfill, so nothing is mirrored twice.
+	 */
+	if (forward_handler_) {
+		ForwardMessage fm;
+		fm.chat_id     = message.chat_id_;
+		fm.is_outgoing = message.is_outgoing_;
+		fm.sender_id   = sender_user_id(message);
+
+		auto it = users_.find(fm.sender_id);
+		if (it != users_.end() && it->second) {
+			const auto &user = *it->second;
+			fm.sender_name = user.first_name_;
+			if (!user.last_name_.empty()) {
+				if (!fm.sender_name.empty())
+					fm.sender_name += " ";
+				fm.sender_name += user.last_name_;
+			}
+			if (user.usernames_ &&
+			    !user.usernames_->active_usernames_.empty())
+				fm.sender_username =
+					user.usernames_->active_usernames_[0];
+		}
+
+		models::MessageContent mc;
+		extract_message_content(message, mc);
+		if (mc.text.has_value())
+			fm.text = *mc.text;
+		fm.kind = forward_kind_str(mc.content_type);
+
+		forward_handler_(fm);
+	}
 
 	/* Legacy text-only handler path. */
 	if (!msg_handler_)
@@ -2540,6 +2593,11 @@ TDLib::~TDLib(void) = default;
 void TDLib::setMessageHandler(std::function<void(const TextMessage &)> cb)
 {
 	impl_->msg_handler_ = std::move(cb);
+}
+
+void TDLib::setForwardHandler(std::function<void(const ForwardMessage &)> cb)
+{
+	impl_->forward_handler_ = std::move(cb);
 }
 
 void TDLib::setPrivateMessageHandler(

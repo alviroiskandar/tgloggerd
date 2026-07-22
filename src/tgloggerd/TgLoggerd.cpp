@@ -150,10 +150,11 @@ int TgLoggerd::start(void)
 	size_t file_threads = (size_t)atoi(env("TG_FILE_THREADS", "4").c_str());
 	if (file_threads < 1)
 		file_threads = 1;
-	std::string db_pool_def = std::to_string(file_threads + 2);
+	/* +1 over file_threads for serial_, +1 for the Discord refresh thread. */
+	std::string db_pool_def = std::to_string(file_threads + 3);
 	size_t db_pool = (size_t)atoi(env("TG_DB_POOL", db_pool_def.c_str()).c_str());
-	if (db_pool < file_threads + 1)
-		db_pool = file_threads + 1;
+	if (db_pool < file_threads + 2)
+		db_pool = file_threads + 2;
 	db_cfg.pool_size = db_pool;
 
 	size_t queue_max = (size_t)strtoull(
@@ -220,6 +221,23 @@ int TgLoggerd::start(void)
 	files_ = std::make_unique<ThreadPool>(file_threads, queue_max, l_);
 	pr_debug(l_, "workers: serial=1 files=%zu queue_max=%zu",
 		 file_threads, queue_max);
+
+	/*
+	 * Discord forwarder: its own pool so slow/blocked webhook POSTs never
+	 * back-pressure the DB writer serial_. Refresh interval controls how
+	 * quickly web-UI changes to discord_webhooks take effect.
+	 */
+	size_t discord_threads = (size_t)atoi(env("TG_DISCORD_THREADS", "2").c_str());
+	if (discord_threads < 1)
+		discord_threads = 1;
+	size_t discord_queue = (size_t)strtoull(
+		env("TG_DISCORD_QUEUE_MAX", "20000").c_str(), nullptr, 10);
+	int discord_refresh = atoi(env("TG_DISCORD_REFRESH_SECS", "20").c_str());
+	discord_ = std::make_unique<DiscordForwarder>(db_.get(), l_,
+			discord_threads, discord_queue, discord_refresh);
+	discord_->start();
+	pr_debug(l_, "discord: threads=%zu queue=%zu refresh=%ds",
+		 discord_threads, discord_queue, discord_refresh);
 
 	char tdlib_path[sizeof(this->data_dir_) + 32];
 	snprintf(tdlib_path, sizeof(tdlib_path), "%s/tdlib", this->data_dir_);
@@ -304,6 +322,10 @@ int TgLoggerd::start(void)
 			(long long)msg.sender_id, msg.sender_name.c_str(),
 			msg.sender_username.c_str(), (long long)msg.message_id,
 			msg.text.c_str());
+	});
+	/* Mirror every live new message to any Discord webhook for its chat. */
+	tdlib_->setForwardHandler([this](const ForwardMessage &fm) {
+		discord_->forward(fm);
 	});
 	tdlib_->setPrivateMessageHandler([this](const models::PrivateMessage &pm) {
 		serial_->post([this, pm] {
@@ -455,6 +477,10 @@ int TgLoggerd::start(void)
 	 */
 	files_->shutdown();
 	serial_->shutdown();
+	/* The event loop has exited, so no more forward() calls arrive; stop the
+	 * refresh thread and drain in-flight webhook POSTs. */
+	if (discord_)
+		discord_->stop();
 
 	return 0;
 }

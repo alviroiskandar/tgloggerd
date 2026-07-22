@@ -38,6 +38,12 @@ struct MsgCountRefetch {
 	std::optional<int64_t> group;
 };
 
+/* One enabled Discord webhook integration: mirror chat_id -> webhook_url. */
+struct DiscordWebhook {
+	int64_t     chat_id;
+	std::string webhook_url;
+};
+
 class DB {
 public:
 	explicit DB(const mysql::Config &cfg);
@@ -45,6 +51,9 @@ public:
 
 	/* Verify connectivity; throws std::runtime_error on failure. */
 	void ping(void);
+
+	/* Load all enabled Discord webhook integrations (discord_webhooks). */
+	std::vector<DiscordWebhook> loadDiscordWebhooks(void);
 
 	/*
 	 * Insert or update a user together with its usernames, atomically.

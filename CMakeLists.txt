@@ -67,6 +67,10 @@ add_executable(tgloggerd
 	src/tgloggerd/ThreadPool.hpp
 	src/tgloggerd/TDLib.cpp
 	src/tgloggerd/TDLib.hpp
+	src/tgloggerd/DiscordClient.cpp
+	src/tgloggerd/DiscordClient.hpp
+	src/tgloggerd/DiscordForwarder.cpp
+	src/tgloggerd/DiscordForwarder.hpp
 	src/tgloggerd/tgloggerd_extern.cpp
 	src/tgloggerd/tgloggerd_extern.h
 	src/tgloggerd/TgLoggerd.cpp
@@ -84,8 +88,10 @@ target_compile_options(tgloggerd PRIVATE
 # Connector/C++ legacy JDBC library. OpenSSL::Crypto provides SHA-256 for
 # hashing downloaded files.
 find_package(OpenSSL REQUIRED)
+# libcurl (HTTPS) for the Discord webhook forwarder.
+find_package(CURL REQUIRED)
 # std::thread in the background worker/file pools needs the platform threads
 # library explicitly, rather than relying on it arriving transitively.
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-target_link_libraries(tgloggerd PRIVATE Td::TdStatic connector-jdbc OpenSSL::Crypto Threads::Threads)
+target_link_libraries(tgloggerd PRIVATE Td::TdStatic connector-jdbc OpenSSL::Crypto CURL::libcurl Threads::Threads)

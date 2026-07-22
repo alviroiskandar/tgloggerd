@@ -15,6 +15,7 @@
 #include "TDLib.hpp"
 #include "DB.hpp"
 #include "ThreadPool.hpp"
+#include "DiscordForwarder.hpp"
 
 namespace tgloggerd {
 
@@ -64,6 +65,13 @@ private:
 	log_hd_t *l_ = nullptr;
 	std::unique_ptr<TDLib> tdlib_;
 	std::unique_ptr<DB> db_;
+
+	/*
+	 * Mirrors live messages to Discord; owns its own HTTP pool and a refresh
+	 * thread that reads discord_webhooks via db_. Declared after db_ so it is
+	 * destroyed before db_; start() also stops it explicitly after the loop.
+	 */
+	std::unique_ptr<DiscordForwarder> discord_;
 
 	/*
 	 * Persistence runs off the TDLib event loop. serial_ is a single

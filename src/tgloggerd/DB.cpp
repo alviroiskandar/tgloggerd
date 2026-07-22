@@ -21,6 +21,22 @@ void DB::ping(void)
 	db_.query("SELECT 1");
 }
 
+std::vector<DiscordWebhook> DB::loadDiscordWebhooks(void)
+{
+	auto rows = db_.query(
+		"SELECT chat_id, webhook_url FROM discord_webhooks "
+		"WHERE enabled = 1");
+
+	std::vector<DiscordWebhook> out;
+	out.reserve(rows.size());
+	for (const auto &r : rows) {
+		if (!r[0].has_value() || !r[1].has_value())
+			continue;
+		out.push_back({ std::stoll(*r[0]), *r[1] });
+	}
+	return out;
+}
+
 void DB::recordTextHistory(mysql::Transaction &tx, const char *table,
 			   const char *fk_column, const char *value_column,
 			   int64_t entity_id, const std::string &value)
