@@ -64,12 +64,14 @@ With `?debug=1` (admin) the response echoes the exact generated SQL.
 | `<` `>` `<=` `>=` | int, datetime | comparison |
 | `LIKE` | text | SQL `LIKE` with the value bound **verbatim** — a plain term matches literally; add `%`/`_` yourself for wildcards (e.g. `%admin%` to match a substring) |
 | `NOT LIKE` | text | negation of `LIKE` |
+| `%LIKE%` | text | **contains**: the value is wrapped as `%value%` server-side (the user's own `%`/`_` are escaped, so their text matches literally). The easy "find rows containing this text" operator |
+| `NOT %LIKE%` | text | negation of `%LIKE%` (does not contain) |
 | `IS NULL` `IS NOT NULL` | nullable fields | presence test (no `v`) |
 
-**History / current-username fields** are `EXISTS` fields: `=`/`LIKE` mean
-"ever matched" and `!=`/`NOT LIKE` mean "**never** matched" (`NOT EXISTS`),
-which is the useful negation — not the misleading "ever had a value != x". They
-do not accept `IS NULL`.
+**History / current-username fields** are `EXISTS` fields: `=`/`LIKE`/`%LIKE%`
+mean "ever matched" and `!=`/`NOT LIKE`/`NOT %LIKE%` mean "**never** matched"
+(`NOT EXISTS`), which is the useful negation — not the misleading "ever had a
+value != x". They do not accept `IS NULL`.
 
 Each field advertises the subset of operators it accepts in the `fields` part of
 the response, so a client can build its UI from the registry.
@@ -81,9 +83,9 @@ the response, so a client can build its UI from the registry.
 | key | label | type | kind | operators |
 |-----|-------|------|------|-----------|
 | `id` | User ID | int | C | `= != < > <= >=` |
-| `first_name` | First name | text | C | `= != LIKE NOT LIKE` |
-| `last_name` | Last name | text | C | `= != LIKE NOT LIKE` |
-| `username` | Username (current) | text | E | `= LIKE` (+`!=`/`NOT LIKE` = never) |
+| `first_name` | First name | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `last_name` | Last name | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `username` | Username (current) | text | E | `= LIKE %LIKE%` (+`!=`/`NOT LIKE`/`NOT %LIKE%` = never) |
 | `type` | Type | enum | C | `= !=` — values `regular,deleted,bot,unknown` |
 | `msg_count` | Messages | int | C | `= != < > <= >=` |
 | `has_photo` | Has photo | bool | C | `IS NULL IS NOT NULL` |
@@ -94,20 +96,20 @@ the response, so a client can build its UI from the registry.
 | `is_support` | Support | bool | C | `= !=` |
 | `created_at` | Created | datetime | C | `= != < > <= >=` |
 | `updated_at` | Updated | datetime | C | `= != < > <= >=` |
-| `bio` | Bio | text | C | `= != LIKE NOT LIKE` |
-| `phone` | Phone | text | C | `= != LIKE NOT LIKE` |
-| `language` | Language | text | C | `= != LIKE NOT LIKE` |
-| `restriction_reason` | Restriction | text | C | `= != LIKE NOT LIKE` |
+| `bio` | Bio | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `phone` | Phone | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `language` | Language | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `restriction_reason` | Restriction | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
 | `has_sensitive` | Sensitive content | bool | C | `= !=` |
 | `restricts_new_chats` | Restricts new chats | bool | C | `= !=` |
 | `paid_star_count` | Paid message stars | int | C | `= != < > <= >=` |
 | `personal_chat_id` | Personal chat | int | C | `= != IS NULL IS NOT NULL` |
 | `emoji_status` | Emoji status | int | C | `IS NULL IS NOT NULL` |
-| `hist_username` | Username (ever) | text | E | `= LIKE` (+never) |
-| `hist_first_name` | First name (ever) | text | E | `= LIKE` |
-| `hist_last_name` | Last name (ever) | text | E | `= LIKE` |
-| `hist_bio` | Bio (ever) | text | E | `= LIKE` |
-| `hist_phone` | Phone (ever) | text | E | `= LIKE` |
+| `hist_username` | Username (ever) | text | E | `= LIKE %LIKE%` (+never) |
+| `hist_first_name` | First name (ever) | text | E | `= LIKE %LIKE%` |
+| `hist_last_name` | Last name (ever) | text | E | `= LIKE %LIKE%` |
+| `hist_bio` | Bio (ever) | text | E | `= LIKE %LIKE%` |
+| `hist_phone` | Phone (ever) | text | E | `= LIKE %LIKE%` |
 
 Column fields on `user_extra_info` are `COALESCE`'d to their schema default, so a
 user whose extra-info row is absent (the daemon deletes all-default rows) still
@@ -122,17 +124,17 @@ Datetime values accept MySQL-parseable strings (`2024-03-17`,
 | key | label | type | kind | operators |
 |-----|-------|------|------|-----------|
 | `id` | Group ID | int | C | `= != < > <= >=` |
-| `title` | Title | text | C | `= != LIKE NOT LIKE` |
-| `description` | Description | text | C | `= != LIKE NOT LIKE` |
+| `title` | Title | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
+| `description` | Description | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
 | `type` | Type | enum | C | `= !=` — values `basic_group,supergroup,channel` |
 | `msg_count` | Messages | int | C | `= != < > <= >=` |
 | `has_photo` | Has photo | bool | C | `IS NULL IS NOT NULL` |
-| `username` | Username (current) | text | E | `= LIKE` (+`!=`/`NOT LIKE` = never) |
+| `username` | Username (current) | text | E | `= LIKE %LIKE%` (+`!=`/`NOT LIKE`/`NOT %LIKE%` = never) |
 | `created_at` | Created | datetime | C | `= != < > <= >=` |
 | `updated_at` | Updated | datetime | C | `= != < > <= >=` |
-| `hist_title` | Title (ever) | text | E | `= LIKE` |
-| `hist_description` | Description (ever) | text | E | `= LIKE` |
-| `hist_username` | Username (ever) | text | E | `= LIKE` (+never) |
+| `hist_title` | Title (ever) | text | E | `= LIKE %LIKE%` |
+| `hist_description` | Description (ever) | text | E | `= LIKE %LIKE%` |
+| `hist_username` | Username (ever) | text | E | `= LIKE %LIKE%` (+never) |
 
 Group ids are negative Telegram chat ids. Sortable keys: `id, title, type,
 created_at, updated_at, msg_count`.
@@ -147,12 +149,12 @@ page the id and thumbnail cells link to the tokenized media download
 |-----|-------|------|------|-----------|
 | `id` | File ID | int | C | `= != < > <= >=` |
 | `file_type` | Type | enum | C | `= !=` — values `photo,video,document,audio,voice,sticker,animation,unknown` |
-| `name` | Name | text | C | `= != LIKE NOT LIKE` — the original Telegram file name (may be empty) |
-| `ext` | Extension | text | C | `= != LIKE NOT LIKE` |
+| `name` | Name | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` — the original Telegram file name (may be empty) |
+| `ext` | Extension | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
 | `size` | Size | int | C | `= != < > <= >=` — bytes (displayed human-readable) |
 | `hits` | Hits | int | C | `= != < > <= >=` — times this content (SHA-256) was seen |
 | `stored` | Stored | bool | C | `= !=` — `0` = metadata-only (too large), re-downloadable |
-| `tg_file_id` | TG file id | text | C | `= != LIKE NOT LIKE` |
+| `tg_file_id` | TG file id | text | C | `= != LIKE NOT LIKE %LIKE% NOT %LIKE%` |
 | `sha256` | SHA-256 | text | C | `= !=` — full hex digest (upper/lower); matched as `sha256 = UNHEX(?)` so it uses the unique index. Exact only (no prefix); invalid hex matches nothing |
 | `created_at` | Created | datetime | C | `= != < > <= >=` |
 | `updated_at` | Updated | datetime | C | `= != < > <= >=` |

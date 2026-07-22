@@ -40,6 +40,8 @@ enum Op : uint32_t {
 	OP_NLIKE     = 1u << 7,
 	OP_ISNULL    = 1u << 8,
 	OP_ISNOTNULL = 1u << 9,
+	OP_CLIKE     = 1u << 10, /* "%LIKE%": contains; value wrapped %..% server-side */
+	OP_NCLIKE    = 1u << 11, /* "NOT %LIKE%": negation of contains */
 };
 
 enum class FType { Text, Int, Bool, Datetime, Enum };

@@ -68,6 +68,20 @@ std::string humanSize(uint64_t bytes)
 	return buf;
 }
 
+/* Wrap q in %..% for a "contains" match, escaping the user's own LIKE
+ * metacharacters so a literal % or _ matches itself (\ is LIKE's escape char).
+ * The result is a bound value, so this is about match semantics, not injection. */
+std::string likeContains(const std::string &q)
+{
+	std::string e;
+	for (char c : q) {
+		if (c == '\\' || c == '%' || c == '_')
+			e += '\\';
+		e += c;
+	}
+	return "%" + e + "%";
+}
+
 /* --- operator table ------------------------------------------------------- */
 
 struct OpTok {
@@ -86,6 +100,8 @@ const OpTok kOps[] = {
 	{ OP_GE,        ">=",          ">="       },
 	{ OP_LIKE,      "LIKE",        "LIKE"     },
 	{ OP_NLIKE,     "NOT LIKE",    "NOT LIKE" },
+	{ OP_CLIKE,     "%LIKE%",      "LIKE"     },
+	{ OP_NCLIKE,    "NOT %LIKE%",  "NOT LIKE" },
 	{ OP_ISNULL,    "IS NULL",     nullptr    },
 	{ OP_ISNOTNULL, "IS NOT NULL", nullptr    },
 };
@@ -194,13 +210,15 @@ bool validValue(const SearchField &f, const std::string &v, std::string &err)
 
 constexpr uint32_t INT_OPS  = OP_EQ | OP_NE | OP_LT | OP_GT | OP_LE | OP_GE;
 constexpr uint32_t DT_OPS   = INT_OPS;
-constexpr uint32_t TEXT_OPS = OP_EQ | OP_NE | OP_LIKE | OP_NLIKE;
+constexpr uint32_t TEXT_OPS = OP_EQ | OP_NE | OP_LIKE | OP_NLIKE |
+			      OP_CLIKE | OP_NCLIKE;
 constexpr uint32_t BOOL_OPS = OP_EQ | OP_NE;
 constexpr uint32_t ENUM_OPS = OP_EQ | OP_NE;
 constexpr uint32_t NULL_OPS = OP_ISNULL | OP_ISNOTNULL;
-/* Exists: =/LIKE = "ever matched", !=/NOT LIKE = "never matched". */
-constexpr uint32_t EXISTS_OPS = OP_EQ | OP_NE | OP_LIKE | OP_NLIKE;
-constexpr uint32_t EXISTS_POS = OP_EQ | OP_LIKE;
+/* Exists: =/LIKE/%LIKE% = "ever matched", !=/NOT LIKE/NOT %LIKE% = "never". */
+constexpr uint32_t EXISTS_OPS = OP_EQ | OP_NE | OP_LIKE | OP_NLIKE |
+				OP_CLIKE | OP_NCLIKE;
+constexpr uint32_t EXISTS_POS = OP_EQ | OP_LIKE | OP_CLIKE;
 
 const SearchField kUserFields[] = {
 	/* key, label, type, kind, expr, exTable, exCol, exExtra, ops, sortable, display, enumVals */
@@ -587,11 +605,13 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 			if (!validValue(*f, c.v, err))
 				return false;
 
-			/* LIKE binds the value verbatim -- no implicit "%q%"
-			 * wrapping -- so a plain term matches literally and the
-			 * user opts into wildcards by typing % or _ themselves. */
-			bool likeish = (ot->op == OP_LIKE || ot->op == OP_NLIKE);
-			std::string val = c.v;
+			/* Plain LIKE binds the value verbatim (% is opt-in); the
+			 * %LIKE% operators wrap it in %..% for a "contains" match,
+			 * escaping the user's own wildcards so their text is literal. */
+			bool likeish = (ot->op == OP_LIKE || ot->op == OP_NLIKE ||
+					ot->op == OP_CLIKE || ot->op == OP_NCLIKE);
+			bool contains = (ot->op == OP_CLIKE || ot->op == OP_NCLIKE);
+			std::string val = contains ? likeContains(c.v) : c.v;
 
 			if (f->kind == FKind::Column) {
 				frag += f->expr;
@@ -609,7 +629,8 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 				}
 				const char *cmp = likeish ? "LIKE" : "=";
 				const char *neg =
-					(ot->op == OP_NE || ot->op == OP_NLIKE)
+					(ot->op == OP_NE || ot->op == OP_NLIKE ||
+					 ot->op == OP_NCLIKE)
 						? "NOT " : "";
 				frag += neg;
 				frag += "EXISTS (SELECT 1 FROM ";
