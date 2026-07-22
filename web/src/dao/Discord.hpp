@@ -26,7 +26,6 @@ struct Webhook {
 	uint64_t    id;
 	int64_t     chatId;
 	std::string chatType;   /* "private" | "group" */
-	std::string chatTitle;
 	std::string webhookUrl;
 	bool        enabled;
 };
@@ -46,13 +45,12 @@ drogon::Task<std::optional<Webhook>> get(drogon::orm::DbClientPtr db,
 					 uint64_t id);
 
 drogon::Task<uint64_t> create(drogon::orm::DbClientPtr db, int64_t chatId,
-			      std::string chatType, std::string chatTitle,
-			      std::string webhookUrl, bool enabled);
+			      std::string chatType, std::string webhookUrl,
+			      bool enabled);
 
 drogon::Task<void> update(drogon::orm::DbClientPtr db, uint64_t id,
 			  int64_t chatId, std::string chatType,
-			  std::string chatTitle, std::string webhookUrl,
-			  bool enabled);
+			  std::string webhookUrl, bool enabled);
 
 drogon::Task<void> remove(drogon::orm::DbClientPtr db, uint64_t id);
 

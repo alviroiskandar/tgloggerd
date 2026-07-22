@@ -106,18 +106,20 @@ DiscordController::save(drogon::HttpRequestPtr req)
 				    "(https://discord.com/api/webhooks/...).");
 
 	int64_t chatId = std::strtoll(chatStr.c_str(), nullptr, 10);
+	/* resolveChat still gates on the chat being in the log (accessible); its
+	 * title is no longer stored -- the list resolves it live. */
 	auto chat = co_await dao::discord::resolveChat(db, chatId);
 	if (!chat)
 		co_return jsonError("That chat is not in the log yet, so the bot "
 				    "cannot access it. Pick one it has seen.");
 
 	if (idStr.empty()) {
-		co_await dao::discord::create(db, chat->chatId, chat->type,
-					      chat->title, url, enabled);
+		co_await dao::discord::create(db, chat->chatId, chat->type, url,
+					      enabled);
 	} else {
 		uint64_t id = std::strtoull(idStr.c_str(), nullptr, 10);
-		co_await dao::discord::update(db, id, chat->chatId, chat->type,
-					      chat->title, url, enabled);
+		co_await dao::discord::update(db, id, chat->chatId, chat->type, url,
+					      enabled);
 	}
 	co_return jsonResp({ {"ok", true} });
 }

@@ -25,7 +25,7 @@ void DB::ping(void)
 std::vector<DiscordWebhook> DB::loadDiscordWebhooks(void)
 {
 	auto rows = db_.query(
-		"SELECT chat_id, webhook_url FROM discord_webhooks "
+		"SELECT telegram_chat_id, webhook_url FROM discord_webhooks "
 		"WHERE enabled = 1");
 
 	std::vector<DiscordWebhook> out;

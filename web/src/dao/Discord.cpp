@@ -36,17 +36,37 @@ std::string userName(const drogon::orm::Row &r)
 
 drogon::Task<nlohmann::json> list(drogon::orm::DbClientPtr db)
 {
+	/* Resolve the current chat title on the fly (a group's title, or a user's
+	 * name) instead of storing a copy that goes stale on a rename. A chat_id is
+	 * unique to one side, so only one join matches. */
 	auto rows = co_await db->execSqlCoro(
-		"SELECT id, chat_id, chat_type, chat_title, webhook_url, enabled, "
-		"created_at FROM discord_webhooks ORDER BY id DESC");
+		"SELECT w.id, w.telegram_chat_id, w.telegram_chat_type, "
+		"w.webhook_url, w.enabled, w.created_at, "
+		"g.title AS group_title, u.first_name, u.last_name "
+		"FROM discord_webhooks w "
+		"LEFT JOIN `telegram_groups` g "
+		"  ON w.telegram_chat_id < 0 AND g.id = w.telegram_chat_id "
+		"LEFT JOIN telegram_users u "
+		"  ON w.telegram_chat_id > 0 AND u.id = w.telegram_chat_id "
+		"ORDER BY w.id DESC");
 
 	nlohmann::json arr = nlohmann::json::array();
 	for (const auto &r : rows) {
+		int64_t chatId = r["telegram_chat_id"].as<int64_t>();
+		std::string title;
+		if (chatId < 0) {
+			title = colStr(r, "group_title");
+			if (title.empty())
+				title = "(untitled)";
+		} else {
+			title = userName(r); /* "(no name)" when unknown */
+		}
+
 		nlohmann::json j;
 		j["id"]         = r["id"].as<uint64_t>();
-		j["chat_id"]    = r["chat_id"].as<int64_t>();
-		j["chat_type"]  = r["chat_type"].as<std::string>();
-		j["chat_title"] = Render::esc(colStr(r, "chat_title"));
+		j["chat_id"]    = chatId;
+		j["chat_type"]  = r["telegram_chat_type"].as<std::string>();
+		j["chat_title"] = Render::esc(title);
 		j["webhook_url"] = Render::esc(colStr(r, "webhook_url"));
 		j["enabled"]    = r["enabled"].as<int>() != 0;
 		j["created_at"] = Render::esc(colStr(r, "created_at"));
@@ -59,8 +79,8 @@ drogon::Task<std::optional<Webhook>> get(drogon::orm::DbClientPtr db,
 					 uint64_t id)
 {
 	auto rows = co_await db->execSqlCoro(
-		"SELECT id, chat_id, chat_type, chat_title, webhook_url, enabled "
-		"FROM discord_webhooks WHERE id = ?",
+		"SELECT id, telegram_chat_id, telegram_chat_type, webhook_url, "
+		"enabled FROM discord_webhooks WHERE id = ?",
 		id);
 	if (rows.empty())
 		co_return std::nullopt;
@@ -68,35 +88,33 @@ drogon::Task<std::optional<Webhook>> get(drogon::orm::DbClientPtr db,
 	const auto &r = rows[0];
 	Webhook w;
 	w.id         = r["id"].as<uint64_t>();
-	w.chatId     = r["chat_id"].as<int64_t>();
-	w.chatType   = r["chat_type"].as<std::string>();
-	w.chatTitle  = colStr(r, "chat_title");
+	w.chatId     = r["telegram_chat_id"].as<int64_t>();
+	w.chatType   = r["telegram_chat_type"].as<std::string>();
 	w.webhookUrl = colStr(r, "webhook_url");
 	w.enabled    = r["enabled"].as<int>() != 0;
 	co_return w;
 }
 
 drogon::Task<uint64_t> create(drogon::orm::DbClientPtr db, int64_t chatId,
-			      std::string chatType, std::string chatTitle,
-			      std::string webhookUrl, bool enabled)
+			      std::string chatType, std::string webhookUrl,
+			      bool enabled)
 {
 	auto r = co_await db->execSqlCoro(
 		"INSERT INTO discord_webhooks "
-		"(chat_id, chat_type, chat_title, webhook_url, enabled) "
-		"VALUES (?, ?, ?, ?, ?)",
-		chatId, chatType, chatTitle, webhookUrl, enabled ? 1 : 0);
+		"(telegram_chat_id, telegram_chat_type, webhook_url, enabled) "
+		"VALUES (?, ?, ?, ?)",
+		chatId, chatType, webhookUrl, enabled ? 1 : 0);
 	co_return r.insertId();
 }
 
 drogon::Task<void> update(drogon::orm::DbClientPtr db, uint64_t id,
 			  int64_t chatId, std::string chatType,
-			  std::string chatTitle, std::string webhookUrl,
-			  bool enabled)
+			  std::string webhookUrl, bool enabled)
 {
 	co_await db->execSqlCoro(
-		"UPDATE discord_webhooks SET chat_id = ?, chat_type = ?, "
-		"chat_title = ?, webhook_url = ?, enabled = ? WHERE id = ?",
-		chatId, chatType, chatTitle, webhookUrl, enabled ? 1 : 0, id);
+		"UPDATE discord_webhooks SET telegram_chat_id = ?, "
+		"telegram_chat_type = ?, webhook_url = ?, enabled = ? WHERE id = ?",
+		chatId, chatType, webhookUrl, enabled ? 1 : 0, id);
 	co_return;
 }
 
