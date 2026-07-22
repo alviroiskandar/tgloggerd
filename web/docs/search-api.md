@@ -153,15 +153,17 @@ page the id and thumbnail cells link to the tokenized media download
 | `hits` | Hits | int | C | `= != < > <= >=` — times this content (SHA-256) was seen |
 | `stored` | Stored | bool | C | `= !=` — `0` = metadata-only (too large), re-downloadable |
 | `tg_file_id` | TG file id | text | C | `= != LIKE NOT LIKE` |
+| `sha256` | SHA-256 | text | C | `= != LIKE NOT LIKE` — matched against the hex digest (`HEX(sha256)`, case-insensitive); use `LIKE` for a prefix |
 | `created_at` | Created | datetime | C | `= != < > <= >=` |
 | `updated_at` | Updated | datetime | C | `= != < > <= >=` |
 
 Sortable keys: `id, file_type, name, ext, size, hits, created_at`.
 
-The table also shows two identifier columns: `tg_file_id` (searchable, above;
-its full value is truncated in the table — click the cell for the full id in a
-modal) and `sha256` (a display-only column, the content digest as an uppercase
-hex string). The thumbnail is likewise display-only.
+The table also shows two identifier columns, both searchable (above): the
+`tg_file_id` (its full value is truncated in the table — click the cell to see
+the full id in a modal) and the `sha256` content digest (an uppercase hex
+string). The thumbnail is display-only. Neither identifier column is sortable
+(searching `sha256` transforms the column, so it cannot use its index).
 
 ## Response
 

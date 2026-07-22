@@ -415,6 +415,7 @@ const SearchField kFileFields[] = {
 	{ "hits",       "Hits",      FType::Int,      FKind::Column, "f.hit_count",      "", "", "", INT_OPS,  true,  true,  "" },
 	{ "stored",     "Stored",    FType::Bool,     FKind::Column, "f.on_disk",        "", "", "", BOOL_OPS, false, true,  "" },
 	{ "tg_file_id", "TG file id",FType::Text,     FKind::Column, "f.tg_file_id",     "", "", "", TEXT_OPS, false, false, "" },
+	{ "sha256",     "SHA-256",   FType::Text,     FKind::Column, "HEX(f.sha256)",    "", "", "", TEXT_OPS, false, false, "" },
 	{ "created_at", "Created",   FType::Datetime, FKind::Column, "f.created_at",     "", "", "", DT_OPS,   true,  true,  "" },
 	{ "updated_at", "Updated",   FType::Datetime, FKind::Column, "f.updated_at",     "", "", "", DT_OPS,   true,  false, "" },
 };
