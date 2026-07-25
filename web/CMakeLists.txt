@@ -30,6 +30,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Trim the connector to just the client library.
 set(WITH_UNIT_TESTS    OFF CACHE BOOL "" FORCE)
 set(WITH_CURL          OFF CACHE BOOL "" FORCE)  # avoids a libcurl dependency
+# WITH_CURL does not actually gate FIND_PACKAGE(CURL); the remote_io plugin
+# still turns on when libcurl is present in the image (added for the daemon's
+# Discord client) and then fails to find curl/curl.h. We do not need the HTTP
+# plugin loader, so force the plugin off -- that skips the curl code entirely.
+set(REMOTEIO_PLUGIN_TYPE OFF CACHE STRING "" FORCE)
 set(WITH_EXTERNAL_ZLIB ON  CACHE BOOL "" FORCE)  # use the system zlib
 set(WITH_SSL           ON  CACHE BOOL "" FORCE)  # OpenSSL
 # Do not verify the server certificate by default. Connector/C 3.4 verifies by
@@ -120,6 +125,10 @@ add_executable(tgloggerd_web
 	src/controllers/GroupsController.hpp
 	src/controllers/MessagesController.cpp
 	src/controllers/MessagesController.hpp
+	src/controllers/PrivateMessagesController.cpp
+	src/controllers/PrivateMessagesController.hpp
+	src/controllers/GroupMessagesController.cpp
+	src/controllers/GroupMessagesController.hpp
 	src/controllers/FilesController.cpp
 	src/controllers/FilesController.hpp
 	src/controllers/ApiController.cpp
