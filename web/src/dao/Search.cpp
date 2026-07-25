@@ -102,6 +102,7 @@ const OpTok kOps[] = {
 	{ OP_NLIKE,     "NOT LIKE",    "NOT LIKE" },
 	{ OP_CLIKE,     "%LIKE%",      "LIKE"     },
 	{ OP_NCLIKE,    "NOT %LIKE%",  "NOT LIKE" },
+	{ OP_MATCH,     "matches",     nullptr    },
 	{ OP_ISNULL,    "IS NULL",     nullptr    },
 	{ OP_ISNOTNULL, "IS NOT NULL", nullptr    },
 };
@@ -122,6 +123,7 @@ const char *typeName(FType t)
 	case FType::Bool:     return "bool";
 	case FType::Datetime: return "datetime";
 	case FType::Enum:     return "enum";
+	case FType::FullText: return "text"; /* UI renders a plain text input */
 	}
 	return "text";
 }
@@ -201,6 +203,7 @@ bool validValue(const SearchField &f, const std::string &v, std::string &err)
 		}
 		break;
 	case FType::Text:
+	case FType::FullText:
 		break;
 	}
 	return true;
@@ -491,6 +494,202 @@ const SearchSchema kFilesSchema = {
 	/* mapRow     */ &mapRowFile,
 };
 
+/* --- message registries (private + group) -------------------------------- */
+
+/* Content-type ENUM shared by both message tables (matches the DB ENUM). */
+constexpr std::string_view MSG_TYPES =
+	"text,photo,video,document,audio,voice,sticker,animation,service,unknown";
+
+/* A display name from two aliased name columns (escaped, never empty). */
+std::string nameCols(const drogon::orm::Row &r, const char *fc, const char *lc)
+{
+	std::string first = r[fc].isNull() ? "" : r[fc].as<std::string>();
+	std::string last  = r[lc].isNull() ? "" : r[lc].as<std::string>();
+	std::string name  = first;
+	if (!last.empty()) {
+		if (!name.empty())
+			name += " ";
+		name += last;
+	}
+	return Render::esc(name.empty() ? std::string("(no name)") : name);
+}
+
+/* A raw file id from a nullable column (0 = none), tokenised by the controller. */
+int64_t rawFileId(const drogon::orm::Row &r, const char *c)
+{
+	return r[c].isNull() ? (int64_t)0 : r[c].as<int64_t>();
+}
+
+/* A "party" cell object: a clickable avatar+name reference. kind is one of
+ * user|group|self|none; `photo` is a raw file id, tokenised to a /files URL by
+ * enrichSearchPhotos. name/username are already escaped. */
+nlohmann::json partyObj(const char *kind, int64_t id, std::string name,
+			std::string username, int64_t photo)
+{
+	nlohmann::json p;
+	p["kind"]     = kind;
+	p["id"]       = id;
+	p["name"]     = std::move(name);
+	p["username"] = std::move(username);
+	p["photo"]    = photo;
+	return p;
+}
+
+/* --- private messages ----------------------------------------------------- */
+
+const SearchField kPrivMsgFields[] = {
+	/* key, label, type, kind, expr, exTable, exCol, exExtra, ops, sortable, display, enumVals */
+	{ "text",         "Text",         FType::FullText, FKind::Column, "m.text",         "", "", "", OP_MATCH, false, true,  "" },
+	{ "content_type", "Content type", FType::Enum,     FKind::Column, "m.content_type", "", "", "", ENUM_OPS, false, true,  MSG_TYPES },
+	{ "chat_id",      "User (chat) id", FType::Int,    FKind::Column, "m.chat_id",      "", "", "", INT_OPS,  false, true,  "" },
+	{ "sender_id",    "Sender id",    FType::Int,      FKind::Column, "m.sender_id",    "", "", "", INT_OPS,  false, false, "" },
+	{ "message_id",   "Message id",   FType::Int,      FKind::Column, "m.message_id",   "", "", "", INT_OPS,  false, true,  "" },
+	{ "is_outgoing",  "Outgoing",     FType::Bool,     FKind::Column, "m.is_outgoing",  "", "", "", BOOL_OPS, false, true,  "" },
+	{ "is_forwarded", "Forwarded",    FType::Bool,     FKind::Column, "m.is_forwarded", "", "", "", BOOL_OPS, false, true,  "" },
+	{ "deleted",      "Deleted",      FType::Bool,     FKind::Column, "m.deleted_at",   "", "", "", NULL_OPS, false, true,  "" },
+	{ "date",         "Sent",         FType::Int,      FKind::Column, "m.date",         "", "", "", INT_OPS,  true,  true,  "" },
+	{ "created_at",   "Logged",       FType::Datetime, FKind::Column, "m.created_at",   "", "", "", DT_OPS,   true,  false, "" },
+};
+
+const DisplayCol kPrivMsgCols[] = {
+	/* key, label, type, sortKey */
+	{ "user",         "User",   "party",    ""     },
+	{ "outgoing",     "Out",    "bool",     ""     },
+	{ "content_type", "Type",   "text",     ""     },
+	{ "text",         "Text",   "longtext", ""     },
+	{ "forwarded",    "Fwd",    "bool",     ""     },
+	{ "message_id",   "Msg id", "int",      ""     },
+	{ "sent",         "Sent",   "datetime", "date" },
+	{ "deleted",      "Deleted","bool",     ""     },
+};
+
+nlohmann::json mapRowPrivMsg(const drogon::orm::Row &r)
+{
+	nlohmann::json a = nlohmann::json::array();
+	a.push_back(partyObj("user", r["chat_id"].as<int64_t>(),
+			     nameCols(r, "peer_first", "peer_last"),
+			     escCol(r, "peer_username"),
+			     rawFileId(r, "peer_photo")));
+	a.push_back(rowBool(r, "is_outgoing"));
+	a.push_back(r["content_type"].as<std::string>());
+	a.push_back(escCol(r, "text"));
+	a.push_back(rowBool(r, "is_forwarded"));
+	a.push_back(r["message_id"].as<std::string>());
+	a.push_back(r["sent_at"].isNull() ? std::string()
+					  : r["sent_at"].as<std::string>());
+	a.push_back(!r["deleted_at"].isNull());
+	return a;
+}
+
+const SearchSchema kPrivMsgsSchema = {
+	/* fromJoin   */ "telegram_private_messages m "
+			 "LEFT JOIN telegram_users u ON u.id = m.chat_id",
+	/* selectCols */ "m.id, m.chat_id, m.message_id, m.is_outgoing, "
+			 "m.is_forwarded, m.content_type, m.text, m.deleted_at, "
+			 "FROM_UNIXTIME(m.date) AS sent_at, "
+			 "u.first_name AS peer_first, u.last_name AS peer_last, "
+			 "u.profile_photo_file_id AS peer_photo, "
+			 "(SELECT un.username FROM telegram_user_usernames un "
+			 "WHERE un.user_id = m.chat_id AND un.kind='active' "
+			 "ORDER BY un.position LIMIT 1) AS peer_username",
+	/* idCol      */ "m.id",
+	/* exFk       */ "",
+	/* defaultSort*/ "m.date",
+	/* defaultOrder*/ "DESC",
+	/* fields     */ kPrivMsgFields,
+	/* nFields    */ sizeof(kPrivMsgFields) / sizeof(kPrivMsgFields[0]),
+	/* cols       */ kPrivMsgCols,
+	/* nCols      */ sizeof(kPrivMsgCols) / sizeof(kPrivMsgCols[0]),
+	/* mapRow     */ &mapRowPrivMsg,
+	/* countFrom  */ "telegram_private_messages m", /* WHERE is all on m.* */
+};
+
+/* --- group messages ------------------------------------------------------- */
+
+/* Only index-backed columns are searchable here: telegram_group_messages has
+ * 2.6M rows, so filtering a non-indexed column would scan the table and time
+ * out. (is_forwarded/is_channel_post/message_id stay as display columns.)
+ * text=FULLTEXT index, content_type=(content_type,date) index, chat_id/
+ * sender_user_id/deleted_at/date all have their own indexes. */
+const SearchField kGroupMsgFields[] = {
+	{ "text",           "Text",         FType::FullText, FKind::Column, "m.text",           "", "", "", OP_MATCH, false, true,  "" },
+	{ "content_type",   "Content type", FType::Enum,     FKind::Column, "m.content_type",   "", "", "", ENUM_OPS, false, true,  MSG_TYPES },
+	{ "chat_id",        "Group id",     FType::Int,      FKind::Column, "m.chat_id",        "", "", "", INT_OPS,  false, true,  "" },
+	{ "sender_user_id", "Sender user id", FType::Int,    FKind::Column, "m.sender_user_id", "", "", "", INT_OPS,  false, true,  "" },
+	{ "deleted",        "Deleted",      FType::Bool,     FKind::Column, "m.deleted_at",     "", "", "", NULL_OPS, false, true,  "" },
+	{ "date",           "Sent",         FType::Int,      FKind::Column, "m.date",           "", "", "", INT_OPS,  true,  true,  "" },
+};
+
+const DisplayCol kGroupMsgCols[] = {
+	{ "group",        "Group",  "party",    ""     },
+	{ "sender",       "Sender", "party",    ""     },
+	{ "content_type", "Type",   "text",     ""     },
+	{ "text",         "Text",   "longtext", ""     },
+	{ "forwarded",    "Fwd",    "bool",     ""     },
+	{ "message_id",   "Msg id", "int",      ""     },
+	{ "sent",         "Sent",   "datetime", "date" },
+	{ "deleted",      "Deleted","bool",     ""     },
+};
+
+nlohmann::json mapRowGroupMsg(const drogon::orm::Row &r)
+{
+	nlohmann::json a = nlohmann::json::array();
+	std::string gtitle = escCol(r, "group_title");
+	a.push_back(partyObj("group", r["chat_id"].as<int64_t>(),
+			     gtitle.empty() ? std::string("(untitled)") : gtitle,
+			     std::string(), rawFileId(r, "group_photo")));
+
+	if (!r["sender_user_id"].isNull())
+		a.push_back(partyObj("user", r["sender_user_id"].as<int64_t>(),
+				     nameCols(r, "su_first", "su_last"),
+				     escCol(r, "su_username"),
+				     rawFileId(r, "su_photo")));
+	else if (!r["sender_chat_id"].isNull()) {
+		std::string st = escCol(r, "sg_title");
+		a.push_back(partyObj("group", r["sender_chat_id"].as<int64_t>(),
+				     st.empty() ? std::string("(untitled)") : st,
+				     std::string(), rawFileId(r, "sg_photo")));
+	} else
+		a.push_back(partyObj("none", 0, "(unknown)", std::string(), 0));
+
+	a.push_back(r["content_type"].as<std::string>());
+	a.push_back(escCol(r, "text"));
+	a.push_back(rowBool(r, "is_forwarded"));
+	a.push_back(r["message_id"].as<std::string>());
+	a.push_back(r["sent_at"].isNull() ? std::string()
+					  : r["sent_at"].as<std::string>());
+	a.push_back(!r["deleted_at"].isNull());
+	return a;
+}
+
+const SearchSchema kGroupMsgsSchema = {
+	/* fromJoin   */ "telegram_group_messages m "
+			 "LEFT JOIN `telegram_groups` g ON g.id = m.chat_id "
+			 "LEFT JOIN telegram_users su ON su.id = m.sender_user_id "
+			 "LEFT JOIN `telegram_groups` sg ON sg.id = m.sender_chat_id",
+	/* selectCols */ "m.id, m.chat_id, m.message_id, m.sender_user_id, "
+			 "m.sender_chat_id, m.is_forwarded, "
+			 "m.content_type, m.text, m.deleted_at, "
+			 "FROM_UNIXTIME(m.date) AS sent_at, "
+			 "g.title AS group_title, g.photo_file_id AS group_photo, "
+			 "su.first_name AS su_first, su.last_name AS su_last, "
+			 "su.profile_photo_file_id AS su_photo, "
+			 "(SELECT un.username FROM telegram_user_usernames un "
+			 "WHERE un.user_id = m.sender_user_id AND un.kind='active' "
+			 "ORDER BY un.position LIMIT 1) AS su_username, "
+			 "sg.title AS sg_title, sg.photo_file_id AS sg_photo",
+	/* idCol      */ "m.id",
+	/* exFk       */ "",
+	/* defaultSort*/ "m.date",
+	/* defaultOrder*/ "DESC",
+	/* fields     */ kGroupMsgFields,
+	/* nFields    */ sizeof(kGroupMsgFields) / sizeof(kGroupMsgFields[0]),
+	/* cols       */ kGroupMsgCols,
+	/* nCols      */ sizeof(kGroupMsgCols) / sizeof(kGroupMsgCols[0]),
+	/* mapRow     */ &mapRowGroupMsg,
+	/* countFrom  */ "telegram_group_messages m", /* WHERE is all on m.* */
+};
+
 const SearchField *findField(const SearchSchema &s, const std::string &key)
 {
 	for (size_t i = 0; i < s.nFields; i++)
@@ -555,7 +754,7 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 		std::string &countSql, std::string &pageSql,
 		std::vector<std::string> &binds, std::string &usedSort,
 		std::string &usedOrder, int &limit, int &offset,
-		std::string &err)
+		std::string &orderBind, std::string &err)
 {
 	if ((int)req.conds.size() > MAX_CONDS) {
 		err = "too many conditions (max " + std::to_string(MAX_CONDS) + ")";
@@ -564,6 +763,7 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 
 	std::string where;
 	int existsCount = 0;
+	std::string ftExpr, ftVal; /* first fulltext match, for relevance sort */
 
 	for (size_t i = 0; i < req.conds.size(); i++) {
 		const Condition &c = req.conds[i];
@@ -613,7 +813,17 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 			bool contains = (ot->op == OP_CLIKE || ot->op == OP_NCLIKE);
 			std::string val = contains ? likeContains(c.v) : c.v;
 
-			if (f->kind == FKind::Column) {
+			if (f->kind == FKind::Column && ot->op == OP_MATCH) {
+				/* FullText: MATCH(<expr>) AGAINST(? IN BOOLEAN
+				 * MODE); the raw value goes straight to AGAINST. */
+				frag += "MATCH(";
+				frag += f->expr;
+				frag += ") AGAINST(? IN BOOLEAN MODE))";
+				if (ftExpr.empty()) {
+					ftExpr = std::string(f->expr);
+					ftVal = c.v;
+				}
+			} else if (f->kind == FKind::Column) {
 				frag += f->expr;
 				frag += " ";
 				frag += ot->sqlTok;
@@ -672,29 +882,56 @@ bool buildQuery(const SearchSchema &s, const Request &req,
 	else
 		usedOrder = std::string(s.defaultOrder);
 
+	/* No explicit sort + a fulltext condition -> order by relevance. Sorting a
+	 * broad match by another column filesorts every hit (a common word can be
+	 * tens of thousands of rows); the fulltext index yields relevance order for
+	 * free, so LIMIT stops early. Needs the same value bound again in ORDER BY. */
+	orderBind.clear();
+	if (req.sort.empty() && !ftExpr.empty()) {
+		sortExpr = "MATCH(" + ftExpr + ") AGAINST(? IN BOOLEAN MODE)";
+		usedOrder = "DESC";
+		orderBind = ftVal;
+	}
+
 	limit  = std::clamp(req.limit, 1, MAX_LIMIT);
 	offset = std::clamp(req.offset, 0, MAX_OFFSET);
 
-	/* Stable paging: break ties on the unique id, unless that IS the sort. */
+	/* Stable paging: break ties on the unique id, unless that IS the sort.
+	 * Skip it for a relevance sort: a secondary key defeats the fulltext
+	 * index's ordered scan and filesorts every hit (slow for a broad match).
+	 * Relevance-ordered paging can wobble on exact ties, which is acceptable. */
 	std::string tiebreak;
-	if (sortExpr != s.idCol)
+	if (sortExpr != s.idCol && orderBind.empty())
 		tiebreak = ", " + std::string(s.idCol) + " DESC";
 
 	std::string whereClause = where.empty() ? "" : (" WHERE " + where);
-	countSql = "SELECT /*+ MAX_EXECUTION_TIME(3000) */ COUNT(*) AS n FROM " +
-		   std::string(s.fromJoin) + whereClause;
+	std::string_view countFrom =
+		s.countFrom.empty() ? s.fromJoin : s.countFrom;
+	/* Cap the count only for a non-fulltext filter, which can scan millions of
+	 * rows on a non-indexed column. A fulltext MATCH (ftExpr) and a bare
+	 * browse-all both count exactly via an index / InnoDB fast path, and are
+	 * actually slower when wrapped in a row-fetching LIMIT subquery. */
+	if (s.countCap > 0 && !where.empty() && ftExpr.empty())
+		countSql = "SELECT /*+ MAX_EXECUTION_TIME(3000) */ COUNT(*) AS n "
+			   "FROM (SELECT 1 FROM " + std::string(countFrom) +
+			   whereClause + " LIMIT " + std::to_string(s.countCap) +
+			   ") capped";
+	else
+		countSql = "SELECT /*+ MAX_EXECUTION_TIME(3000) */ COUNT(*) AS n "
+			   "FROM " + std::string(countFrom) + whereClause;
 	pageSql = "SELECT /*+ MAX_EXECUTION_TIME(3000) */ " +
 		  std::string(s.selectCols) + " FROM " + std::string(s.fromJoin) +
 		  whereClause + " ORDER BY " + sortExpr + " " + usedOrder +
 		  tiebreak + " LIMIT " + std::to_string(limit) +
 		  " OFFSET " + std::to_string(offset);
 
-	/* Defensive: emitted placeholders must equal bound values. */
+	/* Defensive: emitted page placeholders must equal the page's bound values
+	 * (the WHERE binds plus, for a relevance sort, the ORDER BY value). */
 	size_t nph = 0;
 	for (char ch : pageSql)
 		if (ch == '?')
 			nph++;
-	if (nph != binds.size()) {
+	if (nph != binds.size() + (orderBind.empty() ? 0 : 1)) {
 		err = "internal query build error";
 		return false;
 	}
@@ -718,6 +955,16 @@ const SearchSchema &filesSchema(void)
 	return kFilesSchema;
 }
 
+const SearchSchema &privateMessagesSchema(void)
+{
+	return kPrivMsgsSchema;
+}
+
+const SearchSchema &groupMessagesSchema(void)
+{
+	return kGroupMsgsSchema;
+}
+
 const SearchSchema *schemaByName(const std::string &entity)
 {
 	if (entity == "users")
@@ -726,6 +973,10 @@ const SearchSchema *schemaByName(const std::string &entity)
 		return &kGroupsSchema;
 	if (entity == "files")
 		return &kFilesSchema;
+	if (entity == "private_messages")
+		return &kPrivMsgsSchema;
+	if (entity == "group_messages")
+		return &kGroupMsgsSchema;
 	return nullptr;
 }
 
@@ -796,13 +1047,19 @@ bool parseConditions(const std::string &raw, std::vector<Condition> &out,
 drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 				 const SearchSchema &schema, Request req)
 {
-	std::string countSql, pageSql, usedSort, usedOrder, err;
+	std::string countSql, pageSql, usedSort, usedOrder, orderBind, err;
 	std::vector<std::string> binds;
 	int limit = 0, offset = 0;
 
 	if (!buildQuery(schema, req, countSql, pageSql, binds, usedSort,
-			usedOrder, limit, offset, err))
+			usedOrder, limit, offset, orderBind, err))
 		co_return nlohmann::json{ { "error", err } };
+
+	/* The count uses the WHERE binds; the page adds the relevance ORDER BY
+	 * value (empty unless the search sorts by fulltext relevance). */
+	std::vector<std::string> pageBinds = binds;
+	if (!orderBind.empty())
+		pageBinds.push_back(orderBind);
 
 	nlohmann::json out;
 	out["fields"]  = fieldsJson(schema);
@@ -821,7 +1078,7 @@ drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 	auto cres = co_await db->execSqlCoro(countSql, std::as_const(binds));
 	out["total"] = cres.empty() ? 0 : cres[0]["n"].as<int64_t>();
 
-	auto pres = co_await db->execSqlCoro(pageSql, std::as_const(binds));
+	auto pres = co_await db->execSqlCoro(pageSql, std::as_const(pageBinds));
 	nlohmann::json rows = nlohmann::json::array();
 	for (const auto &r : pres)
 		rows.push_back(schema.mapRow(r));
@@ -835,7 +1092,7 @@ drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 		dbg["sql"]       = Render::esc(pageSql);
 		dbg["count_sql"] = Render::esc(countSql);
 		nlohmann::json b = nlohmann::json::array();
-		for (const auto &v : binds)
+		for (const auto &v : pageBinds)
 			b.push_back(Render::esc(v));
 		dbg["bind"] = std::move(b);
 
@@ -844,7 +1101,7 @@ drogon::Task<nlohmann::json> run(drogon::orm::DbClientPtr db,
 		 * defaults to the single-column tree format here). */
 		std::string explainSql = "EXPLAIN FORMAT=TRADITIONAL " + pageSql;
 		auto eres = co_await db->execSqlCoro(explainSql,
-						     std::as_const(binds));
+						     std::as_const(pageBinds));
 		nlohmann::json exCols = nlohmann::json::array();
 		for (drogon::orm::Result::SizeType ci = 0; ci < eres.columns(); ci++)
 			exCols.push_back(Render::esc(eres.columnName(ci)));

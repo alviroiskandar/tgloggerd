@@ -359,6 +359,18 @@ td.col-photo, th.col-photo {
 }
 td.col-photo .avatar-sm { margin: 0 auto; }
 
+/* "party" cells (message search rows): a small avatar beside a linked name,
+ * for the group and the sender. */
+td.cell-party { white-space: nowrap; }
+a.party, span.party {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	max-width: 20rem;
+	vertical-align: middle;
+}
+a.party .avatar-sm, span.party .avatar-sm { flex: none; }
+
 /* Chat pages: double the header and per-message avatars (28px -> 56px). The
  * base .avatar-sm is shared with the listing tables, so scope the bump to
  * the chat header and the message avatars only. */

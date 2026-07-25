@@ -44,8 +44,33 @@
 		return '<td class="col-photo"><a href="' + url + '">' + inner + '</a></td>';
 	}
 
+	/* A "party" cell: {kind, id, name, username, photo(url)} -> a clickable
+	 * avatar + name linking to the user/group detail page. */
+	function party(p) {
+		if (!p || typeof p !== "object")
+			return '<td class="cell-party">' + DASH + '</td>';
+		var av = p.photo
+			? '<img class="avatar-sm" src="' + p.photo + '" alt="">'
+			: '<span class="avatar-sm placeholder"></span>';
+		var inner;
+		if (p.kind === "user") {
+			inner = '<a class="party" href="/users/' + p.id + '">' +
+				av + ' ' + p.name + '</a>';
+			if (p.username)
+				inner += ' <span class="muted">@' + p.username + '</span>';
+		} else if (p.kind === "group") {
+			inner = '<a class="party" href="/groups/' + p.id + '">' +
+				av + ' ' + p.name + '</a>';
+		} else {
+			inner = '<span class="party muted">' + av + ' ' + p.name + '</span>';
+		}
+		return '<td class="cell-party">' + inner + '</td>';
+	}
+
 	function cell(col, val, ctx) {
 		switch (col.type) {
+		case "party":
+			return party(val);
 		case "photo":
 			return '<td class="col-photo"><a href="' + ctx.base + '/' + ctx.idVal + '">' +
 				(val

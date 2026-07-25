@@ -14,7 +14,8 @@ registry**), so the endpoint is injection-safe by construction.
 GET /v1/search/{entity}
 ```
 
-`{entity}` is `users`, `groups` or `files` — each shares the same grammar with
+`{entity}` is `users`, `groups`, `files`, `private_messages` or
+`group_messages` — each shares the same grammar with
 its own field registry (an unknown entity returns **404**). Requires a logged-in
 session (the shared `AuthFilter`); an unauthenticated request is redirected (302)
 to `/login`, exactly like the other `/v1` routes.
@@ -66,6 +67,7 @@ With `?debug=1` (admin) the response echoes the exact generated SQL.
 | `NOT LIKE` | text | negation of `LIKE` |
 | `%LIKE%` | text | **contains**: the value is wrapped as `%value%` server-side (the user's own `%`/`_` are escaped, so their text matches literally). The easy "find rows containing this text" operator |
 | `NOT %LIKE%` | text | negation of `%LIKE%` (does not contain) |
+| `matches` | fulltext | `MATCH(col) AGAINST(value IN BOOLEAN MODE)` — full-text word search (message `text` fields). Supports Telegram-style boolean queries: `+must -exclude "a phrase"`. Words shorter than the server's min token length (3) are ignored |
 | `IS NULL` `IS NOT NULL` | nullable fields | presence test (no `v`) |
 
 **History / current-username fields** are `EXISTS` fields: `=`/`LIKE`/`%LIKE%`
@@ -166,6 +168,56 @@ The table also shows two identifier columns, both searchable (above): the
 the full id in a modal) and the `sha256` content digest (an uppercase hex
 string). The thumbnail is display-only. Neither identifier column is sortable;
 `sha256` searches an exact digest through the unique index (`= UNHEX(?)`).
+
+## Private messages field registry
+
+`/v1/search/private_messages` over `telegram_private_messages`. Only
+index-backed columns are searchable so a query never scans the table.
+
+| key | label | type | operators |
+|---|---|---|---|
+| `text` | Text | fulltext | `matches` |
+| `content_type` | Content type | enum | `= !=` (text,photo,video,document,audio,voice,sticker,animation,service,unknown) |
+| `chat_id` | User (chat) id | int | `= != < > <= >=` |
+| `sender_id` | Sender id | int | `= != < > <= >=` |
+| `message_id` | Message id | int | `= != < > <= >=` |
+| `is_outgoing` | Outgoing | bool | `= !=` |
+| `is_forwarded` | Forwarded | bool | `= !=` |
+| `deleted` | Deleted | bool | `IS NULL IS NOT NULL` |
+| `date` | Sent | int (unix ts) | `= != < > <= >=`, sortable (default) |
+
+Each row shows the peer **user** as an avatar + name + username linking to
+their profile, plus direction (out), text, type, forwarded, message id, sent
+time and a deleted flag.
+
+## Group messages field registry
+
+`/v1/search/group_messages` over `telegram_group_messages` (2.6M rows), so the
+searchable set is limited to indexed columns; the rest are display-only.
+
+| key | label | type | operators |
+|---|---|---|---|
+| `text` | Text | fulltext | `matches` |
+| `content_type` | Content type | enum | `= !=` (same values as above) |
+| `chat_id` | Group id | int | `= != < > <= >=` |
+| `sender_user_id` | Sender user id | int | `= != < > <= >=` |
+| `deleted` | Deleted | bool | `IS NULL IS NOT NULL` |
+| `date` | Sent | int (unix ts) | `= != < > <= >=`, sortable (default) |
+
+Each row shows the **group** (photo + title → group page) and the **sender**
+(photo + name + username → user page) as two clickable avatars, plus type,
+text, forwarded, message id, sent time and a deleted flag.
+
+### Message search behaviour
+
+- **Relevance ordering.** When a `text matches …` condition is present and no
+  explicit `sort` is given, results are ordered by fulltext relevance (fast:
+  the fulltext index yields ordered rows, so `LIMIT` stops early). Ordering a
+  broad match by another column would filesort every hit. A relevance sort has
+  no id tiebreak, so paging can wobble on exact ties.
+- **`party` cell.** Message rows use a `party` display cell — a JSON object
+  `{kind: user|group|self|none, id, name, username, photo}` (the `photo` is a
+  tokenised `/files/<token>` URL) — rendered as a linked avatar + name.
 
 ## Response
 

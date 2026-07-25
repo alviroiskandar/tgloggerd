@@ -24,9 +24,10 @@
 namespace tgweb::controllers {
 
 /*
- * Turn the raw file id in each search result row's image cell (the "photo"
- * column of users/groups, or the "filethumb" column of files) into an opaque
- * /files/<token> URL the browser can load, or "" when there is none. Shared by
+ * Turn the raw file id in each search result row's image cell into an opaque
+ * /files/<token> URL the browser can load (or "" when there is none). Handles
+ * the scalar "photo"/"filethumb" cells (users/groups/files) and the "party"
+ * object cells (message rows), whose `photo` member is a raw file id. Shared by
  * the SSR page and the JSON API so both render identical rows. Safe to call on
  * an error result (no cols/rows).
  */
@@ -35,26 +36,31 @@ inline void enrichSearchPhotos(nlohmann::json &result)
 	if (!result.is_object() || !result.contains("cols") ||
 	    !result.contains("rows"))
 		return;
-	int photoIdx = -1;
+
+	auto tokenize = [](nlohmann::json &v) {
+		if (v.is_number() && v.get<int64_t>() != 0)
+			v = std::string("/files/") +
+			    auth::filetoken::encrypt(v.get<uint64_t>());
+		else
+			v = std::string();
+	};
+
 	const auto &cols = result["cols"];
 	for (size_t i = 0; i < cols.size(); i++) {
 		std::string t = cols[i].value("type", std::string());
-		if (t == "photo" || t == "filethumb") {
-			photoIdx = (int)i;
-			break;
-		}
-	}
-	if (photoIdx < 0)
-		return;
-	for (auto &row : result["rows"]) {
-		if (!row.is_array() || photoIdx >= (int)row.size())
+		bool scalar = (t == "photo" || t == "filethumb");
+		bool party  = (t == "party");
+		if (!scalar && !party)
 			continue;
-		auto &cell = row[photoIdx];
-		if (cell.is_number() && cell.get<int64_t>() != 0)
-			cell = std::string("/files/") +
-			       auth::filetoken::encrypt(cell.get<uint64_t>());
-		else
-			cell = std::string();
+		for (auto &row : result["rows"]) {
+			if (!row.is_array() || i >= row.size())
+				continue;
+			if (scalar)
+				tokenize(row[i]);
+			else if (party && row[i].is_object() &&
+				 row[i].contains("photo"))
+				tokenize(row[i]["photo"]);
+		}
 	}
 }
 

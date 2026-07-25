@@ -85,6 +85,9 @@
 					<td class="cell-name"><a href="{{ detail_base }}/{{ at(r, id_index) }}">{{ at(r, loop.index) }}</a></td>
 ## else if c.type == "username"
 					<td>{% if at(r, loop.index) != "" %}@{{ at(r, loop.index) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+## else if c.type == "party"
+## set p = at(r, loop.index)
+					<td class="cell-party">{% if p.kind == "user" %}<a class="party" href="/users/{{ p.id }}">{% if p.photo != "" %}<img class="avatar-sm" src="{{ p.photo }}" alt="">{% else %}<span class="avatar-sm placeholder"></span>{% endif %} {{ p.name }}</a>{% if p.username != "" %} <span class="muted">@{{ p.username }}</span>{% endif %}{% else if p.kind == "group" %}<a class="party" href="/groups/{{ p.id }}">{% if p.photo != "" %}<img class="avatar-sm" src="{{ p.photo }}" alt="">{% else %}<span class="avatar-sm placeholder"></span>{% endif %} {{ p.name }}</a>{% else %}<span class="party muted"><span class="avatar-sm placeholder"></span> {{ p.name }}</span>{% endif %}</td>
 ## else if c.type == "bool"
 					<td class="cell-bool">{% if at(r, loop.index) %}<span class="bool-yes">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
 ## else if c.type == "longtext"

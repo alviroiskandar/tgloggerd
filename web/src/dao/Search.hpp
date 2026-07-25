@@ -42,9 +42,15 @@ enum Op : uint32_t {
 	OP_ISNOTNULL = 1u << 9,
 	OP_CLIKE     = 1u << 10, /* "%LIKE%": contains; value wrapped %..% server-side */
 	OP_NCLIKE    = 1u << 11, /* "NOT %LIKE%": negation of contains */
+	OP_MATCH     = 1u << 12, /* "matches": FullText MATCH..AGAINST (boolean mode) */
 };
 
-enum class FType { Text, Int, Bool, Datetime, Enum };
+/*
+ * FullText columns are matched with `MATCH(<expr>) AGAINST(? IN BOOLEAN MODE)`
+ * (only OP_MATCH), so they need a FULLTEXT index and support Telegram-style
+ * word queries (`+must -not "phrase"`); an ordinary Text column uses LIKE.
+ */
+enum class FType { Text, Int, Bool, Datetime, Enum, FullText };
 
 /*
  * Column: the condition is `<expr> <op> ?` (or `<expr> IS [NOT] NULL`).
@@ -105,6 +111,17 @@ struct SearchSchema {
 	/* Project one result row to a positional, escaped JSON array in `cols`
 	 * order (photo cell = raw file id, later tokenised by the controller). */
 	nlohmann::json (*mapRow)(const drogon::orm::Row &);
+	/* FROM/JOIN for the COUNT(*) query, when it can be cheaper than `fromJoin`
+	 * -- e.g. dropping display-only LEFT JOINs the WHERE never references (a
+	 * count over millions of rows otherwise times out). Empty = use fromJoin.
+	 * Must still satisfy every field's WHERE expression. */
+	std::string_view countFrom = {};
+	/* Cap COUNT(*) at this many rows for huge tables (0 = exact). A filter on a
+	 * non-indexed column would otherwise scan millions of rows and time out;
+	 * the cap bounds it (the total shows as this value once reached, which is
+	 * plenty for paging). Fast/indexed counts still return their exact value if
+	 * below the cap. */
+	int countCap = 0;
 };
 
 /* One parsed condition from the search JSON. */
@@ -133,6 +150,8 @@ constexpr int MAX_OFFSET = 500000;
 const SearchSchema &usersSchema(void);
 const SearchSchema &groupsSchema(void);
 const SearchSchema &filesSchema(void);
+const SearchSchema &privateMessagesSchema(void);
+const SearchSchema &groupMessagesSchema(void);
 
 /* Look up a schema by entity name ("users", "groups"); nullptr if unknown. */
 const SearchSchema *schemaByName(const std::string &entity);
