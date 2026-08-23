@@ -155,11 +155,19 @@ std::string DiscordD::Impl::render(const gwdiscord::Message &m) const
 	 * formatting is deliberately not attempted yet -- Discord markdown
 	 * would have to be translated, and getting that wrong is worse than
 	 * sending it verbatim.
+	 *
+	 * The author is identified by username#discriminator, not by the
+	 * display name: the display name is free text a user can set to
+	 * anything (and is often long), whereas username#discriminator is the
+	 * stable handle that actually identifies the account. Discord migrated
+	 * most accounts to a "0" discriminator, which is kept rather than
+	 * hidden so the rendering is uniform.
 	 */
-	std::string who = m.author.global_name.empty() ? m.author.username
-						       : m.author.global_name;
+	std::string who = m.author.username;
 	if (who.empty())
 		who = "unknown";
+	if (!m.author.discriminator.empty())
+		who += "#" + m.author.discriminator;
 
 	std::string out = who + ":\n";
 	if (!m.content.empty())
