@@ -23,6 +23,7 @@ struct Route {
 	uint64_t	telegram_bot_id = 0;
 	std::string	bot_token;
 	int64_t		bot_user_id = 0;
+	std::string	bot_username;	/* as last recorded; may be empty */
 };
 
 /* A Telegram message a Discord reply should be threaded onto. */

@@ -105,10 +105,21 @@ void DiscordD::Impl::reload_routes(void)
 				    " unavailable, skipping its routes: " + err);
 			continue;
 		}
-		if (r.bot_user_id != uid) {
-			/* First login, or the token was pointed at a new bot. */
+		/*
+		 * Record the identity on first login, when the token is
+		 * repointed at a different bot, or when the username is still
+		 * missing -- the last case backfills rows created before the
+		 * username was captured, and rows the web UI inserted (it can
+		 * only store the token; only a login reveals who the bot is).
+		 */
+		const std::string uname = tg->botUsername(r.telegram_bot_id);
+		if (r.bot_user_id != uid ||
+		    (r.bot_username.empty() && !uname.empty())) {
 			try {
-				db->setBotUserId(r.telegram_bot_id, uid, "");
+				/* The username is what /routes labels the bot
+				 * with; without it the page can only show a
+				 * bare numeric id. */
+				db->setBotUserId(r.telegram_bot_id, uid, uname);
 			} catch (const std::exception &e) {
 				log(LOG_WARN,
 				    std::string("could not record bot user id: ") +

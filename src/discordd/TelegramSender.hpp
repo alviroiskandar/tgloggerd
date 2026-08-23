@@ -49,6 +49,9 @@ public:
 	int64_t addBot(uint64_t key, const std::string &token,
 		       std::string *err);
 
+	/* The bot's @username as TDLib reported it, or "" if it has none. */
+	std::string botUsername(uint64_t key);
+
 	/*
 	 * Send `text` to `chat_id`. When `reply_to_server_id` is non-zero the
 	 * message is threaded as a reply to it. Returns the SERVER message id

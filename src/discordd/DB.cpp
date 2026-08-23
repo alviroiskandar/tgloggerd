@@ -55,7 +55,7 @@ std::vector<Route> DB::loadRoutes(void)
 {
 	static const char *SQL =
 		"SELECT r.id, r.discord_channel_id, r.telegram_chat_id, "
-		"       r.telegram_bot_id, b.token, b.bot_user_id "
+		"       r.telegram_bot_id, b.token, b.bot_user_id, b.username "
 		"FROM discord_telegram_routes r "
 		"JOIN telegram_bots b ON b.id = r.telegram_bot_id "
 		"WHERE r.enabled = 1 AND b.enabled = 1";
@@ -69,6 +69,7 @@ std::vector<Route> DB::loadRoutes(void)
 		rt.telegram_bot_id = row_u64(r, 3);
 		rt.bot_token = row_str(r, 4);
 		rt.bot_user_id = row_i64(r, 5);
+		rt.bot_username = row_str(r, 6);
 		out.push_back(std::move(rt));
 	}
 	return out;

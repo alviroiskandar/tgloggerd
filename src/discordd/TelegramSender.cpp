@@ -430,6 +430,15 @@ int64_t TelegramSender::addBot(uint64_t key, const std::string &token,
 	return b->user_id;
 }
 
+std::string TelegramSender::botUsername(uint64_t key)
+{
+	auto b = impl_->bot_for_key(key);
+	if (!b)
+		return std::string();
+	std::lock_guard<std::mutex> lk(b->mtx);
+	return b->username;
+}
+
 int64_t TelegramSender::sendText(uint64_t key, int64_t chat_id,
 				 const std::string &text,
 				 int64_t reply_to_server_id, std::string *err)
