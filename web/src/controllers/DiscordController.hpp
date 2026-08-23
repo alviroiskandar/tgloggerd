@@ -11,7 +11,7 @@ namespace tgweb::controllers {
 
 /*
  * Admin-only management of the Discord webhook integrations (rows in the
- * logger's discord_webhooks table). GET /integrations renders the page; the
+ * logger's telegram_discord_webhooks table). GET /integrations renders the page; the
  * save/delete/test POSTs are CSRF-protected; /integrations/chats is the select2
  * chat-picker search. All routes require an authenticated admin (AuthFilter for
  * the epoch-checked session, then AdminFilter for the role).

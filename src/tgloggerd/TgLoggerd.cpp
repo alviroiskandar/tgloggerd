@@ -225,7 +225,7 @@ int TgLoggerd::start(void)
 	/*
 	 * Discord forwarder: its own pool so slow/blocked webhook POSTs never
 	 * back-pressure the DB writer serial_. Refresh interval controls how
-	 * quickly web-UI changes to discord_webhooks take effect.
+	 * quickly web-UI changes to telegram_discord_webhooks take effect.
 	 */
 	size_t discord_threads = (size_t)atoi(env("TG_DISCORD_THREADS", "2").c_str());
 	if (discord_threads < 1)

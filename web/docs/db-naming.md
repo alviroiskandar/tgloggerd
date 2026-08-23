@@ -8,11 +8,11 @@ platform is **prefixed with that platform's name**:
 | Prefix      | Owner / meaning                                              |
 |-------------|-------------------------------------------------------------|
 | `telegram_` | Telegram data: users, groups, messages, files, history, …   |
-| `discord_`  | Discord integration: webhooks, forwarded-message tracking   |
+| `discord_`  | Discord data: guilds, channels, users, messages, attachments |
 
 So the table that stores Telegram users is `telegram_users`, the group-message
-edit history is `telegram_group_message_edits`, the Discord webhook config is
-`discord_webhooks`, and so on.
+edit history is `telegram_group_message_edits`, the Discord messages log is
+`discord_messages`, and so on.
 
 ## The rule
 
@@ -24,6 +24,35 @@ edit history is `telegram_group_message_edits`, the Discord webhook config is
   `slack_`, `whatsapp_`, …). Keep it the same everywhere.
 - History / edit / auxiliary tables inherit the prefix of the entity they belong
   to (`telegram_user_hist_bio`, `telegram_group_admin_hist`).
+
+## Cross-platform tables carry BOTH platform names
+
+tgloggerd bridges platforms in both directions, so some tables do not belong to
+one platform — they describe a *relationship* between two. Those are prefixed
+with **both** slugs, **source first, then destination**:
+
+| Table                            | Meaning                                     |
+|----------------------------------|---------------------------------------------|
+| `telegram_discord_webhooks`      | config: mirror a Telegram chat → Discord     |
+| `telegram_discord_sent_messages` | what that forwarder posted into Discord      |
+| `discord_telegram_routes`        | config: mirror a Discord channel → Telegram  |
+| `discord_telegram_sent_messages` | what that forwarder sent into Telegram       |
+
+A single prefix on a bridge table is a bug waiting to happen. `discord_webhooks`
+(the old name of `telegram_discord_webhooks`) read as "Discord-only data" even
+though every row is keyed by a *Telegram* chat, and it left no room to name the
+reverse direction once one existed. Both were renamed in migration `000020`.
+
+The direction is part of the name, not an afterthought: `telegram_discord_*` and
+`discord_telegram_*` are different tables with different owners, and the prefix
+order is what tells them apart. Extending to a third platform follows the same
+shape — `slack_telegram_routes`, `telegram_slack_sent_messages`.
+
+**A table is only cross-platform if it genuinely relates two platforms.**
+`discord_endpoints` interns Discord webhook URLs and says nothing about
+Telegram, so it keeps a single prefix. `telegram_bots` holds Telegram bot
+credentials; it is *used* by the Discord bridge, but the data itself is
+Telegram's, so it too keeps a single prefix.
 
 ## What is *not* prefixed
 
@@ -54,5 +83,5 @@ JSON keys.
 
 - `migrations/` — the daemon owns the platform schema (`telegram_*`, `discord_*`).
   Renames are done with `ALTER TABLE … RENAME TO …` so existing rows are
-  preserved (see `000015_prefix_telegram_tables`).
+  preserved (see `000015_prefix_telegram_tables` and `000020_rename_bridge_tables`).
 - `web/migrations/` — the web app's own `web_*` tables.

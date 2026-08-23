@@ -15,7 +15,7 @@
 #include <string>
 
 /*
- * Discord webhook integrations (`discord_webhooks`, in the logger schema). The
+ * Discord webhook integrations (`telegram_discord_webhooks`, in the logger schema). The
  * web app is granted DML on this one table via the read-only tgloggerd user, so
  * every call here uses the "ro" DbClient. Strings placed on returned JSON are
  * Render::esc()-escaped except where noted (searchChats -> select2, raw).

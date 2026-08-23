@@ -1,0 +1,42 @@
+-- Name cross-platform bridge tables after BOTH platforms they connect.
+--
+-- The project is growing a second bridge direction (Discord -> Telegram, see
+-- src/discordd) and will grow bridges to further platforms. Under the old
+-- naming, a table called discord_webhooks was ambiguous: it holds Discord
+-- webhook URLs, but it is keyed by a TELEGRAM chat and exists only to describe
+-- a Telegram -> Discord relationship. Read alone, the name suggests it is
+-- Discord-only data, and there is no room left to name the reverse direction.
+--
+-- The convention, documented in README and web/docs/db-naming.md:
+--
+--   * A table describing ONE platform keeps that platform's prefix:
+--       telegram_users, telegram_group_messages, discord_guilds, discord_messages
+--   * A table RELATING two platforms is prefixed with both, source first,
+--     then destination:
+--       telegram_discord_webhooks       config: mirror Telegram -> Discord
+--       telegram_discord_sent_messages  what that forwarder posted
+--       discord_telegram_routes         config: mirror Discord -> Telegram
+--       discord_telegram_sent_messages  what that forwarder sent
+--
+-- discord_endpoints is deliberately NOT renamed: it interns Discord webhook
+-- URLs and says nothing about Telegram, so it describes one platform only.
+--
+-- Data-preserving: RENAME TO keeps rows, indexes and foreign keys intact.
+--
+-- OPERATIONAL NOTE -- re-grant the web user after applying this.
+--
+-- MySQL does not carry table-level grants across a RENAME, so the web app
+-- loses its write access to the integrations table. docker/mysql/init/
+-- 10-web-users.sh grants the new name, but that hook only runs on a fresh
+-- data directory. The grant cannot be issued from this migration: it is
+-- applied by the unprivileged daemon user, which can neither read mysql.user
+-- nor GRANT. On an existing deployment, run this once as root:
+--
+--   GRANT INSERT, UPDATE, DELETE ON `tgloggerd`.telegram_discord_webhooks
+--       TO 'web_ro'@'%';
+--   FLUSH PRIVILEGES;
+--
+-- Until then the web UI at /integrations can still read the table but its
+-- add/edit/delete actions will fail.
+ALTER TABLE discord_webhooks      RENAME TO telegram_discord_webhooks;
+ALTER TABLE discord_sent_messages RENAME TO telegram_discord_sent_messages;

@@ -68,7 +68,7 @@ private:
 
 	/*
 	 * Mirrors live messages to Discord; owns its own HTTP pool and a refresh
-	 * thread that reads discord_webhooks via db_. Declared after db_ so it is
+	 * thread that reads telegram_discord_webhooks via db_. Declared after db_ so it is
 	 * destroyed before db_; start() also stops it explicitly after the loop.
 	 */
 	std::unique_ptr<DiscordForwarder> discord_;

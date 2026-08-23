@@ -90,7 +90,7 @@ public:
 	/* Verify connectivity; throws std::runtime_error on failure. */
 	void ping(void);
 
-	/* Load all enabled Discord webhook integrations (discord_webhooks). */
+	/* Load all enabled Discord webhook integrations (telegram_discord_webhooks). */
 	std::vector<DiscordWebhook> loadDiscordWebhooks(void);
 
 	/* Discord-forwarder lookups (see DiscordForwarder). */

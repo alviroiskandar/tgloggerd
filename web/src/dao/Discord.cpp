@@ -43,7 +43,7 @@ drogon::Task<nlohmann::json> list(drogon::orm::DbClientPtr db)
 		"SELECT w.id, w.telegram_chat_id, w.telegram_chat_type, "
 		"w.webhook_url, w.enabled, w.created_at, "
 		"g.title AS group_title, u.first_name, u.last_name "
-		"FROM discord_webhooks w "
+		"FROM telegram_discord_webhooks w "
 		"LEFT JOIN `telegram_groups` g "
 		"  ON w.telegram_chat_id < 0 AND g.id = w.telegram_chat_id "
 		"LEFT JOIN telegram_users u "
@@ -80,7 +80,7 @@ drogon::Task<std::optional<Webhook>> get(drogon::orm::DbClientPtr db,
 {
 	auto rows = co_await db->execSqlCoro(
 		"SELECT id, telegram_chat_id, telegram_chat_type, webhook_url, "
-		"enabled FROM discord_webhooks WHERE id = ?",
+		"enabled FROM telegram_discord_webhooks WHERE id = ?",
 		id);
 	if (rows.empty())
 		co_return std::nullopt;
@@ -100,7 +100,7 @@ drogon::Task<uint64_t> create(drogon::orm::DbClientPtr db, int64_t chatId,
 			      bool enabled)
 {
 	auto r = co_await db->execSqlCoro(
-		"INSERT INTO discord_webhooks "
+		"INSERT INTO telegram_discord_webhooks "
 		"(telegram_chat_id, telegram_chat_type, webhook_url, enabled) "
 		"VALUES (?, ?, ?, ?)",
 		chatId, chatType, webhookUrl, enabled ? 1 : 0);
@@ -112,7 +112,7 @@ drogon::Task<void> update(drogon::orm::DbClientPtr db, uint64_t id,
 			  std::string webhookUrl, bool enabled)
 {
 	co_await db->execSqlCoro(
-		"UPDATE discord_webhooks SET telegram_chat_id = ?, "
+		"UPDATE telegram_discord_webhooks SET telegram_chat_id = ?, "
 		"telegram_chat_type = ?, webhook_url = ?, enabled = ? WHERE id = ?",
 		chatId, chatType, webhookUrl, enabled ? 1 : 0, id);
 	co_return;
@@ -120,7 +120,7 @@ drogon::Task<void> update(drogon::orm::DbClientPtr db, uint64_t id,
 
 drogon::Task<void> remove(drogon::orm::DbClientPtr db, uint64_t id)
 {
-	co_await db->execSqlCoro("DELETE FROM discord_webhooks WHERE id = ?", id);
+	co_await db->execSqlCoro("DELETE FROM telegram_discord_webhooks WHERE id = ?", id);
 	co_return;
 }
 

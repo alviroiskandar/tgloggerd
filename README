@@ -92,8 +92,12 @@ secrets. The daemon variables are prefixed `TG_`, the web variables
                                   implementations (.cpp) (User, File, ...).
     migrations/                golang-migrate SQL migrations for the schema.
                                Tables that store a messaging platform's data are
-                               prefixed per platform (telegram_*, discord_*); see
-                               web/docs/db-naming.md before adding tables.
+                               prefixed per platform (telegram_*, discord_*), and
+                               tables that RELATE two platforms carry both names,
+                               source first (telegram_discord_webhooks,
+                               discord_telegram_routes). See the naming rules
+                               below and web/docs/db-naming.md before adding
+                               tables.
     submodules/                Third-party dependencies vendored as git
                                submodules: TDLib (td), MySQL Connector/C++
                                (mysql-connector-cpp), Drogon, and MariaDB
@@ -110,6 +114,44 @@ secrets. The daemon variables are prefixed `TG_`, the web variables
     web/                       Optional server-rendered web interface for
                                browsing the database (a separate Drogon
                                application; see web/README.web).
+
+# Database table naming
+
+tgloggerd is growing from a Telegram-only logger into a hub that bridges
+several messaging platforms, so table names have to say which platform --
+or which pair of platforms -- they belong to. Two rules, and the full
+version with examples lives in web/docs/db-naming.md:
+
+1. A table holding data for ONE platform is prefixed with that platform:
+
+       telegram_users, telegram_group_messages, telegram_files
+       discord_guilds, discord_channels, discord_messages
+
+2. A table that RELATES two platforms is prefixed with BOTH, source first,
+   then destination:
+
+       telegram_discord_webhooks       config: mirror Telegram -> Discord
+       telegram_discord_sent_messages  what that forwarder posted
+       discord_telegram_routes         config: mirror Discord -> Telegram
+       discord_telegram_sent_messages  what that forwarder sent
+
+   The direction is part of the name. telegram_discord_* and
+   discord_telegram_* are different tables describing opposite flows, and
+   the prefix order is the only thing distinguishing them. A third
+   platform follows the same shape: slack_telegram_routes, and so on.
+
+   A single prefix on a bridge table is misleading. discord_webhooks --
+   renamed to telegram_discord_webhooks in migration 000020 -- read as
+   Discord-only data even though every row is keyed by a Telegram chat,
+   and it left no room to name the reverse direction once one existed.
+
+   Only tables that genuinely relate two platforms get two prefixes:
+   discord_endpoints (interned Discord webhook URLs) and telegram_bots
+   (Telegram bot credentials) each describe one platform, so they keep a
+   single prefix even though the bridge uses them.
+
+The convention is schema-only. HTTP routes, search-API entity keys and
+JSON response keys stay platform-neutral and unchanged.
 
 # Interaction with TDLib
 
