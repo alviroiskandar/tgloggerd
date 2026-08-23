@@ -1,0 +1,59 @@
+<link rel="stylesheet" href="/select2.min.css">
+<section class="mcp-groups" id="mcp-groups" data-csrf="{{ csrf }}">
+	<h1>MCP exposed groups</h1>
+	<p class="muted">Only the groups listed here can be read through <a href="/mcp-admin">MCP</a>. Everything else in the archive — every other group, and every direct message — stays invisible to it.</p>
+
+## if db_error != ""
+	<p class="mcp-err">Could not read the allowlist: {{ db_error }}</p>
+## endif
+
+	<div class="rt-toolbar">
+		<button type="button" id="mg-add">+ Expose a group</button>
+	</div>
+
+	<table class="grid rt-table">
+		<thead>
+			<tr><th>Group</th><th>Username</th><th>Messages</th><th>Public now</th><th>Note</th><th class="rt-actions-col"></th></tr>
+		</thead>
+		<tbody id="mg-body">
+## if length(groups) == 0
+			<tr><td colspan="6" class="muted">Nothing is exposed. MCP tools will return no messages until a group is added.</td></tr>
+## endif
+## for g in groups
+			<tr data-group-id="{{ g.group_id }}">
+				<td class="cell-name">{{ g.title }} <span class="muted">· {{ g.type }} · {{ g.group_id }}</span></td>
+				<td>{% if g.username != "" %}@{{ g.username }}{% else %}<span class="muted">—</span>{% endif %}</td>
+				<td>{{ g.msg_count }}</td>
+				<td>{% if g.is_public_now %}<span class="bool-yes">yes</span>{% else %}<span class="mcp-warn">no longer public</span>{% endif %}</td>
+				<td class="muted">{{ g.note }}</td>
+				<td class="nowrap rt-row-actions">
+					<button type="button" class="btn-link mg-del">Remove</button>
+				</td>
+			</tr>
+## endfor
+		</tbody>
+	</table>
+
+	<div class="rt-form-wrap" id="mg-form-wrap" hidden>
+		<h2>Expose a group</h2>
+		<form class="rt-form" id="mg-form">
+			<label>Group
+				<select id="mg-f-group" name="group_id"></select>
+				<span class="rt-hint">Busiest groups first. Groups already exposed are not listed.</span>
+			</label>
+			<label>Note
+				<input type="text" id="mg-f-note" name="note" maxlength="255" placeholder="Why this group is being exposed" autocomplete="off">
+				<span class="rt-hint">Free text, for whoever reviews this later.</span>
+			</label>
+			<div class="rt-form-actions">
+				<button type="submit">Expose</button>
+				<button type="button" class="btn-secondary" id="mg-cancel">Cancel</button>
+			</div>
+			<p class="rt-form-msg" id="mg-form-msg"></p>
+		</form>
+	</div>
+
+	<p class="muted rt-foot"><strong>“Public now”</strong> reports whether the group currently holds an active public username on Telegram. It is shown for review only — it never adds or removes anything by itself. A group reading <em>no longer public</em> went private after it was exposed, and is worth reconsidering.</p>
+</section>
+<script src="/select2.min.js" defer></script>
+<script src="/mcp-admin.js" defer></script>

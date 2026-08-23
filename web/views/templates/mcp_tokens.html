@@ -1,0 +1,60 @@
+<section class="mcp-tokens" id="mcp-tokens" data-csrf="{{ csrf }}">
+	<h1>MCP access tokens</h1>
+	<p class="muted">Bearer tokens for clients calling <code>/mcp</code>. A token reads every <a href="/mcp-admin/groups">exposed group</a>, so treat one like a password.</p>
+
+## if db_error != ""
+	<p class="mcp-err">Could not read the token list: {{ db_error }}</p>
+## endif
+
+	<div class="rt-toolbar">
+		<button type="button" id="mt-add">+ Mint a token</button>
+	</div>
+
+	<div class="mcp-new" id="mt-new" hidden>
+		<h2>Copy this now</h2>
+		<p class="muted">This is the only time it will be shown. Only a hash is stored, so it cannot be recovered — if you lose it, revoke it and mint another.</p>
+		<pre class="mcp-pre" id="mt-new-value"></pre>
+		<button type="button" class="btn-secondary" id="mt-new-done">Done</button>
+	</div>
+
+	<table class="grid rt-table">
+		<thead>
+			<tr><th>Name</th><th>Owner</th><th>Created</th><th>Last used</th><th>Status</th><th class="rt-actions-col"></th></tr>
+		</thead>
+		<tbody id="mt-body">
+## if length(tokens) == 0
+			<tr><td colspan="6" class="muted">No tokens yet. Mint one to connect a client.</td></tr>
+## endif
+## for t in tokens
+			<tr data-id="{{ t.id }}">
+				<td class="cell-name">{% if t.name != "" %}{{ t.name }}{% else %}<span class="muted">(unnamed)</span>{% endif %}</td>
+				<td>{{ t.username }}</td>
+				<td class="muted">{{ t.created_at }}</td>
+				<td class="muted">{% if t.last_used_at != "" %}{{ t.last_used_at }}{% else %}never{% endif %}</td>
+				<td>{% if t.revoked %}<span class="muted">revoked {{ t.revoked_at }}</span>{% else %}<span class="bool-yes">active</span>{% endif %}</td>
+				<td class="nowrap rt-row-actions">
+{% if not t.revoked %}					<button type="button" class="btn-link mt-revoke">Revoke</button>{% endif %}
+				</td>
+			</tr>
+## endfor
+		</tbody>
+	</table>
+
+	<div class="rt-form-wrap" id="mt-form-wrap" hidden>
+		<h2>Mint a token</h2>
+		<form class="rt-form" id="mt-form">
+			<label>Name
+				<input type="text" id="mt-f-name" name="name" maxlength="64" placeholder="laptop" autocomplete="off">
+				<span class="rt-hint">A label, so this one can be revoked later without guessing which is which.</span>
+			</label>
+			<div class="rt-form-actions">
+				<button type="submit">Mint</button>
+				<button type="button" class="btn-secondary" id="mt-cancel">Cancel</button>
+			</div>
+			<p class="rt-form-msg" id="mt-form-msg"></p>
+		</form>
+	</div>
+
+	<p class="muted rt-foot">Revoking keeps the row so the audit trail survives; the token stops working immediately. Deactivating an account disables its tokens too.</p>
+</section>
+<script src="/mcp-admin.js" defer></script>

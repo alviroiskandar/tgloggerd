@@ -939,3 +939,37 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 .fwd-card p { margin: 0 0 0.5rem; font-size: 0.9rem; }
 .fwd-count { font-size: 0.9rem; }
 .fwd-index-foot { font-size: 0.85rem; max-width: 46rem; }
+
+/* MCP admin pages. Reuses the .rt-* form/table rules and the .fwd-card grid;
+ * only what is genuinely new lives here. */
+.mcp-h2 { margin-top: 2rem; font-size: 1.05rem; }
+.mcp-pre {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 0.7rem 0.9rem;
+	overflow-x: auto;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 0.85rem;
+	user-select: all;              /* one click selects the whole token */
+}
+.mcp-err {
+	color: var(--error);
+	background: var(--card);
+	border: 1px solid var(--error);
+	border-radius: 8px;
+	padding: 0.6rem 0.9rem;
+	font-size: 0.9rem;
+}
+/* A group that has since gone private: worth an admin's attention, but not an
+ * error -- exposure is their decision, not the username's. */
+.mcp-warn { color: var(--error); }
+.mcp-new {
+	margin: 1.2rem 0;
+	max-width: 44rem;
+	padding: 1.1rem 1.2rem;
+	background: var(--card);
+	border: 1px solid var(--accent);
+	border-radius: 10px;
+}
+.mcp-new h2 { margin-top: 0; font-size: 1.05rem; }

@@ -108,10 +108,14 @@ add_executable(tgloggerd_web
 	src/dao/Browse.hpp
 	src/dao/DiscordTelegram.cpp
 	src/dao/DiscordTelegram.hpp
+	src/dao/Mcp.cpp
+	src/dao/Mcp.hpp
 	src/dao/Search.cpp
 	src/dao/Search.hpp
 	src/dao/TelegramDiscord.cpp
 	src/dao/TelegramDiscord.hpp
+	src/mcp/Token.cpp
+	src/mcp/Token.hpp
 	src/views/Render.cpp
 	src/views/Render.hpp
 	src/controllers/Common.hpp
@@ -121,6 +125,8 @@ add_executable(tgloggerd_web
 	src/controllers/DashboardController.hpp
 	src/controllers/DiscordTelegramController.cpp
 	src/controllers/DiscordTelegramController.hpp
+	src/controllers/McpAdminController.cpp
+	src/controllers/McpAdminController.hpp
 	src/controllers/PlatformFwdController.cpp
 	src/controllers/PlatformFwdController.hpp
 	src/controllers/TelegramDiscordController.cpp

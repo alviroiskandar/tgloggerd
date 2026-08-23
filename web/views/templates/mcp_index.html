@@ -1,0 +1,34 @@
+<section class="mcp-index" id="mcp-index">
+	<h1>MCP</h1>
+	<p class="muted">The Model Context Protocol endpoint lets a language model query this archive directly, at <code>/mcp</code>. Two things gate it: which groups it may read, and which tokens may ask.</p>
+
+	<div class="fwd-cards">
+		<a class="fwd-card" href="/mcp-admin/groups">
+			<h2>Exposed groups</h2>
+			<p class="muted">The allowlist. Nothing is readable through MCP until a group is added here — private groups and direct messages are never exposed.</p>
+			<p class="fwd-count">
+## if exposed_groups == 0
+				<span class="muted">Nothing exposed</span>
+## else
+				<span class="bool-yes">{{ exposed_groups }}</span> group{% if exposed_groups != 1 %}s{% endif %} · {{ exposed_messages }} messages
+## endif
+			</p>
+		</a>
+		<a class="fwd-card" href="/mcp-admin/tokens">
+			<h2>Access tokens</h2>
+			<p class="muted">Bearer tokens for MCP clients. Shown once at mint time and stored only as a hash, so a lost token is replaced rather than recovered.</p>
+			<p class="fwd-count">
+## if live_tokens == 0
+				<span class="muted">No active tokens</span>
+## else
+				<span class="bool-yes">{{ live_tokens }}</span> active token{% if live_tokens != 1 %}s{% endif %}
+## endif
+			</p>
+		</a>
+	</div>
+
+	<h2 class="mcp-h2">Connecting a client</h2>
+	<p class="muted">Point an MCP client at <code>https://&lt;this-host&gt;/mcp</code> and give it the token as a bearer credential:</p>
+	<pre class="mcp-pre">Authorization: Bearer tgmcp_…</pre>
+	<p class="muted">The endpoint is read-only. It can list exposed groups, read and search their messages, and look up users; it cannot write anything back.</p>
+</section>
