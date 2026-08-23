@@ -27,6 +27,13 @@ GRANT SELECT ON \`${MYSQL_DATABASE}\`.* TO '${WEB_DB_RO_USER}'@'%';
 -- boundary otherwise holds). The GRANT may precede the table's creation.
 GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.telegram_discord_webhooks TO '${WEB_DB_RO_USER}'@'%';
 
+-- The same for the opposite direction: /routes manages the Discord -> Telegram
+-- forwarding routes and the bot credentials they send through. telegram_bots
+-- holds bot TOKENS, so this grant is the reason that table is never SELECTed
+-- for display -- see web/src/dao/Routes.hpp.
+GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.discord_telegram_routes TO '${WEB_DB_RO_USER}'@'%';
+GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.telegram_bots TO '${WEB_DB_RO_USER}'@'%';
+
 -- Read-write over the web app's own schema (accounts, audit). ALL is needed to
 -- run the web migrations; at run time the app performs only DML.
 CREATE USER IF NOT EXISTS '${WEB_DB_APP_USER}'@'%' IDENTIFIED BY '${WEB_DB_APP_PASSWORD}';
