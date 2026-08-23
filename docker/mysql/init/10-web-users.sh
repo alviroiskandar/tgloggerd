@@ -34,6 +34,11 @@ GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.telegram_discord_webhooks 
 GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.discord_telegram_routes TO '${WEB_DB_RO_USER}'@'%';
 GRANT INSERT, UPDATE, DELETE ON \`${MYSQL_DATABASE}\`.telegram_bots TO '${WEB_DB_RO_USER}'@'%';
 
+-- The MCP exposure allowlist, managed from the admin UI. Rows are added and
+-- removed, never updated, so UPDATE is deliberately not granted -- this table
+-- decides what leaves the archive, and a narrower grant is worth the pedantry.
+GRANT INSERT, DELETE ON \`${MYSQL_DATABASE}\`.telegram_public_groups TO '${WEB_DB_RO_USER}'@'%';
+
 -- Read-write over the web app's own schema (accounts, audit). ALL is needed to
 -- run the web migrations; at run time the app performs only DML.
 CREATE USER IF NOT EXISTS '${WEB_DB_APP_USER}'@'%' IDENTIFIED BY '${WEB_DB_APP_PASSWORD}';
