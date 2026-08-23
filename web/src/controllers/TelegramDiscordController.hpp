@@ -2,8 +2,8 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#ifndef TGLOGGERD_WEB_CONTROLLERS_DISCORDCONTROLLER_HPP
-#define TGLOGGERD_WEB_CONTROLLERS_DISCORDCONTROLLER_HPP
+#ifndef TGLOGGERD_WEB_CONTROLLERS_TELEGRAMDISCORDCONTROLLER_HPP
+#define TGLOGGERD_WEB_CONTROLLERS_TELEGRAMDISCORDCONTROLLER_HPP
 
 #include <drogon/HttpController.h>
 
@@ -11,24 +11,24 @@ namespace tgweb::controllers {
 
 /*
  * Admin-only management of the Discord webhook integrations (rows in the
- * logger's telegram_discord_webhooks table). GET /integrations renders the page; the
- * save/delete/test POSTs are CSRF-protected; /integrations/chats is the select2
+ * logger's telegram_discord_webhooks table). GET /platform-fwd/telegram-discord renders the page; the
+ * save/delete/test POSTs are CSRF-protected; /platform-fwd/telegram-discord/chats is the select2
  * chat-picker search. All routes require an authenticated admin (AuthFilter for
  * the epoch-checked session, then AdminFilter for the role).
  */
-class DiscordController : public drogon::HttpController<DiscordController> {
+class TelegramDiscordController : public drogon::HttpController<TelegramDiscordController> {
 public:
 	METHOD_LIST_BEGIN
-	ADD_METHOD_TO(DiscordController::page, "/integrations", drogon::Get,
+	ADD_METHOD_TO(TelegramDiscordController::page, "/platform-fwd/telegram-discord", drogon::Get,
 		      "tgweb::auth::AuthFilter", "tgweb::auth::AdminFilter");
-	ADD_METHOD_TO(DiscordController::save, "/integrations/save", drogon::Post,
+	ADD_METHOD_TO(TelegramDiscordController::save, "/platform-fwd/telegram-discord/save", drogon::Post,
 		      "tgweb::auth::AuthFilter", "tgweb::auth::AdminFilter");
-	ADD_METHOD_TO(DiscordController::remove, "/integrations/delete",
+	ADD_METHOD_TO(TelegramDiscordController::remove, "/platform-fwd/telegram-discord/delete",
 		      drogon::Post, "tgweb::auth::AuthFilter",
 		      "tgweb::auth::AdminFilter");
-	ADD_METHOD_TO(DiscordController::test, "/integrations/test", drogon::Post,
+	ADD_METHOD_TO(TelegramDiscordController::test, "/platform-fwd/telegram-discord/test", drogon::Post,
 		      "tgweb::auth::AuthFilter", "tgweb::auth::AdminFilter");
-	ADD_METHOD_TO(DiscordController::chats, "/integrations/chats", drogon::Get,
+	ADD_METHOD_TO(TelegramDiscordController::chats, "/platform-fwd/telegram-discord/chats", drogon::Get,
 		      "tgweb::auth::AuthFilter", "tgweb::auth::AdminFilter");
 	METHOD_LIST_END
 
@@ -41,4 +41,4 @@ public:
 
 } /* namespace tgweb::controllers */
 
-#endif /* TGLOGGERD_WEB_CONTROLLERS_DISCORDCONTROLLER_HPP */
+#endif /* TGLOGGERD_WEB_CONTROLLERS_TELEGRAMDISCORDCONTROLLER_HPP */

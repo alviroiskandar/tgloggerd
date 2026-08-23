@@ -1,41 +1,35 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * tgloggerd web -- Discord -> Telegram routes admin page. Wires the select2
- * chat picker (AJAX to /routes/chats), the add/edit form (POST /routes/save)
- * and per-row edit/delete (POST /routes/delete). All mutating POSTs carry the
- * session CSRF token.
- *
- * Note what this file never does: read or display a bot token. The server does
- * not send one, and editing a route reuses the bot by id, so a token only ever
- * travels browser -> server, never back.
+ * tgloggerd web -- Discord webhook integrations admin page. Wires the select2
+ * chat picker (AJAX to /platform-fwd/telegram-discord/chats), the add/edit form (POST
+ * /platform-fwd/telegram-discord/save), per-row edit/delete, and the "send test message" button
+ * (POST /platform-fwd/telegram-discord/test). All mutating POSTs carry the session CSRF token.
  */
 (function () {
 	"use strict";
 	if (typeof jQuery === "undefined")
 		return;
 	var $ = jQuery;
-	var $root = $("#routes");
+	var $root = $("#integrations");
 	if (!$root.length)
 		return;
 	var csrf = $root.attr("data-csrf");
 
-	var $form    = $("#rt-form"),
-	    $wrap    = $("#rt-form-wrap"),
-	    $title   = $("#rt-form-title"),
-	    $msg     = $("#rt-form-msg"),
-	    $id      = $("#rt-f-id"),
-	    $channel = $("#rt-f-channel"),
-	    $chat    = $("#rt-f-chat"),
-	    $bot     = $("#rt-f-bot"),
-	    $token   = $("#rt-f-token"),
-	    $enabled = $("#rt-f-enabled");
+	var $form    = $("#int-form"),
+	    $wrap    = $("#int-form-wrap"),
+	    $title   = $("#int-form-title"),
+	    $msg     = $("#int-form-msg"),
+	    $id      = $("#int-f-id"),
+	    $chat    = $("#int-f-chat"),
+	    $url     = $("#int-f-url"),
+	    $enabled = $("#int-f-enabled");
 
 	$chat.select2({
 		placeholder: "Search a group, channel, or user…",
 		width: "100%",
 		minimumInputLength: 1,
 		ajax: {
-			url: "/routes/chats",
+			url: "/platform-fwd/telegram-discord/chats",
 			dataType: "json",
 			delay: 250,
 			data: function (params) { return { q: params.term || "" }; },
@@ -45,27 +39,24 @@
 	});
 
 	function setMsg(text, kind) {
-		$msg.text(text || "").attr("class", "rt-form-msg" + (kind ? " " + kind : ""));
+		$msg.text(text || "").attr("class", "int-form-msg" + (kind ? " " + kind : ""));
 	}
 
 	function openForm(mode, row) {
 		setMsg("");
-		/* Never prefilled: the server does not disclose stored tokens. */
-		$token.val("");
 		if (mode === "edit" && row) {
-			$title.text("Edit route");
+			$title.text("Edit integration");
 			$id.val(row.id);
-			$channel.val(row.channelId);
-			var opt = new Option(row.chatTitle, row.chatId, true, true);
+			var opt = new Option(row.chatTitle + "  ·  " + row.chatType,
+					     row.chatId, true, true);
 			$chat.empty().append(opt).trigger("change");
-			$bot.val(row.botId);
+			$url.val(row.url);
 			$enabled.prop("checked", String(row.enabled) === "1");
 		} else {
-			$title.text("Add route");
+			$title.text("Add integration");
 			$id.val("");
-			$channel.val("");
 			$chat.val(null).trigger("change");
-			$bot.val("");
+			$url.val("");
 			$enabled.prop("checked", true);
 		}
 		$wrap.prop("hidden", false);
@@ -87,26 +78,26 @@
 		});
 	}
 
-	$("#rt-add").on("click", function () { openForm("add"); });
-	$("#rt-cancel").on("click", function () { $wrap.prop("hidden", true); });
+	$("#int-add").on("click", function () { openForm("add"); });
+	$("#int-cancel").on("click", function () { $wrap.prop("hidden", true); });
 
-	$("#rt-body").on("click", ".rt-edit", function () {
+	$("#int-body").on("click", ".int-edit", function () {
 		var $tr = $(this).closest("tr");
 		openForm("edit", {
 			id: $tr.attr("data-id"),
-			channelId: $tr.attr("data-channel-id"),
 			chatId: $tr.attr("data-chat-id"),
+			chatType: $tr.attr("data-chat-type"),
 			chatTitle: $tr.attr("data-chat-title"),
-			botId: $tr.attr("data-bot-id"),
+			url: $tr.attr("data-url"),
 			enabled: $tr.attr("data-enabled")
 		});
 	});
 
-	$("#rt-body").on("click", ".rt-del", function () {
+	$("#int-body").on("click", ".int-del", function () {
 		var $tr = $(this).closest("tr");
-		if (!window.confirm("Delete this route? Forwarding from this Discord channel will stop."))
+		if (!window.confirm("Delete this integration? Forwarding for this chat will stop."))
 			return;
-		postForm("/routes/delete", { id: $tr.attr("data-id") }).then(function (res) {
+		postForm("/platform-fwd/telegram-discord/delete", { id: $tr.attr("data-id") }).then(function (res) {
 			if (res.ok)
 				location.reload();
 			else
@@ -117,18 +108,26 @@
 	$form.on("submit", function (e) {
 		e.preventDefault();
 		setMsg("Saving…");
-		postForm("/routes/save", {
+		postForm("/platform-fwd/telegram-discord/save", {
 			id: $id.val(),
-			discord_channel_id: ($channel.val() || "").trim(),
 			chat_id: $chat.val() || "",
-			telegram_bot_id: $bot.val() || "",
-			bot_token: $token.val() || "",
+			webhook_url: $url.val(),
 			enabled: $enabled.prop("checked") ? "1" : "0"
 		}).then(function (res) {
 			if (res.ok)
 				location.reload();
 			else
 				setMsg(res.error || "Could not save.", "err");
+		});
+	});
+
+	$("#int-test").on("click", function () {
+		var url = $url.val();
+		if (!url) { setMsg("Enter a webhook URL first.", "err"); return; }
+		setMsg("Sending test…");
+		postForm("/platform-fwd/telegram-discord/test", { webhook_url: url }).then(function (res) {
+			setMsg(res.ok ? (res.message || "Sent.") : (res.error || "Test failed."),
+			       res.ok ? "ok" : "err");
 		});
 	});
 }());

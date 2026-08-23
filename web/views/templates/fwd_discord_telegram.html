@@ -1,7 +1,7 @@
 <link rel="stylesheet" href="/select2.min.css">
 <section class="routes" id="routes" data-csrf="{{ csrf }}">
 	<h1>Discord → Telegram routes</h1>
-	<p class="muted">Forward every new message in a Discord channel to a Telegram group. Each route sends through a Telegram bot, which must already be a member of the destination group. This is the opposite direction to <a href="/integrations">Integrations</a>.</p>
+	<p class="muted">Forward every new message in a Discord channel to a Telegram group. Each route sends through a Telegram bot, which must already be a member of the destination group. This is the opposite direction to <a href="/platform-fwd/telegram-discord">Telegram → Discord</a>.</p>
 
 	<div class="rt-toolbar">
 		<button type="button" id="rt-add">+ Add route</button>
@@ -69,4 +69,4 @@
 	<p class="muted rt-foot">discordd re-reads this table every 30 seconds, so changes take effect without a restart. A newly added bot is only recognised by the loop guard once discordd has logged it in.</p>
 </section>
 <script src="/select2.min.js" defer></script>
-<script src="/routes.js" defer></script>
+<script src="/fwd-discord-telegram.js" defer></script>

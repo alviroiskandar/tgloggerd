@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#include "controllers/DiscordController.hpp"
+#include "controllers/TelegramDiscordController.hpp"
 
 #include "auth/Csrf.hpp"
 #include "controllers/Common.hpp"
@@ -70,7 +70,7 @@ bool parseWebhook(const std::string &url, std::string &host, std::string &pathq)
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
-DiscordController::page(drogon::HttpRequestPtr req)
+TelegramDiscordController::page(drogon::HttpRequestPtr req)
 {
 	auto db = drogon::app().getDbClient("ro");
 
@@ -78,11 +78,11 @@ DiscordController::page(drogon::HttpRequestPtr req)
 	data["title"] = "Integrations";
 	data["webhooks"] = co_await dao::discord::list(db);
 
-	co_return htmlPage(views::Render::page("integrations.html", data));
+	co_return htmlPage(views::Render::page("fwd_telegram_discord.html", data));
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-DiscordController::save(drogon::HttpRequestPtr req)
+TelegramDiscordController::save(drogon::HttpRequestPtr req)
 {
 	if (!auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return jsonError("Your session expired. Please reload.",
@@ -125,7 +125,7 @@ DiscordController::save(drogon::HttpRequestPtr req)
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-DiscordController::remove(drogon::HttpRequestPtr req)
+TelegramDiscordController::remove(drogon::HttpRequestPtr req)
 {
 	if (!auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return jsonError("Your session expired. Please reload.",
@@ -141,7 +141,7 @@ DiscordController::remove(drogon::HttpRequestPtr req)
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-DiscordController::test(drogon::HttpRequestPtr req)
+TelegramDiscordController::test(drogon::HttpRequestPtr req)
 {
 	if (!auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return jsonError("Your session expired. Please reload.",
@@ -182,7 +182,7 @@ DiscordController::test(drogon::HttpRequestPtr req)
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-DiscordController::chats(drogon::HttpRequestPtr req)
+TelegramDiscordController::chats(drogon::HttpRequestPtr req)
 {
 	auto db = drogon::app().getDbClient("ro");
 	std::string q = req->getParameter("q");

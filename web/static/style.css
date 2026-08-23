@@ -887,3 +887,55 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 .rt-form-msg.ok  { color: var(--accent); }
 .rt-form-msg.err { color: var(--error); }
 .rt-foot { margin-top: 1.5rem; font-size: 0.85rem; }
+
+/* Nav submenu, for the grouped "Platform forwarding" entry.
+ *
+ * CSS-only: the group is revealed on hover and on :focus-within, so keyboard
+ * tabbing opens it without script. The parent is itself a real link to the
+ * index page, so anything that cannot hover (touch, or a reader that skips the
+ * submenu) still reaches every direction from there. */
+.nav-group { position: relative; display: inline-block; }
+.nav-submenu {
+	display: none;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	z-index: 30;
+	min-width: 14rem;
+	padding: 0.35rem 0;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.nav-group:hover .nav-submenu,
+.nav-group:focus-within .nav-submenu { display: block; }
+.nav-submenu a {
+	display: block;
+	padding: 0.4rem 0.9rem;
+	white-space: nowrap;
+}
+.nav-submenu a:hover { background: var(--bg); }
+
+/* Platform forwarding index. */
+.fwd-cards {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1rem;
+	margin: 1.4rem 0;
+}
+.fwd-card {
+	flex: 1 1 20rem;
+	max-width: 26rem;
+	padding: 1.1rem 1.2rem;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	text-decoration: none;
+	color: inherit;
+}
+.fwd-card:hover { border-color: var(--accent); }
+.fwd-card h2 { margin: 0 0 0.4rem; font-size: 1.05rem; }
+.fwd-card p { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.fwd-count { font-size: 0.9rem; }
+.fwd-index-foot { font-size: 0.85rem; max-width: 46rem; }

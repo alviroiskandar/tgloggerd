@@ -119,10 +119,12 @@ add_executable(tgloggerd_web
 	src/controllers/AuthController.hpp
 	src/controllers/DashboardController.cpp
 	src/controllers/DashboardController.hpp
-	src/controllers/DiscordController.cpp
-	src/controllers/DiscordController.hpp
-	src/controllers/RoutesController.cpp
-	src/controllers/RoutesController.hpp
+	src/controllers/DiscordTelegramController.cpp
+	src/controllers/DiscordTelegramController.hpp
+	src/controllers/PlatformFwdController.cpp
+	src/controllers/PlatformFwdController.hpp
+	src/controllers/TelegramDiscordController.cpp
+	src/controllers/TelegramDiscordController.hpp
 	src/controllers/UsersController.cpp
 	src/controllers/UsersController.hpp
 	src/controllers/GroupsController.cpp

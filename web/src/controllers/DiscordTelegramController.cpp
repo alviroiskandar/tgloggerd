@@ -2,11 +2,12 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#include "controllers/RoutesController.hpp"
+#include "controllers/DiscordTelegramController.hpp"
 
 #include "auth/Csrf.hpp"
 #include "controllers/Common.hpp"
-#include "dao/Discord.hpp" /* resolveChat + searchChats, shared with /integrations */
+#include "dao/Discord.hpp" /* resolveChat + searchChats, shared with the
+				 reverse direction's page */
 #include "dao/Routes.hpp"
 #include "views/Render.hpp"
 
@@ -74,7 +75,7 @@ bool looksLikeBotToken(const std::string &t)
 } /* namespace */
 
 drogon::Task<drogon::HttpResponsePtr>
-RoutesController::page(drogon::HttpRequestPtr req)
+DiscordTelegramController::page(drogon::HttpRequestPtr req)
 {
 	auto db = drogon::app().getDbClient("ro");
 
@@ -83,11 +84,11 @@ RoutesController::page(drogon::HttpRequestPtr req)
 	data["routes"] = co_await dao::routes::list(db);
 	data["bots"] = co_await dao::routes::listBots(db);
 
-	co_return htmlPage(views::Render::page("routes.html", data));
+	co_return htmlPage(views::Render::page("fwd_discord_telegram.html", data));
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-RoutesController::save(drogon::HttpRequestPtr req)
+DiscordTelegramController::save(drogon::HttpRequestPtr req)
 {
 	if (!auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return jsonError("Your session expired. Please reload.",
@@ -179,7 +180,7 @@ RoutesController::save(drogon::HttpRequestPtr req)
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-RoutesController::remove(drogon::HttpRequestPtr req)
+DiscordTelegramController::remove(drogon::HttpRequestPtr req)
 {
 	if (!auth::csrf::checkSession(req, req->getParameter("csrf")))
 		co_return jsonError("Your session expired. Please reload.",
@@ -214,13 +215,13 @@ RoutesController::remove(drogon::HttpRequestPtr req)
 }
 
 drogon::Task<drogon::HttpResponsePtr>
-RoutesController::chats(drogon::HttpRequestPtr req)
+DiscordTelegramController::chats(drogon::HttpRequestPtr req)
 {
 	auto db = drogon::app().getDbClient("ro");
 	const std::string q = req->getParameter("q");
 	const int limit = clampedIntParam(req, "limit", 20, 1, 50);
 
-	/* Same source as /integrations/chats, so both pickers agree. */
+	/* Same source as /platform-fwd/telegram-discord/chats, so both pickers agree. */
 	nlohmann::json results = co_await dao::discord::searchChats(db, q, limit);
 	nlohmann::json out;
 	out["results"] = nlohmann::json::array();
