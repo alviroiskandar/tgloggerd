@@ -77,6 +77,27 @@ services:
       tgnet:
         ipv4_address: 10.0.88.4
 
+  # The Discord daemon: logs Discord messages and forwards the routed ones to
+  # Telegram. It shares the bind-mounted build/ with the tgloggerd service, so
+  # TDLib is compiled once rather than per container -- but that also means the
+  # two must not be configured with different cmake flags (see run.sh).
+  #
+  # It does not apply migrations: the tgloggerd service owns the schema, and
+  # two containers racing `migrate up` on the same database is how a dirty
+  # schema version happens.
+  discordd:
+    <<: *build
+    container_name: tgloggerd-discordd
+    restart: unless-stopped
+    depends_on: [mysql]
+    command: [discord]
+    env_file: .env
+    volumes:
+      - .:/workspace
+    networks:
+      tgnet:
+        ipv4_address: 10.0.88.6
+
 networks:
   tgnet:
     driver: bridge

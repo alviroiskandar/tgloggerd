@@ -102,3 +102,9 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(tgloggerd PRIVATE Td::TdStatic connector-jdbc OpenSSL::Crypto CURL::libcurl ${SODIUM_LIBRARIES} Threads::Threads)
 target_include_directories(tgloggerd PRIVATE ${SODIUM_INCLUDE_DIRS})
+
+# discordd -- the Discord daemon (logs Discord messages, forwards them to
+# Telegram). Added last: it links Td::TdStatic and connector-jdbc from the
+# subprojects above, and pulls in the self-contained gwdiscord library. Its
+# own CMakeLists owns those details.
+add_subdirectory(src/discordd)

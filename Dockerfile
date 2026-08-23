@@ -23,10 +23,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 #
 # git is needed because run.sh initializes the vendored submodules on first
 # start; wget fetches golang-migrate below.
+#   discordd: gwdiscord speaks the Discord Gateway over a WebSocket, which the
+#           system libcurl cannot do -- Ubuntu builds it without websocket
+#           support. Boost.Beast provides it; only headers are needed, since
+#           Beast and Asio are header-only, so nothing links a Boost binary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		build-essential cmake git ca-certificates pkg-config wget \
 		gperf libssl-dev zlib1g-dev libmysqlclient-dev libcurl4-openssl-dev \
 		libsodium-dev libjsoncpp-dev uuid-dev libbrotli-dev \
+		libboost-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
 # golang-migrate applies the SQL migrations on container start. The release

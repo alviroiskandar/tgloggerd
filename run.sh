@@ -7,13 +7,16 @@
 # database migrations, and then execs the binary. All configuration comes from
 # the environment -- see .env.example.
 #
-# Usage: run.sh <daemon|web>
+# Usage: run.sh <daemon|web|discord>
 #
 #   daemon  Build and run the logger daemon (src/, build/). On first login it
 #           prompts on stdin for the phone number, code and 2FA password, so
 #           run it interactively the first time: `docker compose run --rm
 #           tgloggerd`.
 #   web     Build and run the web interface (web/, web/build/).
+#   discord Build and run discordd, the Discord daemon: logs Discord
+#           messages and forwards them to Telegram. Shares build/ with
+#           the daemon so TDLib is compiled only once.
 #
 set -euo pipefail
 
@@ -99,7 +102,10 @@ daemon)
 
 	log "Building tgloggerd (this compiles TDLib on the first run and is slow)"
 	prepare_build_dir build
-	build_cmd "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j${NPROC}"
+	# --target tgloggerd, not everything: build/ also holds discordd, which
+	# this container neither runs nor needs, and building it here would
+	# make the daemon depend on discordd's own dependencies.
+	build_cmd "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target tgloggerd -j${NPROC}"
 
 	wait_for_mysql "$TG_DB_HOST" "$TG_DB_PORT"
 	log "Applying daemon migrations"
@@ -131,8 +137,32 @@ web)
 	exec web/build/tgloggerd_web
 	;;
 
+discord)
+	: "${TG_DB_HOST:?TG_DB_HOST is not set}" "${TG_DB_PORT:?TG_DB_PORT is not set}"
+	: "${TG_DB_USER:?}" "${TG_DB_PASSWORD:?}" "${TG_DB_NAME:?}"
+	: "${DISCORD_BOT_TOKEN:?DISCORD_BOT_TOKEN is not set}"
+
+	# discordd links TDLib (it sends to Telegram as a bot) and the JDBC
+	# connector, so it needs the same submodules as the daemon.
+	ensure_submodules submodules/td submodules/mysql-connector-cpp
+
+	log "Building discordd (shares build/ with tgloggerd, so TDLib is compiled once)"
+	prepare_build_dir build
+	# The configure line must match the daemon's exactly: both containers
+	# share build/, and a differing cache would make them reconfigure in a
+	# loop against each other.
+	build_cmd "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target discordd -j${NPROC}"
+
+	wait_for_mysql "$TG_DB_HOST" "$TG_DB_PORT"
+	# The daemon container owns migrations; discordd only reads the schema
+	# it produces. Waiting for the table it needs avoids a startup race on
+	# a cold deployment where both containers come up together.
+	log "Starting discordd"
+	exec build/discordd
+	;;
+
 *)
-	echo "Usage: run.sh <daemon|web>" >&2
+	echo "Usage: run.sh <daemon|web|discord>" >&2
 	exit 2
 	;;
 esac
