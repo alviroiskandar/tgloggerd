@@ -2,8 +2,8 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#ifndef TGLOGGERD_WEB_DAO_DISCORD_HPP
-#define TGLOGGERD_WEB_DAO_DISCORD_HPP
+#ifndef TGLOGGERD_WEB_DAO_TELEGRAMDISCORD_HPP
+#define TGLOGGERD_WEB_DAO_TELEGRAMDISCORD_HPP
 
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
@@ -15,12 +15,16 @@
 #include <string>
 
 /*
- * Discord webhook integrations (`telegram_discord_webhooks`, in the logger schema). The
- * web app is granted DML on this one table via the read-only tgloggerd user, so
- * every call here uses the "ro" DbClient. Strings placed on returned JSON are
- * Render::esc()-escaped except where noted (searchChats -> select2, raw).
+ * Telegram -> Discord forwarding: mirror a Telegram chat into a Discord channel
+ * via that channel's incoming webhook (`telegram_discord_webhooks`, in the
+ * logger schema). Serves /platform-fwd/telegram-discord.
+ *
+ * The web app is granted DML on this one table via the read-only tgloggerd
+ * user, so every call here uses the "ro" DbClient. Strings placed on returned
+ * JSON are Render::esc()-escaped except where noted (searchChats -> select2,
+ * which returns raw text).
  */
-namespace tgweb::dao::discord {
+namespace tgweb::dao::telegram_discord {
 
 struct Webhook {
 	uint64_t    id;
@@ -71,6 +75,6 @@ drogon::Task<std::optional<ChatRef>> resolveChat(drogon::orm::DbClientPtr db,
 drogon::Task<nlohmann::json> searchChats(drogon::orm::DbClientPtr db,
 					 std::string q, int limit);
 
-} /* namespace tgweb::dao::discord */
+} /* namespace tgweb::dao::telegram_discord */
 
-#endif /* TGLOGGERD_WEB_DAO_DISCORD_HPP */
+#endif /* TGLOGGERD_WEB_DAO_TELEGRAMDISCORD_HPP */

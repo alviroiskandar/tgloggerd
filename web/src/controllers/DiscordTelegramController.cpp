@@ -6,9 +6,9 @@
 
 #include "auth/Csrf.hpp"
 #include "controllers/Common.hpp"
-#include "dao/Discord.hpp" /* resolveChat + searchChats, shared with the
+#include "dao/TelegramDiscord.hpp" /* resolveChat + searchChats, shared with the
 				 reverse direction's page */
-#include "dao/Routes.hpp"
+#include "dao/DiscordTelegram.hpp"
 #include "views/Render.hpp"
 
 #include <cstdlib>
@@ -81,8 +81,8 @@ DiscordTelegramController::page(drogon::HttpRequestPtr req)
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Routes";
-	data["routes"] = co_await dao::routes::list(db);
-	data["bots"] = co_await dao::routes::listBots(db);
+	data["routes"] = co_await dao::discord_telegram::list(db);
+	data["bots"] = co_await dao::discord_telegram::listBots(db);
 
 	co_return htmlPage(views::Render::page("fwd_discord_telegram.html", data));
 }
@@ -124,14 +124,14 @@ DiscordTelegramController::save(drogon::HttpRequestPtr req)
 	 */
 	try {
 		/* The chat must be one the logger has actually seen. */
-		auto chat = co_await dao::discord::resolveChat(db, chatId);
+		auto chat = co_await dao::telegram_discord::resolveChat(db, chatId);
 		if (!chat)
 			co_return jsonError(
 				"That chat is not in the log yet, so the bot "
 				"cannot access it. Pick one it has seen.");
 
 		/* Reject the duplicate before the UNIQUE key does. */
-		if (co_await dao::routes::duplicateExists(db, channelId, chatId,
+		if (co_await dao::discord_telegram::duplicateExists(db, channelId, chatId,
 							  id))
 			co_return jsonError(
 				"That Discord channel already forwards to that "
@@ -153,7 +153,7 @@ DiscordTelegramController::save(drogon::HttpRequestPtr req)
 				co_return jsonError(
 					"That does not look like a Telegram bot "
 					"token (123456789:AA...).");
-			botId = co_await dao::routes::internBot(db, botToken);
+			botId = co_await dao::discord_telegram::internBot(db, botToken);
 			if (!botId)
 				co_return jsonError(
 					"Could not store the bot token.",
@@ -166,10 +166,10 @@ DiscordTelegramController::save(drogon::HttpRequestPtr req)
 				"to add one.");
 
 		if (!id)
-			co_await dao::routes::create(db, channelId, chatId,
+			co_await dao::discord_telegram::create(db, channelId, chatId,
 						     botId, enabled);
 		else
-			co_await dao::routes::update(db, id, channelId, chatId,
+			co_await dao::discord_telegram::update(db, id, channelId, chatId,
 						     botId, enabled);
 	} catch (const std::exception &e) {
 		co_return jsonError(std::string("Database error: ") + e.what(),
@@ -199,14 +199,14 @@ DiscordTelegramController::remove(drogon::HttpRequestPtr req)
 		 * anything fails at the database. Say why, and point at the
 		 * alternative, rather than surfacing a foreign key error.
 		 */
-		const uint64_t n = co_await dao::routes::sentCount(db, id);
+		const uint64_t n = co_await dao::discord_telegram::sentCount(db, id);
 		if (n)
 			co_return jsonError(
 				"This route has forwarded " + std::to_string(n) +
 				" message(s), which are still linked to it. "
 				"Disable it instead of deleting it.");
 
-		co_await dao::routes::remove(db, id);
+		co_await dao::discord_telegram::remove(db, id);
 	} catch (const std::exception &e) {
 		co_return jsonError(std::string("Database error: ") + e.what(),
 				    drogon::k500InternalServerError);
@@ -221,8 +221,9 @@ DiscordTelegramController::chats(drogon::HttpRequestPtr req)
 	const std::string q = req->getParameter("q");
 	const int limit = clampedIntParam(req, "limit", 20, 1, 50);
 
-	/* Same source as /platform-fwd/telegram-discord/chats, so both pickers agree. */
-	nlohmann::json results = co_await dao::discord::searchChats(db, q, limit);
+	/* Same source as the reverse direction's picker, so both agree. */
+	nlohmann::json results =
+		co_await dao::telegram_discord::searchChats(db, q, limit);
 	nlohmann::json out;
 	out["results"] = nlohmann::json::array();
 	for (auto &c : results) {

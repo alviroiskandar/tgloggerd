@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#include "dao/Discord.hpp"
+#include "dao/TelegramDiscord.hpp"
 
 #include "views/Render.hpp"
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace tgweb::dao::discord {
+namespace tgweb::dao::telegram_discord {
 
 namespace {
 
@@ -194,4 +194,4 @@ drogon::Task<nlohmann::json> searchChats(drogon::orm::DbClientPtr db,
 	co_return arr;
 }
 
-} /* namespace tgweb::dao::discord */
+} /* namespace tgweb::dao::telegram_discord */

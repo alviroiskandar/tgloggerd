@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#include "dao/Routes.hpp"
+#include "dao/DiscordTelegram.hpp"
 
 #include "views/Render.hpp"
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace tgweb::dao::routes {
+namespace tgweb::dao::discord_telegram {
 
 namespace {
 
@@ -57,7 +57,7 @@ drogon::Task<nlohmann::json> list(drogon::orm::DbClientPtr db)
 {
 	/*
 	 * Resolve the Telegram chat title live rather than storing a copy that
-	 * goes stale on a rename -- the same approach dao::discord::list takes.
+	 * goes stale on a rename -- the same approach dao::telegram_discord::list takes.
 	 * A chat_id is unique to one side, so only one join matches.
 	 */
 	auto rows = co_await db->execSqlCoro(
@@ -231,4 +231,4 @@ drogon::Task<bool> duplicateExists(drogon::orm::DbClientPtr db,
 	co_return !rows.empty();
 }
 
-} /* namespace tgweb::dao::routes */
+} /* namespace tgweb::dao::discord_telegram */

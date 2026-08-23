@@ -15,7 +15,7 @@ namespace tgweb::controllers {
  * The mirror image of DiscordController, which manages the opposite direction.
  *
  * GET /platform-fwd/discord-telegram renders the page; the save/delete POSTs are CSRF-protected;
- * /platform-fwd/discord-telegram/chats is the select2 Telegram chat picker, reusing dao::discord's
+ * /platform-fwd/discord-telegram/chats is the select2 Telegram chat picker, reusing dao::telegram_discord's
  * search so both pages resolve chats identically. Every route requires an
  * authenticated admin (AuthFilter for the epoch-checked session, then
  * AdminFilter for the role) -- these rows hold bot credentials.

@@ -6,7 +6,7 @@
 
 #include "auth/Csrf.hpp"
 #include "controllers/Common.hpp"
-#include "dao/Discord.hpp"
+#include "dao/TelegramDiscord.hpp"
 #include "views/Render.hpp"
 
 #include <drogon/HttpClient.h>
@@ -76,7 +76,7 @@ TelegramDiscordController::page(drogon::HttpRequestPtr req)
 
 	nlohmann::json data = pageBase(req);
 	data["title"] = "Integrations";
-	data["webhooks"] = co_await dao::discord::list(db);
+	data["webhooks"] = co_await dao::telegram_discord::list(db);
 
 	co_return htmlPage(views::Render::page("fwd_telegram_discord.html", data));
 }
@@ -108,17 +108,17 @@ TelegramDiscordController::save(drogon::HttpRequestPtr req)
 	int64_t chatId = std::strtoll(chatStr.c_str(), nullptr, 10);
 	/* resolveChat still gates on the chat being in the log (accessible); its
 	 * title is no longer stored -- the list resolves it live. */
-	auto chat = co_await dao::discord::resolveChat(db, chatId);
+	auto chat = co_await dao::telegram_discord::resolveChat(db, chatId);
 	if (!chat)
 		co_return jsonError("That chat is not in the log yet, so the bot "
 				    "cannot access it. Pick one it has seen.");
 
 	if (idStr.empty()) {
-		co_await dao::discord::create(db, chat->chatId, chat->type, url,
+		co_await dao::telegram_discord::create(db, chat->chatId, chat->type, url,
 					      enabled);
 	} else {
 		uint64_t id = std::strtoull(idStr.c_str(), nullptr, 10);
-		co_await dao::discord::update(db, id, chat->chatId, chat->type, url,
+		co_await dao::telegram_discord::update(db, id, chat->chatId, chat->type, url,
 					      enabled);
 	}
 	co_return jsonResp({ {"ok", true} });
@@ -136,7 +136,8 @@ TelegramDiscordController::remove(drogon::HttpRequestPtr req)
 		co_return jsonError("Missing integration id.");
 
 	auto db = drogon::app().getDbClient("ro");
-	co_await dao::discord::remove(db, std::strtoull(idStr.c_str(), nullptr, 10));
+	co_await dao::telegram_discord::remove(
+		db, std::strtoull(idStr.c_str(), nullptr, 10));
 	co_return jsonResp({ {"ok", true} });
 }
 
@@ -188,7 +189,8 @@ TelegramDiscordController::chats(drogon::HttpRequestPtr req)
 	std::string q = req->getParameter("q");
 	int limit = clampedIntParam(req, "limit", 20, 1, 50);
 
-	nlohmann::json results = co_await dao::discord::searchChats(db, q, limit);
+	nlohmann::json results =
+		co_await dao::telegram_discord::searchChats(db, q, limit);
 	/* select2 expects { results: [{id, text}, ...] }; keep type/title too. */
 	nlohmann::json out;
 	out["results"] = nlohmann::json::array();

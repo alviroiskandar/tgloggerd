@@ -2,8 +2,8 @@
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
-#ifndef TGLOGGERD_WEB_DAO_ROUTES_HPP
-#define TGLOGGERD_WEB_DAO_ROUTES_HPP
+#ifndef TGLOGGERD_WEB_DAO_DISCORDTELEGRAM_HPP
+#define TGLOGGERD_WEB_DAO_DISCORDTELEGRAM_HPP
 
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
@@ -17,21 +17,21 @@
 /*
  * Discord -> Telegram forwarding routes (`discord_telegram_routes`, joined to
  * the sending bot's credentials in `telegram_bots`), in the logger schema. The
- * mirror image of dao::discord, which manages the Telegram -> Discord
- * direction. Like it, everything here runs on the "ro" DbClient, which is
- * granted DML on just these two tables.
+ * mirror image of dao::telegram_discord, which manages the opposite direction.
+ * Serves /platform-fwd/discord-telegram. Like its sibling, everything here runs
+ * on the "ro" DbClient, which is granted DML on just these two tables.
  *
  * SECRETS. telegram_bots.token is a Telegram bot token: whoever holds it can
  * read and send as that bot. It is therefore NEVER selected for display and
  * never leaves the server. The UI identifies a bot by its Telegram user id and
  * username, and the only way the token is written is by supplying a new one.
- * (This deliberately departs from dao::discord, which returns webhook_url in
- * full -- a webhook URL is at least scoped to one channel and constrained by a
- * host allowlist; a bot token is a whole account.)
+ * (This deliberately departs from dao::telegram_discord, which returns
+ * webhook_url in full -- a webhook URL is at least scoped to one channel and
+ * constrained by a host allowlist; a bot token is a whole account.)
  *
  * Strings placed on returned JSON are Render::esc()-escaped except where noted.
  */
-namespace tgweb::dao::routes {
+namespace tgweb::dao::discord_telegram {
 
 struct Route {
 	uint64_t    id;
@@ -103,6 +103,6 @@ drogon::Task<bool> duplicateExists(drogon::orm::DbClientPtr db,
 				   uint64_t discordChannelId,
 				   int64_t telegramChatId, uint64_t excludeId);
 
-} /* namespace tgweb::dao::routes */
+} /* namespace tgweb::dao::discord_telegram */
 
-#endif /* TGLOGGERD_WEB_DAO_ROUTES_HPP */
+#endif /* TGLOGGERD_WEB_DAO_DISCORDTELEGRAM_HPP */

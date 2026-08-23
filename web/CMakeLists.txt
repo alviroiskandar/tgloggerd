@@ -106,12 +106,12 @@ add_executable(tgloggerd_web
 	src/dao/Audit.hpp
 	src/dao/Browse.cpp
 	src/dao/Browse.hpp
-	src/dao/Discord.cpp
-	src/dao/Discord.hpp
-	src/dao/Routes.cpp
-	src/dao/Routes.hpp
+	src/dao/DiscordTelegram.cpp
+	src/dao/DiscordTelegram.hpp
 	src/dao/Search.cpp
 	src/dao/Search.hpp
+	src/dao/TelegramDiscord.cpp
+	src/dao/TelegramDiscord.hpp
 	src/views/Render.cpp
 	src/views/Render.hpp
 	src/controllers/Common.hpp
