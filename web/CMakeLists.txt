@@ -108,6 +108,8 @@ add_executable(tgloggerd_web
 	src/dao/Browse.hpp
 	src/dao/Discord.cpp
 	src/dao/Discord.hpp
+	src/dao/Routes.cpp
+	src/dao/Routes.hpp
 	src/dao/Search.cpp
 	src/dao/Search.hpp
 	src/views/Render.cpp
@@ -119,6 +121,8 @@ add_executable(tgloggerd_web
 	src/controllers/DashboardController.hpp
 	src/controllers/DiscordController.cpp
 	src/controllers/DiscordController.hpp
+	src/controllers/RoutesController.cpp
+	src/controllers/RoutesController.hpp
 	src/controllers/UsersController.cpp
 	src/controllers/UsersController.hpp
 	src/controllers/GroupsController.cpp

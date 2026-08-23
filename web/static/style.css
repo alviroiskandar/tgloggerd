@@ -852,3 +852,38 @@ img.msg-media { cursor: zoom-in; object-fit: contain; }
 	background: color-mix(in srgb, var(--accent) 18%, transparent);
 	color: var(--fg);
 }
+
+/* Discord -> Telegram routes admin page. Mirrors the .int-* rules above; the
+ * table/button/select2 styling is shared and not repeated here. */
+.rt-toolbar { margin: 1rem 0; }
+.rt-table td.rt-channel {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	color: var(--muted);
+	white-space: nowrap;
+}
+.rt-table .rt-actions-col { width: 1%; }
+.rt-row-actions { display: flex; gap: 0.4rem; }
+.rt-form-wrap {
+	margin-top: 1.2rem;
+	max-width: 34rem;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 1.2rem 1.3rem;
+}
+.rt-form-wrap h2 { margin-top: 0; font-size: 1.1rem; }
+.rt-form { display: flex; flex-direction: column; gap: 0.9rem; }
+.rt-form > label {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+.rt-form label.rt-check { flex-direction: row; align-items: center; gap: 0.5rem; color: var(--fg); }
+.rt-hint { font-size: 0.8rem; color: var(--muted); }
+.rt-form-actions { display: flex; gap: 0.6rem; margin-top: 0.2rem; }
+.rt-form-msg { margin: 0.4rem 0 0; font-size: 0.9rem; min-height: 1.2em; }
+.rt-form-msg.ok  { color: var(--accent); }
+.rt-form-msg.err { color: var(--error); }
+.rt-foot { margin-top: 1.5rem; font-size: 0.85rem; }

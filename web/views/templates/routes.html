@@ -1,0 +1,72 @@
+<link rel="stylesheet" href="/select2.min.css">
+<section class="routes" id="routes" data-csrf="{{ csrf }}">
+	<h1>Discord → Telegram routes</h1>
+	<p class="muted">Forward every new message in a Discord channel to a Telegram group. Each route sends through a Telegram bot, which must already be a member of the destination group. This is the opposite direction to <a href="/integrations">Integrations</a>.</p>
+
+	<div class="rt-toolbar">
+		<button type="button" id="rt-add">+ Add route</button>
+	</div>
+
+	<table class="grid rt-table">
+		<thead>
+			<tr><th>Discord channel</th><th>Telegram chat</th><th>Sending bot</th><th>Status</th><th class="rt-actions-col"></th></tr>
+		</thead>
+		<tbody id="rt-body">
+## if length(routes) == 0
+			<tr id="rt-empty"><td colspan="5" class="muted">No routes yet. Add one to start forwarding from Discord.</td></tr>
+## endif
+## for r in routes
+			<tr data-id="{{ r.id }}" data-channel-id="{{ r.discord_channel_id }}" data-chat-id="{{ r.chat_id }}" data-chat-title="{{ r.chat_title }}" data-bot-id="{{ r.telegram_bot_id }}" data-enabled="{% if r.enabled %}1{% else %}0{% endif %}">
+				<td class="rt-channel">{{ r.discord_channel_id }}</td>
+				<td class="cell-name">{{ r.chat_title }} <span class="muted">· {{ r.chat_id }}</span></td>
+				<td>{{ r.bot_label }}</td>
+				<td>
+{% if r.enabled %}{% if r.bot_enabled %}<span class="bool-yes">Enabled</span>{% else %}<span class="muted">Bot disabled</span>{% endif %}{% else %}<span class="muted">Disabled</span>{% endif %}
+				</td>
+				<td class="nowrap rt-row-actions">
+					<button type="button" class="btn-link rt-edit">Edit</button>
+					<button type="button" class="btn-link rt-del">Delete</button>
+				</td>
+			</tr>
+## endfor
+		</tbody>
+	</table>
+
+	<div class="rt-form-wrap" id="rt-form-wrap" hidden>
+		<h2 id="rt-form-title">Add route</h2>
+		<form class="rt-form" id="rt-form">
+			<input type="hidden" name="id" id="rt-f-id" value="">
+			<label>Discord channel ID
+				<input type="text" id="rt-f-channel" name="discord_channel_id" inputmode="numeric" placeholder="1541156106343161896" autocomplete="off">
+				<span class="rt-hint">Enable Developer Mode in Discord, then right-click the channel → Copy Channel ID. The bot must be a member of it.</span>
+			</label>
+			<label>Telegram chat
+				<select id="rt-f-chat" name="chat_id"></select>
+				<span class="rt-hint">Search a group, channel, or user the logger has already seen.</span>
+			</label>
+			<label>Sending bot
+				<select id="rt-f-bot" name="telegram_bot_id">
+					<option value="">— add a new bot below —</option>
+## for b in bots
+					<option value="{{ b.id }}">{{ b.label }}{% if not b.connected %} (not connected yet){% endif %}</option>
+## endfor
+				</select>
+				<span class="rt-hint">Bots are shared between routes. Existing tokens are never shown — to change a route's bot, pick another or paste a new token.</span>
+			</label>
+			<label>Bot token
+				<input type="password" id="rt-f-token" name="bot_token" placeholder="123456789:AA…" autocomplete="off">
+				<span class="rt-hint">Only needed when adding a bot. Leave blank to keep using the bot selected above.</span>
+			</label>
+			<label class="rt-check"><input type="checkbox" id="rt-f-enabled" name="enabled" value="1" checked> Enabled</label>
+			<div class="rt-form-actions">
+				<button type="submit">Save</button>
+				<button type="button" class="btn-secondary" id="rt-cancel">Cancel</button>
+			</div>
+			<p class="rt-form-msg" id="rt-form-msg"></p>
+		</form>
+	</div>
+
+	<p class="muted rt-foot">discordd re-reads this table every 30 seconds, so changes take effect without a restart. A newly added bot is only recognised by the loop guard once discordd has logged it in.</p>
+</section>
+<script src="/select2.min.js" defer></script>
+<script src="/routes.js" defer></script>
