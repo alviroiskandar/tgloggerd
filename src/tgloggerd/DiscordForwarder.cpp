@@ -290,14 +290,47 @@ void DiscordForwarder::reload(void)
 	for (const auto &w : rows)
 		next[w.chat_id].push_back(w.webhook_url);
 
+	/*
+	 * Loaded on the same cycle as the webhooks so a newly configured
+	 * discordd route stops echoing within one refresh interval rather
+	 * than needing a restart. A failure here is not fatal: keep the
+	 * previous list rather than dropping the loop guard entirely.
+	 */
+	std::vector<int64_t> bots;
+	bool bots_ok = true;
+	try {
+		bots = db_->loadForwardingBotUserIds();
+	} catch (const std::exception &e) {
+		bots_ok = false;
+		pr_error(l_, "discord: failed to load bridge bot ids: %s",
+			 e.what());
+	}
+
 	size_t n_hooks = rows.size();
 	size_t n_chats = next.size();
+	size_t n_bots;
 	{
 		std::lock_guard<std::mutex> lk(cache_mtx_);
 		cache_.swap(next);
+		if (bots_ok)
+			bridge_bots_.swap(bots);
+		n_bots = bridge_bots_.size();
 	}
-	pr_info(l_, "discord: loaded %zu webhook(s) across %zu chat(s)",
-		n_hooks, n_chats);
+	pr_info(l_,
+		"discord: loaded %zu webhook(s) across %zu chat(s), %zu bridge bot(s)",
+		n_hooks, n_chats, n_bots);
+}
+
+bool DiscordForwarder::is_bridge_bot(int64_t sender_id)
+{
+	if (!sender_id)
+		return false;
+	std::lock_guard<std::mutex> lk(cache_mtx_);
+	for (int64_t id : bridge_bots_) {
+		if (id == sender_id)
+			return true;
+	}
+	return false;
 }
 
 void DiscordForwarder::refresh_loop(void)
@@ -521,6 +554,20 @@ void DiscordForwarder::forward(const ForwardMessage &fm)
 	if (urls.empty())
 		return;
 
+	/*
+	 * Loop guard. This message may itself be a Discord message that
+	 * discordd just delivered into the chat; mirroring it back would echo
+	 * it into the very channel it came from. discordd's own guard (it
+	 * ignores webhook-authored messages) stops the cycle from running
+	 * away, but only this check stops the duplicate being posted at all.
+	 */
+	if (is_bridge_bot(fm.sender_id)) {
+		pr_debug(l_,
+			 "discord: not mirroring message %lld from bridge bot %lld",
+			 (long long)fm.message_id, (long long)fm.sender_id);
+		return;
+	}
+
 	if (fm.has_file) {
 		/* Remember this live media message; its file forwards once
 		 * stored (on_media_stored). Sweep stale entries opportunistically. */
@@ -570,6 +617,9 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 void DiscordForwarder::forward_edit(const ForwardMessage &fm)
 {
 	if (webhooks_for(fm.chat_id).empty())
+		return;
+	/* Its original was never mirrored (see forward), so neither is this. */
+	if (is_bridge_bot(fm.sender_id))
 		return;
 	pool_.post([this, fm] { do_edit_forward(fm); });
 }

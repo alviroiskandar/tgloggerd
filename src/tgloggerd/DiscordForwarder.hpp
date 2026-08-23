@@ -103,6 +103,12 @@ private:
 	};
 
 	std::vector<std::string> webhooks_for(int64_t chat_id);
+	/*
+	 * True when `sender_id` is one of the bots discordd forwards Discord
+	 * messages into Telegram with. Such a message originated on Discord,
+	 * so mirroring it back would show the sender their own message twice.
+	 */
+	bool is_bridge_bot(int64_t sender_id);
 	void reload(void);
 	void refresh_loop(void);
 
@@ -152,6 +158,9 @@ private:
 
 	std::mutex	cache_mtx_;
 	std::unordered_map<int64_t, std::vector<std::string>> cache_;
+	/* Telegram user ids of discordd's forwarding bots; see is_bridge_bot.
+	 * Reloaded with the webhook cache, under cache_mtx_. */
+	std::vector<int64_t> bridge_bots_;
 
 	std::mutex	webhook_info_mtx_;
 	std::unordered_map<std::string, WebhookInfo> webhook_info_;

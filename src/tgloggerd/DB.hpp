@@ -93,6 +93,19 @@ public:
 	/* Load all enabled Discord webhook integrations (telegram_discord_webhooks). */
 	std::vector<DiscordWebhook> loadDiscordWebhooks(void);
 
+	/*
+	 * Telegram user ids of the bots discordd forwards Discord messages
+	 * with (telegram_bots.bot_user_id, populated at bot login).
+	 *
+	 * These exist to break the other half of the bridge loop. A Discord
+	 * message that discordd delivers into Telegram becomes an ordinary
+	 * new Telegram message, which this daemon would then mirror straight
+	 * back into the Discord channel it came from -- the sender sees their
+	 * own message repeated by the webhook. Messages sent by these bots are
+	 * therefore not forwarded.
+	 */
+	std::vector<int64_t> loadForwardingBotUserIds(void);
+
 	/* Discord-forwarder lookups (see DiscordForwarder). */
 	std::optional<uint64_t> getUserPhotoFileId(int64_t user_id);
 	ChatPhoto getGroupPhoto(int64_t chat_id);

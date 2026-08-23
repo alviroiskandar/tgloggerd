@@ -38,6 +38,25 @@ std::vector<DiscordWebhook> DB::loadDiscordWebhooks(void)
 	return out;
 }
 
+std::vector<int64_t> DB::loadForwardingBotUserIds(void)
+{
+	/*
+	 * bot_user_id is 0 until discordd logs the bot in for the first time,
+	 * so skip those rather than treating 0 as a sender id.
+	 */
+	auto rows = db_.query("SELECT bot_user_id FROM telegram_bots "
+			      "WHERE bot_user_id <> 0");
+
+	std::vector<int64_t> out;
+	out.reserve(rows.size());
+	for (const auto &r : rows) {
+		if (!r[0].has_value())
+			continue;
+		out.push_back(std::stoll(*r[0]));
+	}
+	return out;
+}
+
 std::optional<uint64_t> DB::getUserPhotoFileId(int64_t user_id)
 {
 	auto rows = db_.query(
