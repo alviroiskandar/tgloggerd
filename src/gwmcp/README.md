@@ -23,9 +23,10 @@ These exist so gwmcp can be lifted into its own git repository later without arc
 4. **Add functionality only when a consumer actually needs it.** This is a library grown
    to fit its users, not a complete MCP implementation.
 
-Licence is `GPL-2.0-or-later` — note the `-or-later`, matching `src/gwdiscord` and
-differing from tgloggerd's `GPL-2.0-only`, which keeps the subtree compatible with
-Apache-2.0 dependencies.
+Licence is `GPL-2.0-or-later`, matching `src/gwdiscord` and, since the relicense,
+tgloggerd itself. `COPYING` and `COPYING.GPLv3` sit here rather than only at the
+repository root so that rule 1 above actually holds — the directory keeps its
+terms when it is lifted out.
 
 ## Layout
 
