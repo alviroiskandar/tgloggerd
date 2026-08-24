@@ -446,6 +446,140 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 		registry.add(std::move(t));
 	}
 
+	/* ---- telegram_list_group_admins ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_list_group_admins";
+		t.title = "List a group's administrators";
+		t.description =
+			"List the administrators of one readable group, with "
+			"their privileges. The owner is listed first, then "
+			"other admins oldest-promotion first.\n\n"
+			"Only groups returned by telegram_list_groups can be "
+			"queried; anything else yields an empty list rather "
+			"than an error.\n\n"
+			"Note this is a snapshot, not a live read. Telegram "
+			"does not push admin changes to a regular account, so "
+			"the list is refreshed by periodic polling and may lag "
+			"a very recent promotion or demotion.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "limit",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "1-200, default 50." } } } } },
+			{ "required", Json::array({ "group_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+
+			const int64_t gid = args["group_id"].get<long long>();
+
+			/*
+			 * The gate, as a WHERE clause rather than a check on
+			 * the caller's argument: an unexposed group produces no
+			 * rows, exactly as if it had no admins. Refusing it
+			 * explicitly would confirm the group exists, which is
+			 * itself something the allowlist is meant to withhold.
+			 */
+			const std::string sql =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+				"a.user_id, a.status, a.custom_title, "
+				"a.joined_date, a.is_anonymous, "
+				"a.inviter_user_id, "
+				"a.can_manage_chat, a.can_change_info, "
+				"a.can_post_messages, a.can_edit_messages, "
+				"a.can_delete_messages, a.can_invite_users, "
+				"a.can_restrict_members, a.can_pin_messages, "
+				"a.can_manage_topics, a.can_promote_members, "
+				"a.can_manage_video_chats, a.can_post_stories, "
+				"a.can_edit_stories, a.can_delete_stories, "
+				"a.can_manage_direct_messages, a.can_manage_tags, "
+				"u.first_name, u.last_name, u.type, "
+				"u.is_verified, u.is_premium, "
+				"(SELECT x.username FROM telegram_user_usernames x "
+				"  WHERE x.user_id = a.user_id "
+				"    AND x.kind = 'active' "
+				"  ORDER BY x.position LIMIT 1) AS username "
+				"FROM telegram_group_admins a "
+				"LEFT JOIN telegram_users u ON u.id = a.user_id "
+				"WHERE a.group_id = ? "
+				"  AND a.group_id IN (SELECT group_id "
+				"                     FROM telegram_public_groups) "
+				/* Owner first, then longest-serving. */
+				"ORDER BY (a.status = 'creator') DESC, "
+				"         a.joined_date ASC "
+				"LIMIT " + std::to_string(clampLimit(args));
+
+			/* Only the rights actually held: 17 booleans, mostly
+			 * false, are noise -- a list of what an admin CAN do
+			 * reads better and is far smaller. */
+			static const char *kRights[] = {
+				"can_manage_chat", "can_change_info",
+				"can_post_messages", "can_edit_messages",
+				"can_delete_messages", "can_invite_users",
+				"can_restrict_members", "can_pin_messages",
+				"can_manage_topics", "can_promote_members",
+				"can_manage_video_chats", "can_post_stories",
+				"can_edit_stories", "can_delete_stories",
+				"can_manage_direct_messages", "can_manage_tags",
+			};
+
+			Json out;
+			out["group_id"] = gid;
+			out["admins"] = Json::array();
+			try {
+				for (const auto &r : execSync(
+					     db, sql, { std::to_string(gid) })) {
+					Json j;
+					j["user_id"] = colI64(r, "user_id");
+					j["username"] = colStr(r, "username");
+					j["first_name"] = colStr(r, "first_name");
+					j["last_name"] = colStr(r, "last_name");
+					j["status"] = colStr(r, "status");
+					j["custom_title"] =
+						colStr(r, "custom_title");
+					j["is_anonymous"] =
+						colI64(r, "is_anonymous") != 0;
+					j["is_bot"] =
+						colStr(r, "type") == "bot";
+					j["is_verified"] =
+						colI64(r, "is_verified") != 0;
+					j["is_premium"] =
+						colI64(r, "is_premium") != 0;
+					if (colI64(r, "joined_date"))
+						j["joined_date"] =
+							colI64(r, "joined_date");
+					if (colI64(r, "inviter_user_id"))
+						j["promoted_by_user_id"] =
+							colI64(r, "inviter_user_id");
+
+					Json perms = Json::array();
+					for (const char *k : kRights) {
+						if (colI64(r, k))
+							perms.push_back(k);
+					}
+					j["permissions"] = std::move(perms);
+					out["admins"].push_back(std::move(j));
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+			out["count"] = out["admins"].size();
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
 	/* ---- telegram_list_recent_messages ---- */
 	{
 		gwmcp::Tool t;
@@ -481,6 +615,150 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 				throw ToolError(std::string("query failed: ") +
 						e.what());
 			}
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_list_group_senders ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_list_group_senders";
+		t.title = "List everyone who has posted in a group";
+		t.description =
+			"List the users who have ever sent a message to one "
+			"readable group, busiest first, with how many messages "
+			"each has sent.\n\n"
+			"This is participation, not membership: it can only "
+			"see people who have posted, so lurkers and members who "
+			"joined without speaking do not appear. Counts include "
+			"messages later deleted, since the archive keeps them.\n\n"
+			"Channel posts and messages from anonymous admins are "
+			"excluded, as those are sent by the channel rather than "
+			"by a user.\n\n"
+			"Only groups returned by telegram_list_groups can be "
+			"queried.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "limit",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "1-200, default 50." } } },
+				{ "offset", Json{ { "type", "integer" } } },
+				{ "include_total",
+				  Json{ { "type", "boolean" },
+					{ "description",
+					  "Also return how many distinct users "
+					  "have posted. Costs a second pass." } } } } },
+			{ "required", Json::array({ "group_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+
+			const int64_t gid = args["group_id"].get<long long>();
+			const int limit = clampLimit(args);
+			const int offset = clampOffset(args);
+
+			/*
+			 * Aggregate first, decorate second -- the same split
+			 * the message queries use, and for the same reason: the
+			 * inner query is covered by
+			 * idx_group_messages_chat_sender (added in migration
+			 * 000023), and adding the user joins to it would break
+			 * that. The joins then run over at most `limit` rows.
+			 *
+			 * sender_user_id IS NULL means a channel post or an
+			 * anonymous admin -- sent by the chat, not a user -- so
+			 * those are excluded rather than collapsed into a
+			 * phantom participant.
+			 */
+			const std::string inner =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+				"m.sender_user_id AS uid, COUNT(1) AS n "
+				"FROM telegram_group_messages m "
+				"WHERE m.chat_id = ? "
+				"  AND m.sender_user_id IS NOT NULL "
+				"  AND m.chat_id IN (SELECT group_id "
+				"                    FROM telegram_public_groups) "
+				"GROUP BY m.sender_user_id "
+				"ORDER BY n DESC LIMIT " + std::to_string(limit) +
+				" OFFSET " + std::to_string(offset);
+
+			const std::string sql =
+				"SELECT s.uid, s.n, u.first_name, u.last_name, "
+				"u.type, u.is_verified, u.is_premium, "
+				"u.msg_count AS total_msgs, "
+				"(SELECT x.username FROM telegram_user_usernames x "
+				"  WHERE x.user_id = s.uid AND x.kind = 'active' "
+				"  ORDER BY x.position LIMIT 1) AS username "
+				"FROM (" + inner + ") s "
+				"LEFT JOIN telegram_users u ON u.id = s.uid "
+				"ORDER BY s.n DESC";
+
+			Json out;
+			out["group_id"] = gid;
+			out["senders"] = Json::array();
+			try {
+				for (const auto &r : execSync(
+					     db, sql, { std::to_string(gid) })) {
+					Json j;
+					j["user_id"] = colI64(r, "uid");
+					j["username"] = colStr(r, "username");
+					j["first_name"] = colStr(r, "first_name");
+					j["last_name"] = colStr(r, "last_name");
+					j["is_bot"] = colStr(r, "type") == "bot";
+					j["is_verified"] =
+						colI64(r, "is_verified") != 0;
+					j["is_premium"] =
+						colI64(r, "is_premium") != 0;
+					j["messages_in_group"] = colI64(r, "n");
+					/* Across the whole archive, for
+					 * contrast with the per-group count. */
+					j["messages_total"] =
+						colI64(r, "total_msgs");
+					out["senders"].push_back(std::move(j));
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+
+			out["count"] = out["senders"].size();
+			out["limit"] = limit;
+			out["offset"] = offset;
+
+			if (args.contains("include_total") &&
+			    args["include_total"].is_boolean() &&
+			    args["include_total"].get<bool>()) {
+				const std::string csql =
+					"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+					"COUNT(DISTINCT m.sender_user_id) AS n "
+					"FROM telegram_group_messages m "
+					"WHERE m.chat_id = ? "
+					"  AND m.sender_user_id IS NOT NULL "
+					"  AND m.chat_id IN (SELECT group_id "
+					"                    FROM telegram_public_groups)";
+				try {
+					auto cr = execSync(
+						db, csql,
+						{ std::to_string(gid) });
+					out["total_senders"] =
+						cr.empty() ? 0
+							   : cr[0]["n"].as<int64_t>();
+				} catch (const std::exception &e) {
+					throw ToolError(
+						std::string("count failed: ") +
+						e.what());
+				}
+			}
+			return out;
 		};
 		registry.add(std::move(t));
 	}

@@ -174,6 +174,20 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_list_recent_messages` | Newest first, optionally one group. |
 | `telegram_search_messages` | Full filter tree. `include_total` is off by default. |
 | `telegram_get_users` | By `user_id`, `username`, `phone_number` or name. Requires a filter. |
+| `telegram_list_group_admins` | A group's admins, owner first, with the privileges each holds. |
+| `telegram_list_group_senders` | Everyone who has ever posted in a group, busiest first. |
+
+`telegram_list_group_admins` reports a **snapshot**: Telegram does not push admin changes to
+a regular account, so the list is refreshed by polling and can lag a very recent promotion.
+Only privileges actually held are listed — 17 booleans, mostly false, are noise.
+
+`telegram_list_group_senders` measures **participation, not membership**. It can only see
+people who have posted, so lurkers never appear; counts include messages later deleted; and
+channel posts and anonymous-admin messages are excluded, since those are sent by the chat
+rather than by a user.
+
+Both return an empty list for a group that is not exposed, rather than an error — refusing
+explicitly would confirm the group exists, which is itself something the allowlist withholds.
 
 All are annotated `readOnlyHint: true` and none can write.
 
@@ -202,6 +216,12 @@ every message in every exposed group, and there is no `(chat_id, date)` index to
 `uq_group_messages_chat_msg`, so a reverse index walk stops at `limit` — 2.6ms. No single
 query does that across groups, so one indexed walk per exposed group is the plan, merged
 in C++. Affordable precisely because the allowlist is curated. 2.6s → 0.01s.
+
+**Listing a group's senders needs `(chat_id, sender_user_id)`.** Without it, "who has ever
+posted here?" reads every message in the group and de-duplicates — 2.3s over one group's
+236,490 messages to produce 292 names, and proportional to the group's size rather than the
+answer's, so it degrades exactly on the busiest groups. Migration `000023` adds the index,
+making the scan covering: 143ms, at about 8% growth in index size.
 
 Tools run on their own event-loop pool (`MCP_THREADS`, default 2), not on an HTTP thread:
 they use the blocking database API, and a slow query must delay only another MCP call.
