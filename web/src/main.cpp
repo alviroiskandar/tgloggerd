@@ -4,6 +4,8 @@
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
  */
 #include <drogon/drogon.h>
+
+#include <cstdio>
 #include <drogon/orm/DbConfig.h>
 
 #include <termios.h>
@@ -185,6 +187,63 @@ int main(int argc, char **argv)
 
 	addMysqlClient(cfg.ro);
 	addMysqlClient(cfg.app);
+
+	/*
+	 * Request tracing, off unless MCP_LOG_REQUESTS=1.
+	 *
+	 * Exists because an MCP client's connection attempt is otherwise a
+	 * black box: when Claude Desktop failed to connect, the only way to
+	 * tell whether it was sending the query-string key, probing OAuth
+	 * discovery paths, or something else entirely was to watch what
+	 * actually arrived.
+	 *
+	 * It logs the SHAPE of a request, never its content: whether a
+	 * credential was present, not what it was. A token in a log is exactly
+	 * the exposure the query-string parameter is already criticised for,
+	 * and this must not add to it.
+	 */
+	if (tgweb::env("MCP_LOG_REQUESTS", "0") == "1") {
+		drogon::app().registerPreRoutingAdvice(
+			[](const drogon::HttpRequestPtr &req) {
+				const std::string path(req->path());
+				/* Only the paths an MCP client touches. */
+				if (path.rfind("/mcp", 0) != 0 &&
+				    path.rfind("/.well-known", 0) != 0 &&
+				    path != "/register")
+					return;
+
+				const bool hasAuth =
+					!req->getHeader("authorization").empty();
+				const bool hasKey =
+					!req->getParameter("key").empty();
+				/*
+				 * stderr, not LOG_INFO: drogon's logger is not
+				 * wired to the container's stdout here, so the
+				 * framework's own startup lines never appear
+				 * either. A diagnostic that cannot be seen is
+				 * not a diagnostic.
+				 */
+				/*
+				 * Origin is logged because it is a silent way
+				 * to fail: an unlisted origin is refused with
+				 * 403 before authentication is even looked at,
+				 * so a client sending one looks to its user
+				 * like a credential problem.
+				 */
+				fprintf(stderr,
+					"mcp-trace %s %s auth_header=%s key_param=%s "
+					"origin=\"%s\" accept=\"%s\" ua=\"%s\"\n",
+					req->methodString(), path.c_str(),
+					hasAuth ? "yes" : "no",
+					hasKey ? "yes" : "no",
+					req->getHeader("origin").c_str(),
+					req->getHeader("accept").c_str(),
+					req->getHeader("user-agent").c_str());
+				fflush(stderr);
+			});
+		fprintf(stderr, "MCP request tracing enabled (MCP_LOG_REQUESTS=1)\n");
+		fflush(stderr);
+	}
 
 	/* Minimal liveness endpoint; real controllers are added incrementally. */
 	drogon::app().registerHandler("/healthz",

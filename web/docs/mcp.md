@@ -103,14 +103,31 @@ streaming**.
 | `DELETE` | `405` (stateless; no session to end) |
 | Missing/revoked token | `401`, **no** `WWW-Authenticate` (see below) |
 | Unsupported `MCP-Protocol-Version` | `400` |
-| Disallowed `Origin` | `403` |
+| `Origin` not in `MCP_ALLOWED_ORIGINS` (when set) | `403` |
 
 Protocol version `2025-06-18`; `2025-03-26` is accepted and assumed when the header is
 absent.
 
-`Origin` is validated because the spec requires it (DNS-rebinding defence). A request with
-no `Origin` — any non-browser client — is unaffected. A browser request is refused unless
-its origin is listed in `MCP_ALLOWED_ORIGINS`.
+### `Origin`
+
+The spec asks servers to validate `Origin` as a DNS-rebinding defence. That guidance is
+written for the common case of an MCP server on localhost with no authentication; this
+endpoint is neither, and two stronger things already stand in a hostile page's way:
+
+1. **A bearer token is required** — an attacker's page does not have one.
+2. **No CORS headers are ever sent**, so a cross-origin page cannot *read* a response even
+   if it manages to send a request; and the `application/json` content type forces a
+   preflight this server does not answer, so it usually cannot send one either.
+
+So **the default is to allow**. Set `MCP_ALLOWED_ORIGINS` to a comma-separated list (or
+`*`) to restore strict checking — worth doing if this endpoint is ever exposed without a
+token.
+
+An earlier version refused any request carrying an `Origin` unless an allowlist was
+configured. That rejected every legitimate browser-based and Electron client — including
+Claude Desktop — with a **403 raised before authentication was even considered**, which
+surfaced to the user as an unexplained sign-in failure. It broke real clients to defend
+against an attack the token already prevents.
 
 ## Filter grammar
 

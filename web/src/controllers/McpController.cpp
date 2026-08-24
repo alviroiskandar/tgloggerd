@@ -91,10 +91,31 @@ drogon::HttpResponsePtr rpcError(int code, const std::string &msg,
 }
 
 /*
- * DNS-rebinding defence, which the spec requires. A browser on an attacker's
- * page can be made to POST to a private address, but it cannot forge Origin --
- * so rejecting unknown origins stops that, while a non-browser client (which
- * sends no Origin at all) is unaffected.
+ * Origin policy.
+ *
+ * The spec requires servers to validate Origin as a DNS-rebinding defence. That
+ * threat is a browser being tricked into talking to a server it should not
+ * reach -- and the guidance is written for the common case of an MCP server
+ * bound to localhost with no authentication at all.
+ *
+ * This endpoint is neither. Two things already stand in the way of a hostile
+ * page, and both are stronger than an Origin check:
+ *
+ *   1. A bearer token is required. An attacker's page does not have one.
+ *   2. No CORS headers are ever sent. A cross-origin page therefore cannot READ
+ *      a response even if it manages to send a request, and the
+ *      application/json content type forces a preflight this server does not
+ *      answer, so it cannot usually send one either.
+ *
+ * So the default is to ALLOW. The previous default -- refuse anything carrying
+ * an Origin unless an allowlist was configured -- rejected every legitimate
+ * browser-based and Electron client with a 403 raised BEFORE authentication was
+ * looked at, which surfaced to the user as an unexplained sign-in failure. That
+ * is a bad trade: it broke real clients to defend against an attack the token
+ * already prevents.
+ *
+ * Setting MCP_ALLOWED_ORIGINS restores strict checking for operators who want
+ * it, and is worth doing if this endpoint is ever exposed without a token.
  */
 bool originAllowed(const drogon::HttpRequestPtr &req)
 {
@@ -104,7 +125,7 @@ bool originAllowed(const drogon::HttpRequestPtr &req)
 
 	const char *allowed = getenv("MCP_ALLOWED_ORIGINS");
 	if (!allowed || !*allowed)
-		return false; /* no allowlist configured: refuse browsers */
+		return true; /* no allowlist configured: see above */
 
 	const std::string list = allowed;
 	size_t p = 0;
@@ -112,7 +133,7 @@ bool originAllowed(const drogon::HttpRequestPtr &req)
 		const size_t c = list.find(',', p);
 		const size_t e = (c == std::string::npos) ? list.size() : c;
 		std::string item = list.substr(p, e - p);
-		while (!item.empty() && (item.front() == ' '))
+		while (!item.empty() && item.front() == ' ')
 			item.erase(item.begin());
 		while (!item.empty() && (item.back() == ' ' || item.back() == '\r'))
 			item.pop_back();
