@@ -28,9 +28,14 @@ without archaeology:
    is no voice support, no sharding, no slash commands, no entity cache, and no
    message-sending API, because nothing needs them yet.
 
-Licence is `GPL-2.0-or-later` — note the `-or-later`, which differs from
-tgloggerd's `GPL-2.0-only`. That matters: it keeps the subtree compatible with
-Apache-2.0 dependencies such as OpenSSL 3.x, which a GPL-2.0-only work is not.
+Licence is `GPL-2.0-or-later`, and the `-or-later` is load-bearing: this subtree
+links OpenSSL 3.x, which is Apache-2.0, and Apache-2.0 cannot be combined with
+GPL version 2 alone. `COPYING` and `COPYING.GPLv3` sit here rather than only at
+the repository root so that rule 1 above actually holds — the directory keeps
+its terms when it is lifted out.
+
+tgloggerd itself was `GPL-2.0-only` when this subtree was written, which is why
+the two differed; it is `GPL-2.0-or-later` now, for the same OpenSSL reason.
 
 ## Layout
 
