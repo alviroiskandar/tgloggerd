@@ -11,9 +11,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cctype>
 #include <string>
-#include <vector>
 #include <utility>
+#include <vector>
 
 namespace tgweb::mcp::telegram {
 
@@ -99,6 +100,48 @@ int clampOffset(const Json &args)
 		throw ToolError("offset is too large (max 100000); narrow the "
 				"filter instead of paging that deep");
 	return n;
+}
+
+/*
+ * An optional start/end date, as a SQL fragment plus binds.
+ *
+ * Absent bounds mean "all time" rather than a default window, except where a
+ * tool documents otherwise. Both bounds are inclusive, which is what a caller
+ * writing "2026-01-01 to 2026-01-31" means.
+ */
+struct DateRange {
+	std::string sql;   /* "" when unbounded */
+	std::vector<std::string> binds;
+	bool hasStart = false, hasEnd = false;
+	long long start = 0, end = 0;
+};
+
+DateRange dateRange(const Json &args, long long defaultStart = 0)
+{
+	DateRange dr;
+	if (args.contains("start_date") && !args["start_date"].is_null()) {
+		dr.start = flt::parseDate(args["start_date"]);
+		dr.hasStart = true;
+	} else if (defaultStart) {
+		dr.start = defaultStart;
+		dr.hasStart = true;
+	}
+	if (args.contains("end_date") && !args["end_date"].is_null()) {
+		dr.end = flt::parseDate(args["end_date"]);
+		dr.hasEnd = true;
+	}
+	if (dr.hasStart && dr.hasEnd && dr.start > dr.end)
+		throw ToolError("start_date is after end_date");
+
+	if (dr.hasStart) {
+		dr.sql += " AND m.date >= ?";
+		dr.binds.push_back(std::to_string(dr.start));
+	}
+	if (dr.hasEnd) {
+		dr.sql += " AND m.date <= ?";
+		dr.binds.push_back(std::to_string(dr.end));
+	}
+	return dr;
 }
 
 /* Message fields a caller may filter on. */
@@ -1101,11 +1144,13 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 	{
 		gwmcp::Tool t;
 		t.name = "telegram_list_group_senders";
-		t.title = "List everyone who has posted in a group";
+		t.title = "Message-count leaderboard for a group";
 		t.description =
-			"List the users who have ever sent a message to one "
-			"readable group, busiest first, with how many messages "
-			"each has sent.\n\n"
+			"A leaderboard of who posts most in one readable group: "
+			"every user who has sent a message, ordered by message "
+			"count descending, with the count for each.\n\n"
+			"Pass start_date and/or end_date to count only part of "
+			"the history; with neither, it counts all time.\n\n"
 			"This is participation, not membership: it can only "
 			"see people who have posted, so lurkers and members who "
 			"joined without speaking do not appear. Counts include "
@@ -1127,6 +1172,15 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 					{ "description",
 					  "1-200, default 50." } } },
 				{ "offset", Json{ { "type", "integer" } } },
+				{ "start_date",
+				  Json{ { "description",
+					  "Only count messages on or after this "
+					  "date. YYYY-MM-DD or a unix "
+					  "timestamp. Omit for all time." } } },
+				{ "end_date",
+				  Json{ { "description",
+					  "Only count messages on or before "
+					  "this date. Omit for all time." } } },
 				{ "include_total",
 				  Json{ { "type", "boolean" },
 					{ "description",
@@ -1143,6 +1197,7 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			const int64_t gid = args["group_id"].get<long long>();
 			const int limit = clampLimit(args);
 			const int offset = clampOffset(args);
+			const DateRange dr = dateRange(args);
 
 			/*
 			 * Aggregate first, decorate second -- the same split
@@ -1164,8 +1219,9 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 				"WHERE m.chat_id = ? "
 				"  AND m.sender_user_id IS NOT NULL "
 				"  AND m.chat_id IN (SELECT group_id "
-				"                    FROM telegram_public_groups) "
-				"GROUP BY m.sender_user_id "
+				"                    FROM telegram_public_groups)" +
+				dr.sql +
+				" GROUP BY m.sender_user_id "
 				"ORDER BY n DESC LIMIT " + std::to_string(limit) +
 				" OFFSET " + std::to_string(offset);
 
@@ -1184,8 +1240,12 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			out["group_id"] = gid;
 			out["senders"] = Json::array();
 			try {
-				for (const auto &r : execSync(
-					     db, sql, { std::to_string(gid) })) {
+				std::vector<std::string> binds{
+					std::to_string(gid)
+				};
+				binds.insert(binds.end(), dr.binds.begin(),
+					     dr.binds.end());
+				for (const auto &r : execSync(db, sql, binds)) {
 					Json j;
 					j["user_id"] = colI64(r, "uid");
 					j["username"] = colStr(r, "username");
@@ -1211,6 +1271,12 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			out["count"] = out["senders"].size();
 			out["limit"] = limit;
 			out["offset"] = offset;
+			if (dr.hasStart)
+				out["start_date"] = dr.start;
+			if (dr.hasEnd)
+				out["end_date"] = dr.end;
+			if (!dr.hasStart && !dr.hasEnd)
+				out["range"] = "all time";
 
 			if (args.contains("include_total") &&
 			    args["include_total"].is_boolean() &&
@@ -1222,11 +1288,15 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 					"WHERE m.chat_id = ? "
 					"  AND m.sender_user_id IS NOT NULL "
 					"  AND m.chat_id IN (SELECT group_id "
-					"                    FROM telegram_public_groups)";
+					"                    FROM telegram_public_groups)" +
+					dr.sql;
 				try {
-					auto cr = execSync(
-						db, csql,
-						{ std::to_string(gid) });
+					std::vector<std::string> cb{
+						std::to_string(gid)
+					};
+					cb.insert(cb.end(), dr.binds.begin(),
+						  dr.binds.end());
+					auto cr = execSync(db, csql, cb);
 					out["total_senders"] =
 						cr.empty() ? 0
 							   : cr[0]["n"].as<int64_t>();
@@ -1235,6 +1305,159 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 						std::string("count failed: ") +
 						e.what());
 				}
+			}
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_count_user_messages ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_count_user_messages";
+		t.title = "Count one user's messages in one group";
+		t.description =
+			"How many messages a single user has sent to a single "
+			"readable group.\n\n"
+			"Use this when the question is about one person -- "
+			"\"how much has @alice posted in GNU/Weeb?\" -- rather "
+			"than about the group as a whole; for a ranking of "
+			"everyone use telegram_list_group_senders.\n\n"
+			"Pass start_date and/or end_date to count only part of "
+			"the history; with neither, it counts all time.\n\n"
+			"Counts include messages later deleted, since the "
+			"archive keeps them. Messages the user sent "
+			"anonymously (as the group) are not attributed to "
+			"them and so are not counted.\n\n"
+			"Only groups returned by telegram_list_groups can be "
+			"queried.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "user_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The user's id. Resolve a username "
+					  "with telegram_get_users first." } } },
+				{ "start_date",
+				  Json{ { "description",
+					  "Only count messages on or after this "
+					  "date. YYYY-MM-DD or a unix "
+					  "timestamp. Omit for all time." } } },
+				{ "end_date",
+				  Json{ { "description",
+					  "Only count messages on or before "
+					  "this date. Omit for all time." } } } } },
+			{ "required", Json::array({ "group_id", "user_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+			if (!args.contains("user_id") ||
+			    !args["user_id"].is_number_integer())
+				throw ToolError("user_id is required and must "
+						"be an integer");
+
+			const int64_t gid = args["group_id"].get<long long>();
+			const int64_t uid = args["user_id"].get<long long>();
+			const DateRange dr = dateRange(args);
+
+			/*
+			 * (chat_id, sender_user_id) from migration 000023 makes
+			 * the unbounded form a pure index range count, no rows
+			 * touched. With a date bound MySQL still walks that
+			 * range but has to visit each row for m.date, which is
+			 * the price of the bound; it stays proportional to this
+			 * user's messages in this group, not to the group.
+			 */
+			const std::string sql =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+				"COUNT(1) AS n, MIN(m.date) AS first_date, "
+				"MAX(m.date) AS last_date "
+				"FROM telegram_group_messages m "
+				"WHERE m.chat_id = ? AND m.sender_user_id = ? "
+				"  AND m.chat_id IN (SELECT group_id "
+				"                    FROM telegram_public_groups)" +
+				dr.sql;
+
+			std::vector<std::string> binds{ std::to_string(gid),
+							std::to_string(uid) };
+			binds.insert(binds.end(), dr.binds.begin(),
+				     dr.binds.end());
+
+			Json out;
+			out["group_id"] = gid;
+			out["user_id"] = uid;
+			try {
+				const auto rows = execSync(db, sql, binds);
+				const int64_t n =
+					rows.empty() ? 0 : colI64(rows[0], "n");
+				out["message_count"] = n;
+				if (n) {
+					out["first_message_date"] =
+						colI64(rows[0], "first_date");
+					out["last_message_date"] =
+						colI64(rows[0], "last_date");
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+
+			if (dr.hasStart)
+				out["start_date"] = dr.start;
+			if (dr.hasEnd)
+				out["end_date"] = dr.end;
+			if (!dr.hasStart && !dr.hasEnd)
+				out["range"] = "all time";
+
+			/*
+			 * A zero is ambiguous on its own -- unknown user, wrong
+			 * group, or a group nobody exposed -- so say which.
+			 */
+			if (out["message_count"].get<int64_t>() == 0) {
+				const auto g = execSync(
+					db,
+					"SELECT 1 AS x FROM "
+					"telegram_public_groups WHERE "
+					"group_id = ?",
+					{ std::to_string(gid) });
+				if (g.empty())
+					out["note"] =
+						"That group is not exposed to "
+						"MCP, so the count is zero "
+						"regardless of what the user "
+						"posted. See "
+						"telegram_list_groups.";
+			}
+
+			/* Cheap PK lookup, so the answer names the person. */
+			try {
+				const auto u = execSync(
+					db,
+					"SELECT u.first_name, u.last_name, "
+					"(SELECT x.username FROM "
+					"  telegram_user_usernames x "
+					"  WHERE x.user_id = u.id AND "
+					"        x.kind = 'active' "
+					"  ORDER BY x.position LIMIT 1) AS username "
+					"FROM telegram_users u WHERE u.id = ?",
+					{ std::to_string(uid) });
+				if (!u.empty()) {
+					out["username"] = colStr(u[0], "username");
+					out["first_name"] =
+						colStr(u[0], "first_name");
+					out["last_name"] =
+						colStr(u[0], "last_name");
+				}
+			} catch (const std::exception &) {
+				/* Decoration only; never fail the count. */
 			}
 			return out;
 		};

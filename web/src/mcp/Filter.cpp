@@ -329,6 +329,11 @@ std::string compileNode(Ctx &ctx, const nlohmann::json &node, int depth)
 
 } /* namespace */
 
+long long parseDate(const nlohmann::json &v)
+{
+	return strtoll(toUnixSeconds(v).c_str(), nullptr, 10);
+}
+
 const Field *Schema::find(const std::string &key) const
 {
 	for (size_t i = 0; i < nFields; i++) {

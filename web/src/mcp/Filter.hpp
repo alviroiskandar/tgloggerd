@@ -99,6 +99,14 @@ constexpr size_t MAX_IN_ITEMS = 100;
  */
 Compiled compile(const Schema &schema, const nlohmann::json &node);
 
+/*
+ * Parse a date the way a filter value is parsed: an ISO-8601 date or datetime,
+ * or an integer unix timestamp (as a number or a string). Throws ToolError with
+ * a readable message on anything else, so tools accepting a date range behave
+ * identically to the same field inside a filter.
+ */
+long long parseDate(const nlohmann::json &v);
+
 /* The operator list, for documentation and inputSchema generation. */
 std::vector<std::string> operatorNames(void);
 

@@ -175,7 +175,8 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_search_messages` | Full filter tree. `include_total` is off by default. |
 | `telegram_get_users` | By `user_id`, `username`, `phone_number` or name. Requires a filter. |
 | `telegram_list_group_admins` | A group's admins, owner first, with the privileges each holds. |
-| `telegram_list_group_senders` | Everyone who has ever posted in a group, busiest first. |
+| `telegram_list_group_senders` | Message-count leaderboard for a group, busiest first. Optional date range. |
+| `telegram_count_user_messages` | How many messages one user sent to one group. Optional date range. |
 | `telegram_get_user` | One user's full record by id: names, usernames, bio, phone, birthday, flags. |
 | `telegram_get_user_history` | How a profile changed over time: names, usernames, bios, phones, photos. |
 | `telegram_get_group` | One group's full record: usernames, photo, counts, participant count, message span. |
@@ -204,7 +205,18 @@ Only privileges actually held are listed — 17 booleans, mostly false, are nois
 `telegram_list_group_senders` measures **participation, not membership**. It can only see
 people who have posted, so lurkers never appear; counts include messages later deleted; and
 channel posts and anonymous-admin messages are excluded, since those are sent by the chat
-rather than by a user.
+rather than by a user. The same three caveats apply to `telegram_count_user_messages`,
+which is the single-user form of the same question.
+
+Both take **`start_date` and `end_date`**, inclusive, in any format the filter grammar
+accepts (`2026-01-01`, `2026-01-01T10:00:00Z`, or a unix timestamp). Omitting them counts
+**all time**, and the result says so with `"range": "all time"` rather than leaving the
+caller to infer it from two absent fields.
+
+A zero from `telegram_count_user_messages` is ambiguous on its own — unknown user, wrong
+group, or a group nobody exposed — so when the group is not on the allowlist it adds a
+`note` saying so. That is not a leak: the caller supplied the id, and the answer is about
+the allowlist, not about whether the group exists.
 
 `telegram_get_user` **omits fields the archive never saw** rather than returning them empty.
 `telegram_user_extra_info` is sparse — 56k rows for 298k users — so "this user has no bio"
