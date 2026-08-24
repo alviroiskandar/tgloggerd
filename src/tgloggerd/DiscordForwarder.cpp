@@ -5,6 +5,7 @@
 #include "DiscordForwarder.hpp"
 
 #include "DB.hpp"
+#include "CompactId.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -52,6 +53,41 @@ std::string first_line(const std::string &s, size_t n)
 {
 	std::string t = s.substr(0, s.find('\n'));
 	return utf8_truncate(t, n);
+}
+
+/* Discord caps a webhook username at 80 characters. */
+constexpr size_t kMaxUsername = 80;
+
+/*
+ * The display name for a forwarded message's author:
+ *
+ *     First Last (cx:<b64 user id>:<b64 message id>)
+ *
+ * The suffix stamps the sender's user id and the message's id in reversible
+ * base64 (see CompactId.hpp) so a reader -- or a tool -- can recover exactly
+ * which Telegram user and message a forward came from. The ids are never
+ * shortened; if the whole label would exceed Discord's 80-character cap, the
+ * name is truncated instead (last name first, since it trims from the end),
+ * leaving the identifier intact. `name` is the already-joined "First Last".
+ */
+std::string forwarded_author_name(const std::string &name, int64_t user_id,
+				  int64_t message_id)
+{
+	std::string suffix = " (cx:" +
+			     compactid::encode((uint64_t)user_id) + ":" +
+			     compactid::encode((uint64_t)message_id) + ")";
+
+	/*
+	 * utf8_truncate counts bytes; Discord counts code points, and every code
+	 * point is at least one byte, so an 80-byte budget never exceeds 80 code
+	 * points -- a safe under-approximation, matching the rest of this file.
+	 */
+	if (name.size() + suffix.size() <= kMaxUsername)
+		return name + suffix;
+	size_t budget = suffix.size() >= kMaxUsername
+				? 0
+				: kMaxUsername - suffix.size();
+	return utf8_truncate(name, budget) + suffix;
 }
 
 /*
@@ -599,6 +635,8 @@ void DiscordForwarder::do_text_forward(ForwardMessage fm,
 	ReplyInfo ri = resolve_reply(fm);
 	Sender s = resolve_sender(fm.chat_id, fm.sender_id, fm.sender_chat_id,
 				  fm.sender_name);
+	/* Stamp the author with the reversible (cx:user:message) identifier. */
+	s.name = forwarded_author_name(s.name, fm.sender_id, fm.message_id);
 	pr_info(l_, "discord: forwarding chat_id=%lld (%s%s) to %zu webhook(s): %.60s",
 		(long long)fm.chat_id, fm.kind.empty() ? "text" : fm.kind.c_str(),
 		ri.ok ? "+reply" : "", urls.size(), content.c_str());
@@ -779,6 +817,8 @@ void DiscordForwarder::do_media_forward(int64_t chat_id, int64_t message_id,
 
 	Sender s = resolve_sender(chat_id, pm.sender_id, pm.sender_chat_id,
 				  pm.sender_name);
+	/* Same author stamp as the text path, keyed to this same message id. */
+	s.name = forwarded_author_name(s.name, pm.sender_id, message_id);
 
 	/* If this media is a reply with no caption, its preview was not posted by
 	 * do_text_forward; post it here, right before the media, so it stays

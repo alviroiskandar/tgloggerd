@@ -14,6 +14,12 @@ convention in [db-naming.md](db-naming.md) — `telegram_discord_webhooks` pairs
 with `/platform-fwd/telegram-discord`, and so on. Adding a platform means adding
 a direction page and a card on the index, not another top-level nav entry.
 
+This page covers **configuring** routes. How the daemon **renders** a forwarded
+message on the far side is separate: the Telegram → Discord author-name format,
+which stamps each forward with a reversible sender/message identifier, is
+documented in
+[telegram-discord-forwarding.md](../../docs/telegram-discord-forwarding.md).
+
 Every endpoint requires an authenticated **admin** — `AuthFilter` then
 `AdminFilter` — because these rows hold credentials.
 
