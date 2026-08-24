@@ -5,6 +5,8 @@
 #include "mcp/telegram/Tools.hpp"
 
 #include "mcp/FileUrl.hpp"
+#include "mcp/NoiseWords.hpp"
+#include "mcp/Stopwords.hpp"
 #include "mcp/Filter.hpp"
 
 #include <gwmcp/Errors.hpp>
@@ -12,7 +14,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
+#include <ctime>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -460,6 +465,175 @@ Json listRecent(const drogon::orm::DbClientPtr &db,
 	out["limit"] = limit;
 	out["offset"] = offset;
 	return out;
+}
+
+/*
+ * Word-frequency tokenisation for telegram_popular_words.
+ *
+ * A word character is an ASCII letter or digit, or any byte >= 0x80. Folding
+ * only ASCII case is a deliberate limit: keeping every continuation byte as a
+ * word character holds a UTF-8 word (Cyrillic, Arabic, CJK, an emoji) together
+ * as one token instead of shredding it into bytes, but case-folding it would
+ * need a Unicode table we have no business carrying here. So non-Latin words
+ * are counted, just not case-merged -- and CJK, which does not delimit words
+ * with spaces, comes out as whole runs rather than words.
+ *
+ * URLs and e-mail addresses are dropped WHOLE rather than split. Measured on
+ * this archive it is not a marginal cleanup: a group that quotes mailing-list
+ * mail ranked "com", "org", "vger" and "gmail" in its top six, which describes
+ * the From: headers people paste and nothing about the conversation. An
+ * address is a machine identifier, and the pieces it shreds into are not words
+ * anyone used.
+ *
+ * @mentions are NOT dropped, unlike addresses: "@someone" is how people refer
+ * to each other in chat, it does not shred, and who gets talked about is a
+ * real answer to "what is this group discussing".
+ *
+ * Then four filters, cheapest first: too short, all digits (ids, times and
+ * prices), a stopword (Stopwords.hpp, vendored) or corpus noise
+ * (NoiseWords.hpp, hand-maintained slang and scaffolding).
+ */
+bool isWordByte(unsigned char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+	       (c >= '0' && c <= '9') || c >= 0x80;
+}
+
+/* Characters that may sit INSIDE an address without ending the run. */
+bool isAddrByte(unsigned char c)
+{
+	return isWordByte(c) || c == '.' || c == '-' || c == '_' ||
+	       c == '+' || c == '@';
+}
+
+/*
+ * "wkwkwkwkwk", "hahahaha", "awokawokawok" -- laughter and filler are an
+ * unbounded family, so no word list can hold them and every length is a
+ * distinct token that splits the count of a word that means nothing anyway.
+ * The shape is what identifies them: a unit of one or two characters repeated
+ * to fill the whole token.
+ *
+ * Two characters, not three, and at least two full repeats: "bandung" would go
+ * under a looser rule. It still catches a few real words built the same way
+ * ("kakak"), which is a cost worth paying and is why `include_stopwords`
+ * exists.
+ */
+bool isRepetitive(std::string_view w)
+{
+	if (w.size() < 4)
+		return false;
+
+	for (size_t u = 1; u <= 2; u++) {
+		if (w.size() % u || w.size() / u < 2)
+			continue;
+		bool same = true;
+		for (size_t i = u; i < w.size() && same; i++)
+			same = w[i] == w[i - u];
+		if (same)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Collapse a run of three or more identical bytes to one: "hmmmm" -> "hm",
+ * "yesss" -> "yes", "sooooo" -> "so". Elongation is emphasis, not a different
+ * word, and left alone it scatters one word across a dozen spellings.
+ *
+ * Three, not two, so that "coffee" and "committee" survive -- no English or
+ * Indonesian word triples a letter. Byte-wise is safe for UTF-8: a repeated
+ * multi-byte codepoint never produces three identical bytes in a row.
+ */
+void collapseElongation(std::string &w)
+{
+	size_t out = 0;
+	for (size_t i = 0; i < w.size(); i++) {
+		if (out >= 2 && w[i] == w[out - 1] && w[i] == w[out - 2])
+			continue;
+		w[out++] = w[i];
+	}
+	w.resize(out);
+}
+
+struct WordFilter {
+	size_t minLen = 3;
+	bool useStopwords = true;
+	std::unordered_set<std::string> extra;
+
+	bool drop(const std::string &w) const
+	{
+		if (w.size() < minLen)
+			return true;
+		if (w.find_first_not_of("0123456789") == std::string::npos)
+			return true;
+		if (extra.count(w))
+			return true;
+		if (!useStopwords)
+			return false;
+		return stopwords::isStopword(w) ||
+		       noisewords::isNoiseWord(w) || isRepetitive(w);
+	}
+};
+
+void countWords(const std::string &text, const WordFilter &filter,
+		std::unordered_map<std::string, int64_t> &freq, int64_t &total)
+{
+	const size_t n = text.size();
+	std::string w;
+
+	for (size_t i = 0; i < n;) {
+		const unsigned char c = (unsigned char)text[i];
+
+		if (!isWordByte(c)) {
+			i++;
+			continue;
+		}
+
+		/* A scheme means a URL: skip to the next whitespace. */
+		if ((c == 'h' || c == 'H') &&
+		    (!text.compare(i, 7, "http://") ||
+		     !text.compare(i, 8, "https://"))) {
+			while (i < n && !isspace((unsigned char)text[i]))
+				i++;
+			continue;
+		}
+
+		/*
+		 * Take the whole run first, punctuation included, so that an
+		 * address is recognisable as one thing before it is split.
+		 */
+		const size_t begin = i;
+		bool isAddr = false;
+		while (i < n && isAddrByte((unsigned char)text[i])) {
+			if (text[i] == '@')
+				isAddr = true;
+			i++;
+		}
+		if (isAddr)
+			continue;
+
+		/* Not an address: split the run and count the pieces. */
+		for (size_t j = begin; j < i;) {
+			if (!isWordByte((unsigned char)text[j])) {
+				j++;
+				continue;
+			}
+			w.clear();
+			while (j < i && isWordByte((unsigned char)text[j])) {
+				unsigned char b = (unsigned char)text[j++];
+				if (b >= 'A' && b <= 'Z')
+					b += 'a' - 'A';
+				w.push_back((char)b);
+			}
+
+			collapseElongation(w);
+			if (filter.drop(w))
+				continue;
+
+			freq[w]++;
+			total++;
+		}
+	}
 }
 
 Json inputSchemaForMessages(bool withFilter)
@@ -1459,6 +1633,235 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			} catch (const std::exception &) {
 				/* Decoration only; never fail the count. */
 			}
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_popular_words ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_popular_words";
+		t.title = "Most-used words in a group";
+		t.description =
+			"What a readable group actually talks about: the words "
+			"used most often in its messages, commonest first.\n\n"
+			"Noise is filtered so the result is topical rather than "
+			"grammatical. Excluded: Indonesian and English "
+			"stopwords (\"yang\", \"the\", \"untuk\", \"and\"); chat "
+			"slang and shorthand in both languages (\"gak\", "
+			"\"aja\", \"wkwk\", \"lol\", \"btw\"); laughter and filler "
+			"of any length (\"wkwkwkwk\", \"hahahaha\"); quoted-mail "
+			"and calendar scaffolding (\"subject\", \"wrote\", "
+			"\"jul\"); URLs, e-mail addresses and pure numbers. "
+			"Elongation is collapsed, so \"yesss\" counts as "
+			"\"yes\".\n\n"
+			"Pass include_stopwords: true to switch all of that off "
+			"and get raw frequencies, or exclude: [...] to drop "
+			"further words specific to your question.\n\n"
+			"With no dates this covers the last 30 days, not all "
+			"time -- word frequency is a snapshot of what is being "
+			"discussed now. Pass start_date and/or end_date for any "
+			"other window.\n\n"
+			"Counting reads message text, so it scans at most "
+			"max_messages (newest first) and reports "
+			"messages_scanned and truncated; when truncated is "
+			"true the counts describe that newest slice, not the "
+			"whole window.\n\n"
+			"Only groups returned by telegram_list_groups can be "
+			"queried.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "limit",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "How many words to return. 1-200, "
+					  "default 50." } } },
+				{ "start_date",
+				  Json{ { "description",
+					  "Window start. YYYY-MM-DD or a unix "
+					  "timestamp. Default: 30 days ago." } } },
+				{ "end_date",
+				  Json{ { "description",
+					  "Window end. Default: now." } } },
+				{ "min_length",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Ignore words shorter than this. "
+					  "1-32, default 3." } } },
+				{ "max_messages",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Cap on messages scanned, newest "
+					  "first. 1-200000, default 50000." } } },
+				{ "exclude",
+				  Json{ { "type", "array" },
+					{ "items", Json{ { "type", "string" } } },
+					{ "description",
+					  "Further words to drop, on top of "
+					  "the built-in lists. Up to 200." } } },
+				{ "include_stopwords",
+				  Json{ { "type", "boolean" },
+					{ "description",
+					  "Count every word, filtering nothing "
+					  "but `exclude`, min_length and pure "
+					  "numbers. Default false." } } } } },
+			{ "required", Json::array({ "group_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+
+			const int64_t gid = args["group_id"].get<long long>();
+			const int limit = clampLimit(args);
+
+			/*
+			 * The one tool with a default window rather than all
+			 * time: "popular words, ever" over a decade-old group
+			 * is both far more expensive and much less useful than
+			 * "popular words lately".
+			 */
+			const long long defStart =
+				(long long)time(nullptr) - 30LL * 86400LL;
+			const DateRange dr = dateRange(args, defStart);
+
+			WordFilter wf;
+			if (args.contains("min_length") &&
+			    args["min_length"].is_number_integer()) {
+				int v = args["min_length"].get<int>();
+				if (v < 1)
+					v = 1;
+				if (v > 32)
+					v = 32;
+				wf.minLen = (size_t)v;
+			}
+			if (args.contains("include_stopwords") &&
+			    args["include_stopwords"].is_boolean())
+				wf.useStopwords =
+					!args["include_stopwords"].get<bool>();
+			if (args.contains("exclude")) {
+				if (!args["exclude"].is_array())
+					throw ToolError("exclude must be an "
+							"array of strings");
+				if (args["exclude"].size() > 200)
+					throw ToolError("exclude holds at most "
+							"200 words");
+				for (const auto &e : args["exclude"]) {
+					if (!e.is_string())
+						throw ToolError(
+							"exclude must be an "
+							"array of strings");
+					std::string v = e.get<std::string>();
+					for (char &ch : v)
+						if (ch >= 'A' && ch <= 'Z')
+							ch += 'a' - 'A';
+					wf.extra.insert(std::move(v));
+				}
+			}
+
+			int scanCap = 50000;
+			if (args.contains("max_messages") &&
+			    args["max_messages"].is_number_integer()) {
+				scanCap = args["max_messages"].get<int>();
+				if (scanCap < 1)
+					scanCap = 1;
+				if (scanCap > 200000)
+					scanCap = 200000;
+			}
+
+			/*
+			 * Service messages ("X joined the group") are excluded:
+			 * their text is generated by Telegram, so counting it
+			 * measures membership churn, not conversation.
+			 */
+			const std::string sql =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ m.text "
+				"FROM telegram_group_messages m "
+				"WHERE m.chat_id = ? AND m.text IS NOT NULL "
+				"  AND m.content_type <> 'service' "
+				"  AND m.chat_id IN (SELECT group_id "
+				"                    FROM telegram_public_groups)" +
+				dr.sql +
+				/*
+				 * By date, not message_id: the range is on
+				 * date, so idx_group_messages_chat_date
+				 * (migration 000024) supplies this ordering
+				 * for free. Ordering by message_id instead
+				 * ranges on one index and sorts by another,
+				 * which is a filesort over the whole window.
+				 */
+				" ORDER BY m.date DESC LIMIT " +
+				std::to_string(scanCap);
+
+			std::vector<std::string> binds{ std::to_string(gid) };
+			binds.insert(binds.end(), dr.binds.begin(),
+				     dr.binds.end());
+
+			std::unordered_map<std::string, int64_t> freq;
+			int64_t scanned = 0, words = 0;
+			try {
+				for (const auto &r : execSync(db, sql, binds)) {
+					scanned++;
+					countWords(colStr(r, "text"), wf,
+						   freq, words);
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+
+			/*
+			 * Partial sort: the tail is never looked at, and the
+			 * map can hold a hundred thousand distinct words.
+			 */
+			std::vector<std::pair<std::string, int64_t>> top(
+				freq.begin(), freq.end());
+			const size_t keep =
+				std::min((size_t)limit, top.size());
+			std::partial_sort(
+				top.begin(), top.begin() + keep, top.end(),
+				[](const auto &a, const auto &b) {
+					if (a.second != b.second)
+						return a.second > b.second;
+					return a.first < b.first;
+				});
+
+			Json out;
+			out["group_id"] = gid;
+			out["start_date"] = dr.start;
+			out["end_date"] = dr.hasEnd ? Json(dr.end) : Json(nullptr);
+			out["words"] = Json::array();
+			for (size_t i = 0; i < keep; i++) {
+				Json j;
+				j["word"] = top[i].first;
+				j["count"] = top[i].second;
+				/* Share of all counted words, not of messages. */
+				j["percent"] =
+					words ? (double)top[i].second * 100.0 /
+							(double)words
+					      : 0.0;
+				out["words"].push_back(std::move(j));
+			}
+			out["count"] = out["words"].size();
+			out["messages_scanned"] = scanned;
+			out["words_counted"] = words;
+			out["distinct_words"] = (int64_t)freq.size();
+			out["truncated"] = scanned >= scanCap;
+			out["stopwords_filtered"] = wf.useStopwords;
+
+			if (!scanned)
+				out["note"] =
+					"No messages with text in that window. "
+					"Check the group is exposed (see "
+					"telegram_list_groups) and widen the "
+					"date range.";
 			return out;
 		};
 		registry.add(std::move(t));

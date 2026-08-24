@@ -126,6 +126,8 @@ add_executable(tgloggerd_web
 	src/mcp/FileUrl.hpp
 	src/mcp/Filter.cpp
 	src/mcp/Filter.hpp
+	src/mcp/NoiseWords.hpp
+	src/mcp/Stopwords.hpp
 	src/mcp/Token.cpp
 	src/mcp/Token.hpp
 	src/mcp/telegram/Tools.cpp

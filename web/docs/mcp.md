@@ -182,6 +182,7 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_get_group` | One group's full record: usernames, photo, counts, participant count, message span. |
 | `telegram_get_group_history` | Titles, descriptions, usernames, photos and admin changes over time. |
 | `telegram_get_message_history` | One message's earlier versions and its deletion record. |
+| `telegram_popular_words` | A group's most-used words, noise filtered. Defaults to the last 30 days. |
 
 Every message result carries **`is_edited` and `is_deleted`**, always present rather than
 inferred from a missing field, plus `history_available_via` pointing at the tool that can
@@ -217,6 +218,57 @@ A zero from `telegram_count_user_messages` is ambiguous on its own — unknown u
 group, or a group nobody exposed — so when the group is not on the allowlist it adds a
 `note` saying so. That is not a leak: the caller supplied the id, and the answer is about
 the allowlist, not about whether the group exists.
+
+### `telegram_popular_words`
+
+The one tool with a **default window rather than all time**: with no dates it covers the
+last 30 days. Word frequency is a snapshot of what is being discussed, and "ever" over a
+decade-old group is both far more expensive and much less useful than "lately".
+
+Counting reads message text, so it scans at most `max_messages` (newest first, default
+50,000) and reports `messages_scanned` and `truncated`. When `truncated` is true the counts
+describe that newest slice, not the whole window — stated in the result rather than left
+for the caller to notice.
+
+**Noise filtering is the whole difficulty.** Raw frequency over chat produces a ranking of
+grammar, and the two vendored stopword lists are built from formal prose, which chat is
+not. Four layers, each earning its place against this archive:
+
+1. **Vendored stopwords** — `src/mcp/Stopwords.hpp`, 885 merged entries from the
+   [stopwords-iso Indonesian list][sw-id] and the [NLTK English list][sw-en]. Generated,
+   and vendored rather than fetched at runtime: a tool must not depend on a third-party URL
+   being reachable, and a word list that changes under you silently changes your results.
+2. **Corpus noise** — `src/mcp/NoiseWords.hpp`, 384 hand-maintained entries the formal
+   lists have no reason to contain: chat spellings (`gak`, `yg`, `kalo`), particles
+   (`aja`, `sih`, `dong`), internet shorthand (`lol`, `btw`, `imo`), interjections,
+   quoted-mail scaffolding (`subject`, `wrote`) and calendar vocabulary (`jul`, `senin`).
+   A hash set, not a sorted array, precisely because it is hand-maintained — an
+   out-of-order insertion in a binary-searched array fails silently.
+3. **Shape rules** — laughter and filler are an unbounded family (`wkwk`, `wkwkwkwk`,
+   `hahahaha`), so a token built by repeating a one- or two-character unit is dropped, and
+   a run of three or more identical characters collapses to one, merging `yesss` into
+   `yes`. Three and not two so `coffee` survives.
+4. **Structure** — URLs and e-mail addresses are dropped *whole* rather than split, and
+   pure numbers are dropped. `@mentions` are kept: who gets talked about is a real answer.
+
+The measured effect, one group, January 2026. Before: `aja`, `trump`, `gak`, `nya`, `udah`,
+`update`, `sih`, `wkwk`, `pake`, `kalo`. After: `trump`, `update`, `gold`, `price`, `uring`,
+`beli`, `pas`, `time`, `see`, `server`. Dropping addresses alone moved `com`, `org`, `vger`
+and `gmail` out of a top six they had held purely on the strength of pasted `From:` lines.
+
+The line held throughout is **topical vs not**. Words that could name a subject stay out of
+the noise list even when frequent — `net`, `io`, `id` and `co` read as noise in a chat
+corpus and as kernel subsystems in this one. Where that judgement is wrong for a particular
+question, `exclude: [...]` drops further words and `include_stopwords: true` turns every
+layer off and returns raw frequencies.
+
+Only ASCII case is folded. Keeping every byte ≥ 0x80 as a word character holds a UTF-8 word
+together instead of shredding it, but case-folding it would need a Unicode table that does
+not belong here — so non-Latin words are counted, just not case-merged, and CJK comes out
+as whole runs rather than words.
+
+[sw-id]: https://github.com/stopwords-iso/stopwords-id
+[sw-en]: https://gist.github.com/sebleier/554280
 
 `telegram_get_user` **omits fields the archive never saw** rather than returning them empty.
 `telegram_user_extra_info` is sparse — 56k rows for 298k users — so "this user has no bio"
@@ -284,6 +336,15 @@ every message in every exposed group, and there is no `(chat_id, date)` index to
 `uq_group_messages_chat_msg`, so a reverse index walk stops at `limit` — 2.6ms. No single
 query does that across groups, so one indexed walk per exposed group is the plan, merged
 in C++. Affordable precisely because the allowlist is curated. 2.6s → 0.01s.
+
+**Anything date-bounded needs `(chat_id, date, sender_user_id)`.** The existing indexes
+each answer half of "one group, one time window", so a date bound turned a covering scan
+into a row fetch per message and cost grew with the group's whole history however narrow
+the window. A leaderboard whose `start_date` merely predates the group took **9.03s** —
+past the 5-second statement timeout. Migration `000024` adds the index; the same query is
+**0.22s**, a 30-day leaderboard **8ms**, and reading a month of message text for word
+counting went 2.55s → **0.03s**. Word counting orders by `date`, not `message_id`, so the
+same index supplies the ordering instead of a filesort over the window.
 
 **Listing a group's senders needs `(chat_id, sender_user_id)`.** Without it, "who has ever
 posted here?" reads every message in the group and de-duplicates — 2.3s over one group's
