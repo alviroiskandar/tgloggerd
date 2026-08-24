@@ -1,0 +1,2 @@
+ALTER TABLE telegram_private_messages DROP INDEX idx_private_messages_chat_sender;
+ALTER TABLE telegram_group_messages   DROP INDEX idx_group_messages_chat_sender;
