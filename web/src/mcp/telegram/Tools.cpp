@@ -168,6 +168,37 @@ Json messageRow(const drogon::orm::Row &r)
 		j["reply_to_message_id"] = colI64(r, "reply_to_msg_id");
 	if (!r["deleted_at"].isNull())
 		j["deleted_at"] = colStr(r, "deleted_at");
+
+	if (!r["file_id"].isNull()) {
+		Json md;
+		const int64_t fid = colI64(r, "file_id");
+		md["file_id"] = fid;
+		md["type"] = colStr(r, "file_type");
+		md["size"] = colI64(r, "file_size");
+		const std::string name = colStr(r, "orig_file_name");
+		if (!name.empty())
+			md["filename"] = name;
+		const std::string ext = colStr(r, "file_ext");
+		if (!ext.empty())
+			md["extension"] = ext;
+
+		/*
+		 * A URL only when the bytes are actually stored. Files at or
+		 * above TG_MAX_STORE_FILE_SIZE are recorded but not kept, and
+		 * /files/<token> answers 404 for those -- so emitting a link
+		 * would promise something the archive cannot deliver. The
+		 * metadata is still worth returning: it says the attachment
+		 * existed and what it was.
+		 */
+		const bool stored = colI64(r, "on_disk") != 0;
+		md["stored"] = stored;
+		if (stored) {
+			const std::string u = fileurl::forFile((uint64_t)fid);
+			if (!u.empty())
+				md["url"] = u;
+		}
+		j["media"] = std::move(md);
+	}
 	return j;
 }
 
@@ -186,7 +217,20 @@ constexpr const char *MSG_SELECT =
 	"            COALESCE(su.last_name,''))) AS sender_name, "
 	"(SELECT x.username FROM telegram_user_usernames x "
 	"  WHERE x.user_id = m.sender_user_id AND x.kind = 'active' "
-	"  ORDER BY x.position LIMIT 1) AS sender_username ";
+	"  ORDER BY x.position LIMIT 1) AS sender_username, "
+	"f.id AS file_id, f.file_type, f.file_size, f.file_ext, "
+	"f.orig_file_name, f.on_disk ";
+
+/*
+ * The display joins, shared by both places that decorate a chosen set of
+ * messages. telegram_files is LEFT-joined because most messages have no
+ * attachment; it costs nothing here because these joins only ever run over the
+ * rows already selected, never over the table being searched.
+ */
+constexpr const char *MSG_JOINS =
+	"JOIN `telegram_groups` g ON g.id = m.chat_id "
+	"LEFT JOIN telegram_users su ON su.id = m.sender_user_id "
+	"LEFT JOIN telegram_files f ON f.id = m.file_id ";
 
 /*
  * Every message query goes through here, so the exposure gate cannot be
@@ -224,9 +268,7 @@ Json runMessageQuery(const drogon::orm::DbClientPtr &db,
 	const std::string sql =
 		std::string(MSG_SELECT) + "FROM (" + inner + ") sel " +
 		"JOIN telegram_group_messages m ON m.id = sel.id " +
-		"JOIN `telegram_groups` g ON g.id = m.chat_id " +
-		"LEFT JOIN telegram_users su ON su.id = m.sender_user_id " +
-		"ORDER BY " + orderBy;
+		MSG_JOINS + "ORDER BY " + orderBy;
 
 	/*
 	 * Placeholders are positional, and the inner query comes first in the
@@ -301,9 +343,7 @@ Json decorateIds(const drogon::orm::DbClientPtr &db,
 	}
 	const std::string sql =
 		std::string(MSG_SELECT) + "FROM telegram_group_messages m " +
-		"JOIN `telegram_groups` g ON g.id = m.chat_id " +
-		"LEFT JOIN telegram_users su ON su.id = m.sender_user_id " +
-		"WHERE m.id IN (" + in + ") ORDER BY m.date DESC";
+		MSG_JOINS + "WHERE m.id IN (" + in + ") ORDER BY m.date DESC";
 	for (const auto &r : execSync(db, sql, binds))
 		arr.push_back(messageRow(r));
 	return arr;
@@ -417,10 +457,14 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			const int limit = clampLimit(args);
 			std::string sql =
 				"SELECT g.id, g.title, g.type, g.msg_count, "
+				"g.description, "
+				"gf.id AS photo_file_id, gf.on_disk AS photo_on_disk, "
 				"(SELECT gu.username FROM telegram_group_usernames gu "
 				"  WHERE gu.group_id = g.id AND gu.kind='active' "
 				"  ORDER BY gu.position LIMIT 1) AS username "
-				"FROM `telegram_groups` g WHERE 1=1" +
+				"FROM `telegram_groups` g "
+				"LEFT JOIN telegram_files gf "
+				"  ON gf.id = g.photo_file_id WHERE 1=1" +
 				std::string(GROUP_GATE) +
 				" ORDER BY g.msg_count DESC LIMIT " +
 				std::to_string(limit);
@@ -435,6 +479,23 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 					j["username"] = colStr(r, "username");
 					j["message_count"] =
 						colI64(r, "msg_count");
+					const std::string desc =
+						colStr(r, "description");
+					if (!desc.empty())
+						j["description"] = desc;
+
+					if (!r["photo_file_id"].isNull()) {
+						const int64_t pid =
+							colI64(r, "photo_file_id");
+						j["photo_file_id"] = pid;
+						if (colI64(r, "photo_on_disk")) {
+							const std::string u =
+								fileurl::forFile(
+									(uint64_t)pid);
+							if (!u.empty())
+								j["photo_url"] = u;
+						}
+					}
 					out["groups"].push_back(std::move(j));
 				}
 			} catch (const std::exception &e) {
@@ -442,6 +503,404 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 						e.what());
 			}
 			out["count"] = out["groups"].size();
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_get_group ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_get_group";
+		t.title = "Get one group's full details";
+		t.description =
+			"Everything the archive holds about one readable group: "
+			"title, description, type, every active username, photo, "
+			"message count, how many distinct people have posted, "
+			"how many admins it has, and the span of messages "
+			"recorded.\n\n"
+			"Only groups returned by telegram_list_groups can be "
+			"queried; anything else is reported as not found.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } } } },
+			{ "required", Json::array({ "group_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+			const int64_t gid = args["group_id"].get<long long>();
+			const std::string bind = std::to_string(gid);
+
+			Json out;
+			try {
+				auto rows = execSync(
+					db,
+					"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+					"g.id, g.title, g.type, g.description, "
+					"g.msg_count, g.created_at, g.updated_at, "
+					"gf.id AS photo_file_id, "
+					"gf.on_disk AS photo_on_disk "
+					"FROM `telegram_groups` g "
+					"LEFT JOIN telegram_files gf "
+					"  ON gf.id = g.photo_file_id "
+					"WHERE g.id = ? "
+					"  AND g.id IN (SELECT group_id "
+					"               FROM telegram_public_groups)",
+					{ bind });
+				if (rows.empty())
+					throw ToolError(
+						"no readable group with id " +
+						bind + "; see "
+						"telegram_list_groups for what "
+						"is available");
+
+				const auto &r = rows[0];
+				out["group_id"] = colI64(r, "id");
+				out["title"] = colStr(r, "title");
+				out["type"] = colStr(r, "type");
+				const std::string desc = colStr(r, "description");
+				if (!desc.empty())
+					out["description"] = desc;
+				out["message_count"] = colI64(r, "msg_count");
+				out["first_seen"] = colStr(r, "created_at");
+				out["last_updated"] = colStr(r, "updated_at");
+
+				if (!r["photo_file_id"].isNull()) {
+					const int64_t pid =
+						colI64(r, "photo_file_id");
+					out["photo_file_id"] = pid;
+					if (colI64(r, "photo_on_disk")) {
+						const std::string u =
+							fileurl::forFile(
+								(uint64_t)pid);
+						if (!u.empty())
+							out["photo_url"] = u;
+					}
+				}
+			} catch (const ToolError &) {
+				throw;
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+
+			try {
+				out["usernames"] = Json::array();
+				for (const auto &r : execSync(
+					     db,
+					     "SELECT username, is_collectible "
+					     "FROM telegram_group_usernames "
+					     "WHERE group_id = ? AND kind='active' "
+					     "ORDER BY position",
+					     { bind })) {
+					Json j;
+					j["username"] = colStr(r, "username");
+					if (colI64(r, "is_collectible"))
+						j["is_collectible"] = true;
+					out["usernames"].push_back(std::move(j));
+				}
+
+				/*
+				 * Cheap because of migration 000023's
+				 * (chat_id, sender_user_id) index; without it
+				 * this would scan the group's whole message
+				 * history just to size the participant list.
+				 */
+				auto sr = execSync(
+					db,
+					"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+					"COUNT(DISTINCT m.sender_user_id) AS n "
+					"FROM telegram_group_messages m "
+					"WHERE m.chat_id = ? "
+					"  AND m.sender_user_id IS NOT NULL",
+					{ bind });
+				if (!sr.empty())
+					out["distinct_senders"] =
+						sr[0]["n"].as<int64_t>();
+
+				/*
+				 * The message span, from the ENDS of
+				 * (chat_id, message_id) rather than MIN/MAX
+				 * over date.
+				 *
+				 * Aggregating date cannot use an index -- date
+				 * is in neither key -- so it reads every row in
+				 * the group and turned this tool into a
+				 * 3-second call. message_id is monotonic within
+				 * a chat, so the first and last messages are
+				 * the two endpoints of that index, and reading
+                                 * their dates is two single-row lookups.
+				 */
+				for (int end = 0; end < 2; end++) {
+					const char *dir = end ? "DESC" : "ASC";
+					const char *key = end
+								  ? "last_message_date"
+								  : "first_message_date";
+					auto dr = execSync(
+						db,
+						std::string(
+							"SELECT m.date FROM "
+							"telegram_group_messages m "
+							"WHERE m.chat_id = ? "
+							"ORDER BY m.message_id ") +
+							dir + " LIMIT 1",
+						{ bind });
+					/* date 0 is a real stored value for some
+					 * rows, so it is not a usable bound. */
+					if (!dr.empty() && colI64(dr[0], "date"))
+						out[key] = colI64(dr[0], "date");
+				}
+
+				auto ar = execSync(
+					db,
+					"SELECT COUNT(1) AS n FROM "
+					"telegram_group_admins WHERE group_id = ?",
+					{ bind });
+				if (!ar.empty())
+					out["admin_count"] =
+						ar[0]["n"].as<int64_t>();
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_get_group_history ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_get_group_history";
+		t.title = "Get a group's change history";
+		t.description =
+			"How a readable group has changed over time: titles, "
+			"descriptions, usernames, photos, and administrator "
+			"promotions, demotions and privilege changes -- newest "
+			"first.\n\n"
+			"As with user history, timestamps are when a change was "
+			"OBSERVED. Group metadata and the admin list are both "
+			"polled rather than pushed, so a change made and "
+			"reverted between polls leaves no trace, and the oldest "
+			"entry of each kind is usually the value at first sight "
+			"rather than a change.\n\n"
+			"Pass `kinds` to fetch only some categories; the default "
+			"is all of them.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "kinds",
+				  Json{ { "type", "array" },
+					{ "items", Json{ { "type", "string" } } },
+					{ "description",
+					  "Any of: titles, descriptions, "
+					  "usernames, photos, admins. "
+					  "Default all." } } },
+				{ "limit",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Entries per category, 1-200, "
+					  "default 50." } } } } },
+			{ "required", Json::array({ "group_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+			const int64_t gid = args["group_id"].get<long long>();
+			const std::string bind = std::to_string(gid);
+			const std::string lim = std::to_string(clampLimit(args));
+
+			bool want[5] = { true, true, true, true, true };
+			static const char *kNames[5] = { "titles", "descriptions",
+							 "usernames", "photos",
+							 "admins" };
+			if (args.contains("kinds")) {
+				if (!args["kinds"].is_array())
+					throw ToolError("\"kinds\" must be an "
+							"array of strings");
+				for (int i = 0; i < 5; i++)
+					want[i] = false;
+				for (const auto &k : args["kinds"]) {
+					if (!k.is_string())
+						throw ToolError("\"kinds\" must "
+								"contain strings");
+					const std::string v = k.get<std::string>();
+					bool found = false;
+					for (int i = 0; i < 5; i++) {
+						if (v == kNames[i]) {
+							want[i] = true;
+							found = true;
+						}
+					}
+					if (!found)
+						throw ToolError(
+							"unknown kind \"" + v +
+							"\"; expected any of: "
+							"titles, descriptions, "
+							"usernames, photos, admins");
+				}
+			}
+
+			Json out;
+			out["group_id"] = gid;
+			try {
+				/* The gate, once, before any history is read:
+				 * a group's past is as private as its present. */
+				auto ok = execSync(
+					db,
+					"SELECT 1 FROM telegram_public_groups "
+					"WHERE group_id = ? LIMIT 1",
+					{ bind });
+				if (ok.empty())
+					throw ToolError(
+						"no readable group with id " +
+						bind + "; see "
+						"telegram_list_groups for what "
+						"is available");
+
+				if (want[0]) {
+					out["titles"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT title, created_at FROM "
+						     "telegram_group_hist_title "
+						     "WHERE group_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["titles"].push_back(Json{
+							{ "title", colStr(r, "title") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[1]) {
+					out["descriptions"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT description, created_at "
+						     "FROM telegram_group_hist_description "
+						     "WHERE group_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["descriptions"].push_back(Json{
+							{ "description",
+							  colStr(r, "description") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[2]) {
+					out["usernames"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT username, action, kind, "
+						     "created_at FROM "
+						     "telegram_group_hist_usernames_events "
+						     "WHERE group_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["usernames"].push_back(Json{
+							{ "username",
+							  colStr(r, "username") },
+							{ "action",
+							  colStr(r, "action") },
+							{ "kind", colStr(r, "kind") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[3]) {
+					out["photos"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT h.file_id, h.created_at, "
+						     "f.on_disk FROM "
+						     "telegram_group_hist_photo h "
+						     "LEFT JOIN telegram_files f "
+						     "  ON f.id = h.file_id "
+						     "WHERE h.group_id = ? "
+						     "ORDER BY h.id DESC LIMIT " + lim,
+						     { bind })) {
+						const int64_t fid =
+							colI64(r, "file_id");
+						Json j;
+						j["file_id"] = fid;
+						if (colI64(r, "on_disk")) {
+							const std::string u =
+								fileurl::forFile(
+									(uint64_t)fid);
+							if (!u.empty())
+								j["url"] = u;
+						}
+						j["observed_at"] =
+							colStr(r, "created_at");
+						out["photos"].push_back(
+							std::move(j));
+					}
+				}
+				if (want[4]) {
+					/* Who, not just what: an admin event is
+					 * unreadable without the person's name. */
+					out["admins"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT h.user_id, h.action, "
+						     "h.status, h.custom_title, "
+						     "h.is_anonymous, h.created_at, "
+						     "u.first_name, u.last_name, "
+						     "(SELECT x.username FROM "
+						     "  telegram_user_usernames x "
+						     "  WHERE x.user_id = h.user_id "
+						     "    AND x.kind='active' "
+						     "  ORDER BY x.position LIMIT 1) "
+						     "  AS username "
+						     "FROM telegram_group_admin_hist h "
+						     "LEFT JOIN telegram_users u "
+						     "  ON u.id = h.user_id "
+						     "WHERE h.group_id = ? "
+						     "ORDER BY h.id DESC LIMIT " + lim,
+						     { bind })) {
+						Json j;
+						j["user_id"] = colI64(r, "user_id");
+						j["username"] =
+							colStr(r, "username");
+						j["first_name"] =
+							colStr(r, "first_name");
+						j["last_name"] =
+							colStr(r, "last_name");
+						j["action"] = colStr(r, "action");
+						j["status"] = colStr(r, "status");
+						const std::string ct =
+							colStr(r, "custom_title");
+						if (!ct.empty())
+							j["custom_title"] = ct;
+						if (colI64(r, "is_anonymous"))
+							j["is_anonymous"] = true;
+						j["observed_at"] =
+							colStr(r, "created_at");
+						out["admins"].push_back(
+							std::move(j));
+					}
+				}
+			} catch (const ToolError &) {
+				throw;
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
 			return out;
 		};
 		registry.add(std::move(t));

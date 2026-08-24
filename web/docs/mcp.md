@@ -178,6 +178,8 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_list_group_senders` | Everyone who has ever posted in a group, busiest first. |
 | `telegram_get_user` | One user's full record by id: names, usernames, bio, phone, birthday, flags. |
 | `telegram_get_user_history` | How a profile changed over time: names, usernames, bios, phones, photos. |
+| `telegram_get_group` | One group's full record: usernames, photo, counts, participant count, message span. |
+| `telegram_get_group_history` | Titles, descriptions, usernames, photos and admin changes over time. |
 
 `telegram_list_group_admins` reports a **snapshot**: Telegram does not push admin changes to
 a regular account, so the list is refreshed by polling and can lag a very recent promotion.
@@ -192,7 +194,18 @@ rather than by a user.
 `telegram_user_extra_info` is sparse — 56k rows for 298k users — so "this user has no bio"
 and "we never learned one" are different answers, and blank strings would conflate them.
 
-Both attach a **fetchable URL** alongside a profile photo's `file_id`:
+Fetchable URLs appear wherever the archive holds a file: profile photos
+(`profile_photo_url`), group photos (`photo_url`), message attachments
+(`media.url`), and every photo entry in both history tools.
+
+A URL is emitted **only when the bytes are actually stored**. Files at or above
+`TG_MAX_STORE_FILE_SIZE` are recorded but not kept, and `/files/<token>` answers 404 for
+those — so a link would promise something the archive cannot deliver. Message media carries
+`stored: false` in that case, with the metadata (type, size, filename) still present,
+because "this attachment existed and was a 2 GB video" is worth knowing even when the bytes
+are not there.
+
+Both user tools attach a URL alongside a profile photo's `file_id`:
 `profile_photo_url` on the current photo, `url` on each history entry. These are the same
 `/files/<token>` links the web UI uses — no session needed, so an MCP client can retrieve
 the image directly.
