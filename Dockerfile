@@ -19,19 +19,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 #           add libmariadb-dev: it replaces the Oracle headers and breaks the
 #           connector build (see README).
 #   web:    Drogon plus the vendored MariaDB Connector/C (libsodium, jsoncpp,
-#           uuid, brotli), sharing zlib and OpenSSL with the daemon.
-#
-# git is needed because run.sh initializes the vendored submodules on first
-# start; wget fetches golang-migrate below.
+#           uuid, brotli), sharing zlib and OpenSSL with the daemon. It also
+#           links gwmcp, whose public API names nlohmann/json; the packaged
+#           version (3.11.3) matches the copy web/ vendors, so the type crosses
+#           that library boundary unconverted.
 #   discordd: gwdiscord speaks the Discord Gateway over a WebSocket, which the
 #           system libcurl cannot do -- Ubuntu builds it without websocket
 #           support. Boost.Beast provides it; only headers are needed, since
 #           Beast and Asio are header-only, so nothing links a Boost binary.
+#
+# git is needed because run.sh initializes the vendored submodules on first
+# start; wget fetches golang-migrate below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		build-essential cmake git ca-certificates pkg-config wget \
 		gperf libssl-dev zlib1g-dev libmysqlclient-dev libcurl4-openssl-dev \
 		libsodium-dev libjsoncpp-dev uuid-dev libbrotli-dev \
-		libboost-dev \
+		libboost-dev nlohmann-json3-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
 # golang-migrate applies the SQL migrations on container start. The release

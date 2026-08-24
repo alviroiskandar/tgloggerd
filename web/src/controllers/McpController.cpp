@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
+ */
+#include "controllers/McpController.hpp"
+
+#include "dao/Mcp.hpp"
+#include "mcp/Token.hpp"
+#include "mcp/telegram/Tools.hpp"
+
+#include <gwmcp/Errors.hpp>
+#include <gwmcp/Server.hpp>
+
+#include <trantor/net/EventLoopThreadPool.h>
+
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <string>
+
+namespace tgweb::controllers {
+
+namespace {
+
+/*
+ * The server and the threads its tools run on, built once on first use.
+ *
+ * Tool handlers use the BLOCKING database API, which must not run on an HTTP
+ * event loop -- a slow query would stall every other request sharing that loop.
+ * So they are dispatched onto a small pool of their own, where blocking is the
+ * expected behaviour and the only thing delayed is another MCP call.
+ */
+struct McpRuntime {
+	std::unique_ptr<gwmcp::Server> server;
+	std::unique_ptr<trantor::EventLoopThreadPool> pool;
+};
+
+McpRuntime &runtime(void)
+{
+	static McpRuntime rt;
+	static std::once_flag once;
+
+	std::call_once(once, [] {
+		gwmcp::ToolRegistry reg;
+		mcp::telegram::registerTools(reg,
+					     drogon::app().getDbClient("ro"));
+		/* Discord tools will register here as a second call. */
+
+		gwmcp::ServerInfo info;
+		info.name = "tgloggerd";
+		info.title = "tgloggerd archive";
+		info.version = "0.1.0";
+		info.instructions =
+			"Read-only access to a Telegram message archive. Only "
+			"groups an administrator has explicitly exposed are "
+			"readable; private groups and direct messages are not "
+			"available through any tool. Call telegram_list_groups "
+			"first to see what can be queried.";
+
+		rt.server = std::make_unique<gwmcp::Server>(std::move(info),
+							    std::move(reg));
+
+		const char *n = getenv("MCP_THREADS");
+		size_t threads = n ? (size_t)atoi(n) : 2;
+		if (threads < 1)
+			threads = 1;
+		if (threads > 16)
+			threads = 16;
+		rt.pool = std::make_unique<trantor::EventLoopThreadPool>(
+			threads, "mcp");
+		rt.pool->start();
+	});
+	return rt;
+}
+
+drogon::HttpResponsePtr jsonBody(const std::string &body,
+				 drogon::HttpStatusCode code = drogon::k200OK)
+{
+	auto resp = drogon::HttpResponse::newHttpResponse();
+	resp->setStatusCode(code);
+	resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+	resp->setBody(body);
+	return resp;
+}
+
+drogon::HttpResponsePtr rpcError(int code, const std::string &msg,
+				 drogon::HttpStatusCode status)
+{
+	return jsonBody(gwmcp::makeError(nlohmann::json(nullptr), code, msg).dump(),
+			status);
+}
+
+/*
+ * DNS-rebinding defence, which the spec requires. A browser on an attacker's
+ * page can be made to POST to a private address, but it cannot forge Origin --
+ * so rejecting unknown origins stops that, while a non-browser client (which
+ * sends no Origin at all) is unaffected.
+ */
+bool originAllowed(const drogon::HttpRequestPtr &req)
+{
+	const std::string origin = req->getHeader("origin");
+	if (origin.empty())
+		return true; /* not a browser: nothing to forge */
+
+	const char *allowed = getenv("MCP_ALLOWED_ORIGINS");
+	if (!allowed || !*allowed)
+		return false; /* no allowlist configured: refuse browsers */
+
+	const std::string list = allowed;
+	size_t p = 0;
+	while (p <= list.size()) {
+		const size_t c = list.find(',', p);
+		const size_t e = (c == std::string::npos) ? list.size() : c;
+		std::string item = list.substr(p, e - p);
+		while (!item.empty() && (item.front() == ' '))
+			item.erase(item.begin());
+		while (!item.empty() && (item.back() == ' ' || item.back() == '\r'))
+			item.pop_back();
+		if (item == "*" || item == origin)
+			return true;
+		if (c == std::string::npos)
+			break;
+		p = c + 1;
+	}
+	return false;
+}
+
+/*
+ * The negotiated protocol version, per the spec: an absent header means the
+ * client predates the header, so assume 2025-03-26; an unsupported one is a
+ * 400 rather than a negotiation, because by this point negotiation is over.
+ */
+bool protocolVersionOk(const drogon::HttpRequestPtr &req, std::string &err)
+{
+	const std::string v = req->getHeader("mcp-protocol-version");
+	if (v.empty())
+		return true;
+	if (gwmcp::isSupportedProtocol(v))
+		return true;
+	err = "Unsupported MCP-Protocol-Version: " + v;
+	return false;
+}
+
+} /* namespace */
+
+drogon::Task<drogon::HttpResponsePtr>
+McpController::post(drogon::HttpRequestPtr req)
+{
+	if (!originAllowed(req))
+		co_return rpcError(gwmcp::rpc::INVALID_REQUEST,
+				   "Origin not allowed", drogon::k403Forbidden);
+
+	std::string verr;
+	if (!protocolVersionOk(req, verr))
+		co_return rpcError(gwmcp::rpc::INVALID_REQUEST, verr,
+				   drogon::k400BadRequest);
+
+	/* ---- authenticate ---- */
+	const std::string bearer =
+		mcp::token::fromAuthorizationHeader(req->getHeader("authorization"));
+	if (bearer.empty() || !mcp::token::looksLikeToken(bearer)) {
+		auto resp = rpcError(gwmcp::rpc::INVALID_REQUEST,
+				     "Missing or malformed bearer token",
+				     drogon::k401Unauthorized);
+		resp->addHeader("WWW-Authenticate", "Bearer");
+		co_return resp;
+	}
+
+	auto appDb = drogon::app().getDbClient("app");
+	std::optional<dao::mcp::TokenOwner> owner;
+	try {
+		owner = co_await dao::mcp::resolveToken(
+			appDb, mcp::token::digest(bearer));
+	} catch (const std::exception &e) {
+		co_return rpcError(gwmcp::rpc::INTERNAL_ERROR,
+				   std::string("auth backend error: ") + e.what(),
+				   drogon::k500InternalServerError);
+	}
+	if (!owner) {
+		auto resp = rpcError(gwmcp::rpc::INVALID_REQUEST,
+				     "Invalid or revoked token",
+				     drogon::k401Unauthorized);
+		resp->addHeader("WWW-Authenticate", "Bearer");
+		co_return resp;
+	}
+
+	/* Best-effort; a failed stamp must not fail the request. */
+	try {
+		co_await dao::mcp::touchToken(appDb, owner->tokenId);
+	} catch (const std::exception &) {
+	}
+
+	/* ---- dispatch ---- */
+	const std::string body(req->getBody());
+	if (body.empty())
+		co_return rpcError(gwmcp::rpc::INVALID_REQUEST, "Empty body",
+				   drogon::k400BadRequest);
+
+	McpRuntime &rt = runtime();
+	const gwmcp::Server *server = rt.server.get();
+
+	/*
+	 * Hop to an MCP thread so the blocking queries inside the tools cannot
+	 * stall an HTTP loop, and come back with the answer.
+	 */
+	std::optional<std::string> reply;
+	try {
+		reply = co_await drogon::queueInLoopCoro<std::optional<std::string>>(
+			rt.pool->getNextLoop(),
+			[server, body] { return server->handleRaw(body); });
+	} catch (const std::exception &e) {
+		co_return rpcError(gwmcp::rpc::INTERNAL_ERROR, e.what(),
+				   drogon::k500InternalServerError);
+	}
+
+	/*
+	 * No reply means the client sent a notification or a response. The spec
+	 * is specific: 202 Accepted with NO body.
+	 */
+	if (!reply) {
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::k202Accepted);
+		resp->setBody("");
+		co_return resp;
+	}
+	co_return jsonBody(*reply);
+}
+
+drogon::Task<drogon::HttpResponsePtr>
+McpController::get(drogon::HttpRequestPtr req)
+{
+	(void)req;
+	/*
+	 * A GET opens the server-to-client SSE stream. This server never
+	 * initiates messages, so the spec's own alternative applies: return 405
+	 * to say the endpoint offers no stream. Clients treat that as "POST
+	 * only", not as an error.
+	 */
+	auto resp = drogon::HttpResponse::newHttpResponse();
+	resp->setStatusCode(drogon::k405MethodNotAllowed);
+	resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+	resp->addHeader("Allow", "POST");
+	resp->setBody("This MCP endpoint does not offer an SSE stream.\n");
+	co_return resp;
+}
+
+drogon::Task<drogon::HttpResponsePtr>
+McpController::del(drogon::HttpRequestPtr req)
+{
+	(void)req;
+	/* Sessions are not used, so there is nothing for a client to end. */
+	auto resp = drogon::HttpResponse::newHttpResponse();
+	resp->setStatusCode(drogon::k405MethodNotAllowed);
+	resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+	resp->addHeader("Allow", "POST");
+	resp->setBody("This MCP endpoint is stateless; there is no session to "
+		      "terminate.\n");
+	co_return resp;
+}
+
+} /* namespace tgweb::controllers */

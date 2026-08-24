@@ -81,6 +81,14 @@ add_subdirectory(../submodules/drogon ${CMAKE_BINARY_DIR}/drogon EXCLUDE_FROM_AL
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED libsodium)
 
+# gwmcp -- the MCP protocol library, a self-contained project with no tgloggerd
+# dependency (see src/gwmcp/README.md). It is pointed at the nlohmann copy this
+# app already vendors so both compile against exactly one version of the type
+# that crosses their shared API.
+set(GWMCP_NLOHMANN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    CACHE PATH "" FORCE)
+add_subdirectory(../src/gwmcp ${CMAKE_BINARY_DIR}/gwmcp EXCLUDE_FROM_ALL)
+
 add_executable(tgloggerd_web
 	src/main.cpp
 	src/Config.hpp
@@ -114,8 +122,12 @@ add_executable(tgloggerd_web
 	src/dao/Search.hpp
 	src/dao/TelegramDiscord.cpp
 	src/dao/TelegramDiscord.hpp
+	src/mcp/Filter.cpp
+	src/mcp/Filter.hpp
 	src/mcp/Token.cpp
 	src/mcp/Token.hpp
+	src/mcp/telegram/Tools.cpp
+	src/mcp/telegram/Tools.hpp
 	src/views/Render.cpp
 	src/views/Render.hpp
 	src/controllers/Common.hpp
@@ -127,6 +139,8 @@ add_executable(tgloggerd_web
 	src/controllers/DiscordTelegramController.hpp
 	src/controllers/McpAdminController.cpp
 	src/controllers/McpAdminController.hpp
+	src/controllers/McpController.cpp
+	src/controllers/McpController.hpp
 	src/controllers/PlatformFwdController.cpp
 	src/controllers/PlatformFwdController.hpp
 	src/controllers/TelegramDiscordController.cpp
@@ -157,5 +171,5 @@ add_executable(tgloggerd_web
 # vendored header-only inja template engine and its nlohmann/json dependency.
 target_include_directories(tgloggerd_web PRIVATE
 	src ../src third_party ${SODIUM_INCLUDE_DIRS})
-target_link_libraries(tgloggerd_web PRIVATE drogon ${SODIUM_LIBRARIES})
+target_link_libraries(tgloggerd_web PRIVATE drogon gwmcp ${SODIUM_LIBRARIES})
 target_compile_options(tgloggerd_web PRIVATE -Wall -Wextra)
