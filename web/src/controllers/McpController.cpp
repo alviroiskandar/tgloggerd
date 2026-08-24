@@ -196,18 +196,46 @@ std::string credential(const drogon::HttpRequestPtr &req)
 }
 
 /*
- * The negotiated protocol version, per the spec: an absent header means the
- * client predates the header, so assume 2025-03-26; an unsupported one is a
- * 400 rather than a negotiation, because by this point negotiation is over.
+ * MCP-Protocol-Version, which must reject the malformed without rejecting the
+ * merely newer.
+ *
+ * The spec says a server MUST answer 400 to an "invalid or unsupported"
+ * version. Reading "unsupported" as "not on my hardcoded list" makes the server
+ * fail closed against every version released after it was written -- and that
+ * is not hypothetical: it is what broke Claude's connector here, which sends a
+ * version this build predates and got a 400 it reported as a sign-in failure.
+ *
+ * Version mismatch is already handled properly, and in the right place:
+ * initialize negotiates, echoing the client's version when we know it and
+ * answering with ours when we do not, and the client decides whether it can
+ * live with that. Duplicating that decision in a header check only removes the
+ * client's say.
+ *
+ * So: reject what is genuinely invalid -- anything not shaped like the
+ * YYYY-MM-DD date the spec defines -- and let anything well-formed through to
+ * negotiation.
  */
 bool protocolVersionOk(const drogon::HttpRequestPtr &req, std::string &err)
 {
 	const std::string v = req->getHeader("mcp-protocol-version");
 	if (v.empty())
-		return true;
-	if (gwmcp::isSupportedProtocol(v))
-		return true;
-	err = "Unsupported MCP-Protocol-Version: " + v;
+		return true; /* pre-header client; spec says assume 2025-03-26 */
+
+	if (v.size() == 10 && v[4] == '-' && v[7] == '-') {
+		bool digits = true;
+		for (size_t i = 0; i < v.size(); i++) {
+			if (i == 4 || i == 7)
+				continue;
+			if (v[i] < '0' || v[i] > '9') {
+				digits = false;
+				break;
+			}
+		}
+		if (digits)
+			return true;
+	}
+
+	err = "Malformed MCP-Protocol-Version: " + v;
 	return false;
 }
 

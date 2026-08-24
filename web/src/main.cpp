@@ -232,12 +232,12 @@ int main(int argc, char **argv)
 				 */
 				fprintf(stderr,
 					"mcp-trace %s %s auth_header=%s key_param=%s "
-					"origin=\"%s\" accept=\"%s\" ua=\"%s\"\n",
+					"origin=\"%s\" mcpver=\"%s\" ua=\"%s\"\n",
 					req->methodString(), path.c_str(),
 					hasAuth ? "yes" : "no",
 					hasKey ? "yes" : "no",
 					req->getHeader("origin").c_str(),
-					req->getHeader("accept").c_str(),
+					req->getHeader("mcp-protocol-version").c_str(),
 					req->getHeader("user-agent").c_str());
 				fflush(stderr);
 			});
