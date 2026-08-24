@@ -38,6 +38,23 @@ phone numbers where the archive has them.
 
 `Authorization: Bearer tgmcp_<64 hex>`, minted at `/mcp-admin/tokens`.
 
+A token may also be passed in the query string, for clients that accept only a URL and
+offer no way to set a header:
+
+```
+POST /mcp?key=tgmcp_<64 hex>
+```
+
+The header is preferred whenever both are present. **The query string is genuinely
+weaker** and it is worth being deliberate about: unlike a header, it is recorded in
+reverse-proxy and CDN access logs, kept in browser history, and leaked in the `Referer`
+of any outbound link. Behind Cloudflare, assume the token reaches their request logs.
+
+What limits the damage is that tokens are per-client, named, individually revocable, and
+stored only as a hash. So the practical advice is: **mint a separate token for
+query-string use**, name it accordingly, and revoke it on its own if you ever need to —
+without disturbing clients that authenticate properly.
+
 Shown once and stored only as a SHA-256, so a database dump grants nobody access. Lose one
 and you revoke it and mint another. Revoking stamps `revoked_at` rather than deleting, so
 the audit trail survives; deactivating an account disables its tokens too.

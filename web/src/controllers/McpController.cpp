@@ -126,6 +126,33 @@ bool originAllowed(const drogon::HttpRequestPtr &req)
 }
 
 /*
+ * The presented credential: header first, then query string.
+ *
+ * The header is the right way and is preferred whenever present. The query
+ * string exists because a number of MCP clients accept only a URL and offer no
+ * way to set a header, and without it those clients cannot connect at all.
+ *
+ * It is genuinely weaker, and the difference is worth stating: a query string
+ * is recorded in reverse-proxy and CDN access logs, kept in browser history,
+ * and leaked in the Referer header of any outbound link -- none of which
+ * happens to a header. Mitigations are that tokens are per-client, named,
+ * individually revocable, and stored only as a hash. The practical advice, in
+ * web/docs/mcp.md, is to mint a SEPARATE token for query-string use so it can
+ * be revoked without disturbing header-based clients.
+ */
+std::string credential(const drogon::HttpRequestPtr &req)
+{
+	const std::string h = mcp::token::fromAuthorizationHeader(
+		req->getHeader("authorization"));
+	if (!h.empty())
+		return h;
+
+	/* Drogon parses the query string regardless of the body's content
+	 * type, so this works on a JSON POST. */
+	return req->getParameter(mcp::token::QUERY_PARAM);
+}
+
+/*
  * The negotiated protocol version, per the spec: an absent header means the
  * client predates the header, so assume 2025-03-26; an unsupported one is a
  * 400 rather than a negotiation, because by this point negotiation is over.
@@ -156,12 +183,14 @@ McpController::post(drogon::HttpRequestPtr req)
 				   drogon::k400BadRequest);
 
 	/* ---- authenticate ---- */
-	const std::string bearer =
-		mcp::token::fromAuthorizationHeader(req->getHeader("authorization"));
+	const std::string bearer = credential(req);
 	if (bearer.empty() || !mcp::token::looksLikeToken(bearer)) {
-		auto resp = rpcError(gwmcp::rpc::INVALID_REQUEST,
-				     "Missing or malformed bearer token",
-				     drogon::k401Unauthorized);
+		auto resp = rpcError(
+			gwmcp::rpc::INVALID_REQUEST,
+			"Missing or malformed token. Send "
+			"\"Authorization: Bearer <token>\", or append "
+			"?key=<token> if your client cannot set headers.",
+			drogon::k401Unauthorized);
 		resp->addHeader("WWW-Authenticate", "Bearer");
 		co_return resp;
 	}

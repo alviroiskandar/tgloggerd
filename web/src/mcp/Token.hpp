@@ -39,6 +39,13 @@ std::string digest(const std::string &plaintext);
  */
 std::string fromAuthorizationHeader(const std::string &header);
 
+/*
+ * The query-string parameter that may carry a token instead of the header, for
+ * clients that accept only a URL. Weaker than the header -- see the comment on
+ * credential() in McpController.cpp -- but the only option for some clients.
+ */
+constexpr const char *QUERY_PARAM = "key";
+
 /* Shape check only -- says nothing about whether the token exists. */
 bool looksLikeToken(const std::string &s);
 
