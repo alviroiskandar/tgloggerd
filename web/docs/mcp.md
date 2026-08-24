@@ -176,6 +176,8 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_get_users` | By `user_id`, `username`, `phone_number` or name. Requires a filter. |
 | `telegram_list_group_admins` | A group's admins, owner first, with the privileges each holds. |
 | `telegram_list_group_senders` | Everyone who has ever posted in a group, busiest first. |
+| `telegram_get_user` | One user's full record by id: names, usernames, bio, phone, birthday, flags. |
+| `telegram_get_user_history` | How a profile changed over time: names, usernames, bios, phones, photos. |
 
 `telegram_list_group_admins` reports a **snapshot**: Telegram does not push admin changes to
 a regular account, so the list is refreshed by polling and can lag a very recent promotion.
@@ -186,7 +188,16 @@ people who have posted, so lurkers never appear; counts include messages later d
 channel posts and anonymous-admin messages are excluded, since those are sent by the chat
 rather than by a user.
 
-Both return an empty list for a group that is not exposed, rather than an error — refusing
+`telegram_get_user` **omits fields the archive never saw** rather than returning them empty.
+`telegram_user_extra_info` is sparse — 56k rows for 298k users — so "this user has no bio"
+and "we never learned one" are different answers, and blank strings would conflate them.
+
+`telegram_get_user_history` timestamps are **when a change was observed**, not when it was
+made: the daemon polls, so a value changed and reverted between observations leaves no
+trace, and the oldest entry of each kind is usually the value at first sight rather than a
+change. `kinds` narrows which categories are fetched.
+
+The two group tools return an empty list for a group that is not exposed, rather than an error — refusing
 explicitly would confirm the group exists, which is itself something the allowlist withholds.
 
 All are annotated `readOnlyHint: true` and none can write.

@@ -832,6 +832,367 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 		registry.add(std::move(t));
 	}
 
+	/* ---- telegram_get_user ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_get_user";
+		t.title = "Get one user's full profile";
+		t.description =
+			"Everything the archive holds about one user, by id: "
+			"names, every active username, bio, phone number, "
+			"language, birthday, account flags and counts.\n\n"
+			"Use telegram_get_users to FIND a user by username, "
+			"name or phone; use this once you have the id and want "
+			"the whole record. Fields the archive never saw are "
+			"omitted rather than returned empty, so what comes back "
+			"is what is actually known.\n\n"
+			"Not restricted to exposed groups: this describes an "
+			"account, not a conversation.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "user_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Telegram user id (positive)." } } } } },
+			{ "required", Json::array({ "user_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("user_id") ||
+			    !args["user_id"].is_number_integer())
+				throw ToolError("user_id is required and must be "
+						"an integer");
+			const int64_t uid = args["user_id"].get<long long>();
+			const std::string bind = std::to_string(uid);
+
+			const std::string sql =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+				"u.id, u.first_name, u.last_name, u.type, "
+				"u.profile_photo_file_id, u.accent_color_id, "
+				"u.is_verified, u.is_scam, u.is_fake, "
+				"u.is_premium, u.is_support, "
+				"u.birthday_day, u.birthday_month, "
+				"u.birthday_year, u.msg_count, "
+				"u.created_at, u.updated_at, "
+				"e.bio, e.phone_number, e.language_code, "
+				"e.restriction_reason, e.has_sensitive_content, "
+				"e.restricts_new_chats, e.paid_message_star_count, "
+				"e.personal_chat_id, e.emoji_status_custom_emoji_id, "
+				"e.profile_accent_color_id "
+				"FROM telegram_users u "
+				"LEFT JOIN telegram_user_extra_info e "
+				"  ON e.user_id = u.id "
+				"WHERE u.id = ?";
+
+			Json out;
+			try {
+				auto rows = execSync(db, sql, { bind });
+				if (rows.empty())
+					throw ToolError(
+						"no user with id " + bind +
+						" in the archive");
+
+				const auto &r = rows[0];
+				out["user_id"] = colI64(r, "id");
+				out["first_name"] = colStr(r, "first_name");
+				out["last_name"] = colStr(r, "last_name");
+				out["type"] = colStr(r, "type");
+				out["is_bot"] = colStr(r, "type") == "bot";
+				out["is_deleted"] = colStr(r, "type") == "deleted";
+
+				/*
+				 * Flags are always present, so they are always
+				 * returned: an absent flag would be ambiguous
+				 * between false and unknown.
+				 */
+				out["is_verified"] = colI64(r, "is_verified") != 0;
+				out["is_premium"] = colI64(r, "is_premium") != 0;
+				out["is_scam"] = colI64(r, "is_scam") != 0;
+				out["is_fake"] = colI64(r, "is_fake") != 0;
+				out["is_support"] = colI64(r, "is_support") != 0;
+
+				out["message_count"] = colI64(r, "msg_count");
+				out["first_seen"] = colStr(r, "created_at");
+				out["last_updated"] = colStr(r, "updated_at");
+
+				/*
+				 * Everything below is optional. Omitting what
+				 * was never seen -- rather than returning ""
+				 * or 0 -- is the difference between "this user
+				 * has no bio" and "we never learned one", and
+				 * telegram_user_extra_info is sparse enough
+				 * (56k rows for 298k users) that the
+				 * distinction matters constantly.
+				 */
+				const std::string bio = colStr(r, "bio");
+				if (!bio.empty())
+					out["bio"] = bio;
+				const std::string phone = colStr(r, "phone_number");
+				if (!phone.empty())
+					out["phone_number"] = phone;
+				const std::string lang = colStr(r, "language_code");
+				if (!lang.empty())
+					out["language_code"] = lang;
+				const std::string restr =
+					colStr(r, "restriction_reason");
+				if (!restr.empty())
+					out["restriction_reason"] = restr;
+				if (colI64(r, "has_sensitive_content"))
+					out["has_sensitive_content"] = true;
+				if (colI64(r, "restricts_new_chats"))
+					out["restricts_new_chats"] = true;
+				if (colI64(r, "paid_message_star_count"))
+					out["paid_message_star_count"] =
+						colI64(r, "paid_message_star_count");
+				if (colI64(r, "personal_chat_id"))
+					out["personal_chat_id"] =
+						colI64(r, "personal_chat_id");
+				if (colI64(r, "emoji_status_custom_emoji_id"))
+					out["has_emoji_status"] = true;
+
+				/* Telegram lets a user publish a birthday with
+				 * no year, so the parts are reported as given
+				 * rather than assembled into a false date. */
+				const int64_t bd = colI64(r, "birthday_day");
+				const int64_t bm = colI64(r, "birthday_month");
+				const int64_t by = colI64(r, "birthday_year");
+				if (bd || bm || by) {
+					Json b;
+					if (bd) b["day"] = bd;
+					if (bm) b["month"] = bm;
+					if (by) b["year"] = by;
+					out["birthday"] = std::move(b);
+				}
+
+				/* An internal files.id, not a URL: media is not
+				 * reachable through MCP. Included so a photo
+				 * change is at least identifiable. */
+				if (colI64(r, "profile_photo_file_id"))
+					out["profile_photo_file_id"] =
+						colI64(r, "profile_photo_file_id");
+			} catch (const ToolError &) {
+				throw;
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+
+			/* Every active username, not just the first: a user may
+			 * hold several, and which is "primary" is only the
+			 * lowest position. */
+			out["usernames"] = Json::array();
+			try {
+				for (const auto &r : execSync(
+					     db,
+					     "SELECT username, is_collectible "
+					     "FROM telegram_user_usernames "
+					     "WHERE user_id = ? AND kind = 'active' "
+					     "ORDER BY position",
+					     { bind })) {
+					Json j;
+					j["username"] = colStr(r, "username");
+					if (colI64(r, "is_collectible"))
+						j["is_collectible"] = true;
+					out["usernames"].push_back(std::move(j));
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("username lookup "
+							   "failed: ") +
+						e.what());
+			}
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_get_user_history ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_get_user_history";
+		t.title = "Get a user's profile change history";
+		t.description =
+			"How a user's profile has changed over time: names, "
+			"usernames, bios, phone numbers and profile photos, "
+			"newest first.\n\n"
+			"The archive records a row when a change is OBSERVED, "
+			"so a timestamp is when the daemon noticed, not "
+			"necessarily when the user made the change, and a "
+			"change made and reverted between observations is "
+			"invisible. The oldest entry of each kind is usually "
+			"the value at first sight rather than a change.\n\n"
+			"Pass `kinds` to fetch only some categories; the "
+			"default is all of them.\n\n"
+			"Not restricted to exposed groups: this describes an "
+			"account, not a conversation.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "user_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Telegram user id (positive)." } } },
+				{ "kinds",
+				  Json{ { "type", "array" },
+					{ "items", Json{ { "type", "string" } } },
+					{ "description",
+					  "Any of: names, usernames, bios, "
+					  "phone_numbers, photos. Default all." } } },
+				{ "limit",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "Entries per category, 1-200, "
+					  "default 50." } } } } },
+			{ "required", Json::array({ "user_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("user_id") ||
+			    !args["user_id"].is_number_integer())
+				throw ToolError("user_id is required and must be "
+						"an integer");
+			const int64_t uid = args["user_id"].get<long long>();
+			const std::string bind = std::to_string(uid);
+			const std::string lim = std::to_string(clampLimit(args));
+
+			/* Which categories were asked for. */
+			bool want[5] = { true, true, true, true, true };
+			static const char *kNames[5] = { "names", "usernames",
+							 "bios", "phone_numbers",
+							 "photos" };
+			if (args.contains("kinds")) {
+				if (!args["kinds"].is_array())
+					throw ToolError("\"kinds\" must be an "
+							"array of strings");
+				for (int i = 0; i < 5; i++)
+					want[i] = false;
+				for (const auto &k : args["kinds"]) {
+					if (!k.is_string())
+						throw ToolError("\"kinds\" must "
+								"contain strings");
+					const std::string v = k.get<std::string>();
+					bool found = false;
+					for (int i = 0; i < 5; i++) {
+						if (v == kNames[i]) {
+							want[i] = true;
+							found = true;
+						}
+					}
+					if (!found)
+						throw ToolError(
+							"unknown kind \"" + v +
+							"\"; expected any of: "
+							"names, usernames, bios, "
+							"phone_numbers, photos");
+				}
+			}
+
+			Json out;
+			out["user_id"] = uid;
+			try {
+				if (want[0]) {
+					out["names"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT first_name, last_name, "
+						     "created_at FROM "
+						     "telegram_user_hist_name "
+						     "WHERE user_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["names"].push_back(Json{
+							{ "first_name",
+							  colStr(r, "first_name") },
+							{ "last_name",
+							  colStr(r, "last_name") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[1]) {
+					out["usernames"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT username, action, kind, "
+						     "is_collectible, created_at FROM "
+						     "telegram_user_hist_usernames_events "
+						     "WHERE user_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						Json j;
+						j["username"] = colStr(r, "username");
+						/* added / removed / activated
+						 * / deactivated -- the event,
+						 * not just the value. */
+						j["action"] = colStr(r, "action");
+						j["kind"] = colStr(r, "kind");
+						if (colI64(r, "is_collectible"))
+							j["is_collectible"] = true;
+						j["observed_at"] =
+							colStr(r, "created_at");
+						out["usernames"].push_back(
+							std::move(j));
+					}
+				}
+				if (want[2]) {
+					out["bios"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT bio, created_at FROM "
+						     "telegram_user_hist_bio "
+						     "WHERE user_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["bios"].push_back(Json{
+							{ "bio", colStr(r, "bio") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[3]) {
+					out["phone_numbers"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT phone_number, created_at "
+						     "FROM telegram_user_hist_phone_num "
+						     "WHERE user_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						out["phone_numbers"].push_back(Json{
+							{ "phone_number",
+							  colStr(r, "phone_number") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+				if (want[4]) {
+					out["photos"] = Json::array();
+					for (const auto &r : execSync(
+						     db,
+						     "SELECT file_id, created_at FROM "
+						     "telegram_user_hist_profile_photo "
+						     "WHERE user_id = ? "
+						     "ORDER BY id DESC LIMIT " + lim,
+						     { bind })) {
+						/* file_id is internal; the
+						 * bytes are not reachable via
+						 * MCP. It marks WHEN the photo
+						 * changed and which distinct
+						 * image it became. */
+						out["photos"].push_back(Json{
+							{ "file_id",
+							  colI64(r, "file_id") },
+							{ "observed_at",
+							  colStr(r, "created_at") } });
+					}
+				}
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
+			return out;
+		};
+		registry.add(std::move(t));
+	}
+
 	/* ---- telegram_get_users ---- */
 	{
 		gwmcp::Tool t;
