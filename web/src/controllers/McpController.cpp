@@ -261,9 +261,31 @@ McpController::post(drogon::HttpRequestPtr req)
 
 	/* ---- dispatch ---- */
 	const std::string body(req->getBody());
-	if (body.empty())
-		co_return rpcError(gwmcp::rpc::INVALID_REQUEST, "Empty body",
-				   drogon::k400BadRequest);
+	if (body.empty()) {
+		/*
+		 * An empty POST is a reachability probe, not an error worth a
+		 * 4xx -- and the status matters more than it looks.
+		 *
+		 * Claude's connector sends exactly this before doing anything
+		 * else. Answering 400 made it conclude the endpoint needed
+		 * authorization it had not satisfied, so it fell into OAuth
+		 * discovery, found no metadata endpoints, and reported that it
+		 * could not register with a "sign-in service" that does not
+		 * exist -- while holding a valid token the whole time.
+		 *
+		 * 200 with a JSON-RPC error object is the conventional
+		 * JSON-RPC-over-HTTP answer anyway: the transport succeeded,
+		 * the payload was unusable. It is also already what a
+		 * malformed-but-non-empty body gets, since handleRaw() turns a
+		 * parse failure into a -32700 returned at 200. Treating empty
+		 * as a fourth kind of bad payload just makes the two agree.
+		 */
+		co_return jsonBody(
+			gwmcp::makeError(nlohmann::json(nullptr),
+					 gwmcp::rpc::PARSE_ERROR,
+					 "Empty request body")
+				.dump());
+	}
 
 	McpRuntime &rt = runtime();
 	const gwmcp::Server *server = rt.server.get();

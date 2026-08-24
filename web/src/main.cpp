@@ -241,6 +241,23 @@ int main(int argc, char **argv)
 					req->getHeader("user-agent").c_str());
 				fflush(stderr);
 			});
+		/* The response side: a status code is usually the thing that
+		 * explains a client's behaviour, and the request alone never
+		 * shows it. */
+		drogon::app().registerPostHandlingAdvice(
+			[](const drogon::HttpRequestPtr &req,
+			   const drogon::HttpResponsePtr &resp) {
+				const std::string path(req->path());
+				if (path.rfind("/mcp", 0) != 0 &&
+				    path.rfind("/.well-known", 0) != 0 &&
+				    path != "/register")
+					return;
+				fprintf(stderr, "mcp-trace   -> %d %s %s\n",
+					(int)resp->getStatusCode(),
+					req->methodString(), path.c_str());
+				fflush(stderr);
+			});
+
 		fprintf(stderr, "MCP request tracing enabled (MCP_LOG_REQUESTS=1)\n");
 		fflush(stderr);
 	}
