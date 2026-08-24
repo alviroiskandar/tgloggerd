@@ -96,7 +96,7 @@ private:
 	/* The replied-to message rendered as a reply embed (author + snippet). */
 	struct ReplyInfo {
 		Sender      sender;         /* replied message's author */
-		std::string snippet;        /* first line of the replied text */
+		std::string snippet;        /* replied text: <=5 lines, escaped */
 		int64_t     chat_id = 0;    /* replied message (chat_id, message_id), */
 		int64_t     message_id = 0; /* to resolve its Discord jump link */
 		bool        ok = false;

@@ -48,13 +48,6 @@ std::string utf8_truncate(const std::string &s, size_t max_bytes)
 	return s.substr(0, cut);
 }
 
-/* First line of `s`, trimmed to at most n bytes (UTF-8 safe). */
-std::string first_line(const std::string &s, size_t n)
-{
-	std::string t = s.substr(0, s.find('\n'));
-	return utf8_truncate(t, n);
-}
-
 /* Discord caps a webhook username at 80 characters. */
 constexpr size_t kMaxUsername = 80;
 
@@ -237,6 +230,53 @@ std::string truncate_escaped(const std::string &s, size_t max_bytes)
 	if (bs & 1)
 		t.pop_back();
 	return t;
+}
+
+/*
+ * A reply embed's description is capped by Discord at 4096 characters; stay
+ * comfortably under that, and show at most this many lines of the replied
+ * message.
+ */
+constexpr size_t kReplyMaxChars = 4000;
+constexpr size_t kReplyMaxLines = 5;
+
+/*
+ * The replied message rendered for a reply embed: at most kReplyMaxLines lines,
+ * discord-escaped, and no longer than kReplyMaxChars, with a literal "[...]"
+ * appended whenever anything was dropped -- lines beyond the fifth, or text
+ * beyond the character budget. The budget always reserves room for the "[...]",
+ * so the marker itself is never cut. Returns the finished (escaped) description;
+ * the caller only JSON-encodes it.
+ */
+std::string reply_preview(const std::string &text)
+{
+	static constexpr char kEllipsis[] = "[...]";
+	constexpr size_t kEllipsisLen = sizeof(kEllipsis) - 1;
+
+	/* Keep the first kReplyMaxLines lines; remember whether more follow. */
+	size_t end = text.size();
+	bool more_lines = false;
+	size_t nl = 0;
+	for (size_t i = 0; i < text.size(); i++) {
+		if (text[i] != '\n')
+			continue;
+		if (++nl == kReplyMaxLines) {
+			end = i; /* cut just before the kReplyMaxLines-th '\n' */
+			more_lines = i + 1 < text.size();
+			break;
+		}
+	}
+
+	std::string esc = discord_escape(text.substr(0, end));
+
+	bool len_cut = false;
+	if (esc.size() > kReplyMaxChars - kEllipsisLen) {
+		esc = truncate_escaped(esc, kReplyMaxChars - kEllipsisLen);
+		len_cut = true;
+	}
+	if (more_lines || len_cut)
+		esc += kEllipsis;
+	return esc;
 }
 
 /* Whether a stored file should render as an inline Discord image embed. */
@@ -442,7 +482,7 @@ DiscordForwarder::resolve_reply(const ForwardMessage &fm)
 
 	ri.sender = resolve_sender(qchat, q->sender_id, q->sender_chat_id,
 				   q->sender_name);
-	ri.snippet = first_line(q->text, 100);
+	ri.snippet = reply_preview(q->text);
 	ri.chat_id = qchat;
 	ri.message_id = fm.reply_to_msg_id;
 	ri.ok = true;
@@ -462,9 +502,10 @@ std::string DiscordForwarder::reply_embed(const ReplyInfo &ri,
 	if (!ri.sender.avatar_url.empty())
 		e += ",\"icon_url\":\"" + json_escape(ri.sender.avatar_url) + "\"";
 	e += "}";
+	/* ri.snippet is already discord-escaped and length-bounded by
+	 * reply_preview(); here it only needs JSON encoding. */
 	if (!ri.snippet.empty())
-		e += ",\"description\":\"" +
-		     json_escape(discord_escape(ri.snippet)) + "\"";
+		e += ",\"description\":\"" + json_escape(ri.snippet) + "\"";
 	e += "}]";
 	return e;
 }

@@ -104,6 +104,30 @@ it refers to a different message, and its own identifier is not carried here. An
 edit or delete of a forwarded message changes only the Discord message's content
 and leaves the original stamped author name in place.
 
+# Reply previews
+
+When a forwarded Telegram message is a reply, the replied message is shown above
+it as a small Discord embed (a coloured bar, the replied author, and a snippet of
+the text). The snippet is built to be a useful glance without ever overrunning
+Discord's limits:
+
+- **Up to 5 lines** of the replied message are shown. If it has more, the first
+  five are kept and a literal **`[...]`** is appended so it is clear the message
+  continues.
+- The snippet is also bounded to stay under Discord's **4096-character** embed
+  description cap (the code uses a 4000-character budget for margin). If the text
+  — even within five lines, or as one very long line — would exceed that, it is
+  truncated to fit and **`[...]`** is appended. The budget always reserves room
+  for the `[...]`, so the marker itself is never cut off.
+- Truncation is UTF-8-safe (never splits a multi-byte character) and
+  escape-safe (never ends on a dangling markdown-escape backslash).
+
+So a short reply shows in full with no marker; a long or many-line reply shows
+its opening and ends with `[...]`. The snippet is plain escaped text — Telegram
+formatting (bold, links, …) is not re-rendered in the preview, because the
+replied message is read back from the archive, which stores no parsed
+formatting for it.
+
 ## A more compact form, if it is ever wanted
 
 The current form favours readability and eyeball-decodability: two separately
