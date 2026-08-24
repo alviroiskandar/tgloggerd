@@ -122,6 +122,8 @@ add_executable(tgloggerd_web
 	src/dao/Search.hpp
 	src/dao/TelegramDiscord.cpp
 	src/dao/TelegramDiscord.hpp
+	src/mcp/FileUrl.cpp
+	src/mcp/FileUrl.hpp
 	src/mcp/Filter.cpp
 	src/mcp/Filter.hpp
 	src/mcp/Token.cpp

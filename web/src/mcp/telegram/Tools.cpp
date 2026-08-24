@@ -4,6 +4,7 @@
  */
 #include "mcp/telegram/Tools.hpp"
 
+#include "mcp/FileUrl.hpp"
 #include "mcp/Filter.hpp"
 
 #include <gwmcp/Errors.hpp>
@@ -964,12 +965,20 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 					out["birthday"] = std::move(b);
 				}
 
-				/* An internal files.id, not a URL: media is not
-				 * reachable through MCP. Included so a photo
-				 * change is at least identifiable. */
-				if (colI64(r, "profile_photo_file_id"))
-					out["profile_photo_file_id"] =
-						colI64(r, "profile_photo_file_id");
+				const int64_t photo =
+					colI64(r, "profile_photo_file_id");
+				if (photo) {
+					out["profile_photo_file_id"] = photo;
+					/* The fetchable link. Omitted rather
+					 * than emitted relative when no public
+					 * base URL is configured, since a
+					 * relative path is useless to a client
+					 * that is not a browser on this site. */
+					const std::string u =
+						fileurl::forFile((uint64_t)photo);
+					if (!u.empty())
+						out["profile_photo_url"] = u;
+				}
 			} catch (const ToolError &) {
 				throw;
 			} catch (const std::exception &e) {
@@ -1172,16 +1181,18 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 						     "WHERE user_id = ? "
 						     "ORDER BY id DESC LIMIT " + lim,
 						     { bind })) {
-						/* file_id is internal; the
-						 * bytes are not reachable via
-						 * MCP. It marks WHEN the photo
-						 * changed and which distinct
-						 * image it became. */
-						out["photos"].push_back(Json{
-							{ "file_id",
-							  colI64(r, "file_id") },
-							{ "observed_at",
-							  colStr(r, "created_at") } });
+						const int64_t fid =
+							colI64(r, "file_id");
+						Json j;
+						j["file_id"] = fid;
+						const std::string u =
+							fileurl::forFile((uint64_t)fid);
+						if (!u.empty())
+							j["url"] = u;
+						j["observed_at"] =
+							colStr(r, "created_at");
+						out["photos"].push_back(
+							std::move(j));
 					}
 				}
 			} catch (const std::exception &e) {

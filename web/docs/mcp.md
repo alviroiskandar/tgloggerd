@@ -192,6 +192,22 @@ rather than by a user.
 `telegram_user_extra_info` is sparse — 56k rows for 298k users — so "this user has no bio"
 and "we never learned one" are different answers, and blank strings would conflate them.
 
+Both attach a **fetchable URL** alongside a profile photo's `file_id`:
+`profile_photo_url` on the current photo, `url` on each history entry. These are the same
+`/files/<token>` links the web UI uses — no session needed, so an MCP client can retrieve
+the image directly.
+
+Be aware what that means: **a file URL is a bearer credential for that one file**, minted
+under `WEB_APP_KEY` and independent of the MCP token that produced it. Revoking an MCP
+token does not invalidate links already handed out; only rotating `WEB_APP_KEY` does, and
+that signs every web session out too. The links are unguessable and scoped to a single
+file, but they are shareable once emitted.
+
+The base URL comes from `WEB_PUBLIC_URL`, falling back to `TG_DISCORD_PUBLIC_URL` since the
+daemon already uses that to build these very links. With neither set the URL field is
+omitted rather than emitted relative, because a relative path is useless to a client that
+is not a browser on this site.
+
 `telegram_get_user_history` timestamps are **when a change was observed**, not when it was
 made: the daemon polls, so a value changed and reverted between observations leaves no
 trace, and the oldest entry of each kind is usually the value at first sight rather than a
