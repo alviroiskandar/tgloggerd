@@ -180,6 +180,22 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_get_user_history` | How a profile changed over time: names, usernames, bios, phones, photos. |
 | `telegram_get_group` | One group's full record: usernames, photo, counts, participant count, message span. |
 | `telegram_get_group_history` | Titles, descriptions, usernames, photos and admin changes over time. |
+| `telegram_get_message_history` | One message's earlier versions and its deletion record. |
+
+Every message result carries **`is_edited` and `is_deleted`**, always present rather than
+inferred from a missing field, plus `history_available_via` pointing at the tool that can
+say what changed. The text in a listing is only the *latest* version, which matters most
+when it is being quoted.
+
+**Edited and recoverable are not the same thing.** Telegram marks a message edited, but an
+earlier version exists only if the daemon saw the edit happen — archive-wide there are
+8,547 edited messages in one group against 1,378 edit snapshots in total. When a message is
+flagged edited with no captured version, `telegram_get_message_history` returns
+`previous_version_count: 0` **and a `note` saying why**, because silence there would read
+as "nothing changed" — the opposite of the truth.
+
+Deletion does not erase content: a deleted message keeps its text, and
+`deleted_observed_at` records when the deletion was *noticed*.
 
 `telegram_list_group_admins` reports a **snapshot**: Telegram does not push admin changes to
 a regular account, so the list is refreshed by polling and can lag a very recent promotion.

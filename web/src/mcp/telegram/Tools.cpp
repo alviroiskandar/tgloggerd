@@ -166,8 +166,25 @@ Json messageRow(const drogon::orm::Row &r)
 	j["is_channel_post"] = colI64(r, "is_channel_post") != 0;
 	if (!r["reply_to_msg_id"].isNull())
 		j["reply_to_message_id"] = colI64(r, "reply_to_msg_id");
-	if (!r["deleted_at"].isNull())
+	/*
+	 * Always present, never inferred from absence. A reader must be able to
+	 * tell "not edited" from "the field was omitted", and a message whose
+	 * text has since changed or vanished is a different thing from one that
+	 * has not -- which matters most when the content is being quoted.
+	 */
+	const bool edited = colI64(r, "edit_date") != 0;
+	const bool deleted = !r["deleted_at"].isNull();
+	j["is_edited"] = edited;
+	j["is_deleted"] = deleted;
+	if (edited)
+		j["edit_date"] = colI64(r, "edit_date");
+	if (deleted)
 		j["deleted_at"] = colStr(r, "deleted_at");
+	if (edited || deleted) {
+		/* Point at the tool that can say what changed, since the text
+		 * above is only the latest version. */
+		j["history_available_via"] = "telegram_get_message_history";
+	}
 
 	if (!r["file_id"].isNull()) {
 		Json md;
@@ -212,6 +229,7 @@ constexpr const char *MSG_SELECT =
 	"SELECT m.message_id, m.chat_id, m.sender_user_id, m.date, "
 	"FROM_UNIXTIME(m.date) AS sent_at, m.content_type, m.text, "
 	"m.is_forwarded, m.is_channel_post, m.reply_to_msg_id, m.deleted_at, "
+	"m.edit_date, "
 	"g.title AS group_title, "
 	"TRIM(CONCAT(COALESCE(su.first_name,''), ' ', "
 	"            COALESCE(su.last_name,''))) AS sender_name, "
@@ -1288,6 +1306,218 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 			return runMessageQuery(db, where, binds,
 					       order, orderBind, clampLimit(args),
 					       clampOffset(args), total);
+		};
+		registry.add(std::move(t));
+	}
+
+	/* ---- telegram_get_message_history ---- */
+	{
+		gwmcp::Tool t;
+		t.name = "telegram_get_message_history";
+		t.title = "Get one message's edit and deletion history";
+		t.description =
+			"What a single message used to say, and whether it was "
+			"deleted. Returns the current version, every earlier "
+			"version the archive captured (oldest first), and the "
+			"deletion record if there is one.\n\n"
+			"IMPORTANT -- edited and recoverable are not the same. "
+			"Telegram marks a message as edited, but an earlier "
+			"version exists only if the daemon was running and saw "
+			"the edit happen. A message edited before it was first "
+			"archived, or while the daemon was down, is flagged "
+			"is_edited with no previous version to show. The "
+			"response says so explicitly rather than looking "
+			"like nothing changed: check `previous_version_count` "
+			"against `is_edited`.\n\n"
+			"Deleted messages keep their content here: a deletion "
+			"records WHEN it was observed, it does not erase what "
+			"was said.\n\n"
+			"Identify the message by group_id plus message_id, as "
+			"returned by the message tools. Only readable groups.";
+		t.inputSchema = Json{
+			{ "type", "object" },
+			{ "properties",
+			  Json{ { "group_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The group's id (negative)." } } },
+				{ "message_id",
+				  Json{ { "type", "integer" },
+					{ "description",
+					  "The message's id within that "
+					  "group." } } } } },
+			{ "required",
+			  Json::array({ "group_id", "message_id" }) },
+		};
+		t.handler = [db](const Json &args) {
+			if (!args.contains("group_id") ||
+			    !args["group_id"].is_number_integer())
+				throw ToolError("group_id is required and must "
+						"be an integer");
+			if (!args.contains("message_id") ||
+			    !args["message_id"].is_number_integer())
+				throw ToolError("message_id is required and must "
+						"be an integer");
+
+			const int64_t gid = args["group_id"].get<long long>();
+			const int64_t mid = args["message_id"].get<long long>();
+
+			/*
+			 * Resolve the caller's (group, message) pair to the
+			 * internal row id the edit snapshots reference, and
+			 * apply the gate in the same statement. The pair is
+			 * covered by uq_group_messages_chat_msg, so this is a
+			 * single index lookup.
+			 */
+			int64_t rowId = 0;
+			Json cur;
+			try {
+				auto rows = execSync(
+					db,
+					"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+					"m.id, m.content_type, m.text, m.date, "
+					"m.edit_date, m.deleted_at, "
+					"m.sender_user_id, "
+					"FROM_UNIXTIME(m.date) AS sent_at, "
+					"f.id AS file_id, f.file_type, "
+					"f.file_size, f.on_disk "
+					"FROM telegram_group_messages m "
+					"LEFT JOIN telegram_files f "
+					"  ON f.id = m.file_id "
+					"WHERE m.chat_id = ? AND m.message_id = ? "
+					"  AND m.chat_id IN (SELECT group_id "
+					"                    FROM telegram_public_groups)",
+					{ std::to_string(gid),
+					  std::to_string(mid) });
+				if (rows.empty())
+					throw ToolError(
+						"no readable message " +
+						std::to_string(mid) +
+						" in group " +
+						std::to_string(gid));
+
+				const auto &r = rows[0];
+				rowId = colI64(r, "id");
+				cur["content_type"] = colStr(r, "content_type");
+				cur["text"] = colStr(r, "text");
+				cur["sent_at"] = colStr(r, "sent_at");
+				cur["date"] = colI64(r, "date");
+				if (!r["file_id"].isNull()) {
+					Json md;
+					const int64_t fid = colI64(r, "file_id");
+					md["file_id"] = fid;
+					md["type"] = colStr(r, "file_type");
+					md["size"] = colI64(r, "file_size");
+					const bool stored =
+						colI64(r, "on_disk") != 0;
+					md["stored"] = stored;
+					if (stored) {
+						const std::string u =
+							fileurl::forFile(
+								(uint64_t)fid);
+						if (!u.empty())
+							md["url"] = u;
+					}
+					cur["media"] = std::move(md);
+				}
+
+				Json out;
+				out["group_id"] = gid;
+				out["message_id"] = mid;
+				out["sender_user_id"] =
+					colI64(r, "sender_user_id");
+
+				const bool edited = colI64(r, "edit_date") != 0;
+				const bool deleted = !r["deleted_at"].isNull();
+				out["is_edited"] = edited;
+				out["is_deleted"] = deleted;
+				if (edited)
+					out["last_edit_date"] =
+						colI64(r, "edit_date");
+				if (deleted) {
+					/* When the deletion was NOTICED. The
+					 * content is still here; deleting on
+					 * Telegram does not unsay it. */
+					out["deleted_observed_at"] =
+						colStr(r, "deleted_at");
+				}
+				out["current"] = std::move(cur);
+
+				/*
+				 * Pre-edit snapshots: each row is what the
+				 * message said BEFORE that edit, so oldest
+				 * first reads as the progression, ending at
+				 * `current`.
+				 */
+				out["previous_versions"] = Json::array();
+				for (const auto &e : execSync(
+					     db,
+					     "SELECT e.content_type, e.text, "
+					     "e.edit_date, e.created_at, "
+					     "f.id AS file_id, f.file_type, "
+					     "f.file_size, f.on_disk "
+					     "FROM telegram_group_message_edits e "
+					     "LEFT JOIN telegram_files f "
+					     "  ON f.id = e.file_id "
+					     "WHERE e.group_message_id = ? "
+					     "ORDER BY e.id ASC",
+					     { std::to_string(rowId) })) {
+					Json v;
+					v["content_type"] =
+						colStr(e, "content_type");
+					v["text"] = colStr(e, "text");
+					if (colI64(e, "edit_date"))
+						v["edit_date"] =
+							colI64(e, "edit_date");
+					v["observed_at"] = colStr(e, "created_at");
+					if (!e["file_id"].isNull()) {
+						Json md;
+						const int64_t fid =
+							colI64(e, "file_id");
+						md["file_id"] = fid;
+						md["type"] = colStr(e, "file_type");
+						md["size"] = colI64(e, "file_size");
+						const bool st =
+							colI64(e, "on_disk") != 0;
+						md["stored"] = st;
+						if (st) {
+							const std::string u =
+								fileurl::forFile(
+									(uint64_t)fid);
+							if (!u.empty())
+								md["url"] = u;
+						}
+						v["media"] = std::move(md);
+					}
+					out["previous_versions"].push_back(
+						std::move(v));
+				}
+
+				const size_t n = out["previous_versions"].size();
+				out["previous_version_count"] = n;
+
+				/*
+				 * Say plainly when the archive knows a message
+				 * changed but cannot show how. Silence here
+				 * would read as "nothing was edited", which is
+				 * the opposite of the truth.
+				 */
+				if (edited && n == 0) {
+					out["note"] =
+						"This message is marked edited, "
+						"but no earlier version was "
+						"captured -- the edit happened "
+						"before the message was archived "
+						"or while the logger was not "
+						"running.";
+				}
+				return out;
+			} catch (const ToolError &) {
+				throw;
+			} catch (const std::exception &e) {
+				throw ToolError(std::string("query failed: ") +
+						e.what());
+			}
 		};
 		registry.add(std::move(t));
 	}
