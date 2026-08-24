@@ -7,6 +7,7 @@
 
 #include <deque>
 #include <mutex>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -36,6 +37,14 @@ struct Config {
  * Connections are created lazily up to Config::pool_size. Callers borrow
  * a connection with acquire() and hand it back with release(); acquire()
  * blocks when the pool is exhausted until a connection is returned.
+ *
+ * The pool heals itself when the server drops a connection out from under it
+ * (a restart, an idle timeout, a network blip). A connection that has sat idle
+ * in the pool is pinged before it is handed back out, and a dead one is thrown
+ * away and replaced rather than returned to a caller; a connection that dies
+ * while checked out is handed to discard() instead of release(). Without this,
+ * one dead connection would circulate forever, failing every query drawn from
+ * it until the whole process was restarted.
  */
 class ConnectionPool {
 public:
@@ -45,21 +54,39 @@ public:
 	ConnectionPool(const ConnectionPool &) = delete;
 	ConnectionPool &operator=(const ConnectionPool &) = delete;
 
-	/* Borrow a connection, blocking until one is available. */
+	/*
+	 * Borrow a connection, blocking until one is available. The returned
+	 * connection has been verified live (see the class comment), so a
+	 * caller never receives one the server has already closed.
+	 */
 	std::unique_ptr<sql::Connection> acquire(void);
 
-	/* Return a previously acquired connection to the pool. */
+	/* Return a healthy connection to the pool for reuse. */
 	void release(std::unique_ptr<sql::Connection> conn);
+
+	/*
+	 * Drop a connection instead of returning it: for one that failed with a
+	 * connection-loss error while checked out. It is closed rather than
+	 * pooled, and the pool's count is decremented so acquire() opens a fresh
+	 * one in its place.
+	 */
+	void discard(std::unique_ptr<sql::Connection> conn);
 
 	const Config &config(void) const { return cfg_; }
 
 private:
 	std::unique_ptr<sql::Connection> create(void);
 
+	/* A pooled connection plus the moment it was last returned idle. */
+	struct Idle {
+		std::unique_ptr<sql::Connection> conn;
+		std::chrono::steady_clock::time_point since;
+	};
+
 	Config					cfg_;
 	std::mutex				mtx_;
 	std::condition_variable			cv_;
-	std::deque<std::unique_ptr<sql::Connection>> idle_;
+	std::deque<Idle>			idle_;
 	size_t					created_ = 0;
 
 	/*
