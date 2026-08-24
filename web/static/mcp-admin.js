@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web -- MCP admin pages. One file serving both /mcp-admin/groups
  * (the exposure allowlist, with a select2 group picker) and /mcp-admin/tokens

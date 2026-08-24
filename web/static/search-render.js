@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web -- client renderer for /v1/search/<entity> result rows. It
  * mirrors the SSR markup in views/templates/search_page.html, driven by the

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web — chat-history page enhancement (jQuery). The page is
  * functional without it: it lands on the newest message, plays animated

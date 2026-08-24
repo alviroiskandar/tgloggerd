@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-2.0-only
+# SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Back-fill telegram_users.msg_count and telegram_groups.msg_count from the recorded messages,
 # so the counters match what the daemon would have accumulated by counting one

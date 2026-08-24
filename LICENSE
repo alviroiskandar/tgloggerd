@@ -1,0 +1,147 @@
+tgloggerd licensing
+===================
+
+Copyright (C) 2026 Ammar Faizi <ammarfaizi2@gnuweeb.org>
+Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
+
+tgloggerd is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 2 of the License, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    COPYING          the GNU General Public License, version 2
+    COPYING.GPLv3    the GNU General Public License, version 3
+
+Both are verbatim copies of the Free Software Foundation's own documents.
+This file is the project's own summary; where the two disagree, the license
+texts govern.
+
+The grant above covers the whole work.  Most source files also carry a
+machine-readable `SPDX-License-Identifier: GPL-2.0-or-later` tag, which is
+the per-file form of the same grant and travels with a file lifted out of
+the tree.  The tag is not yet universal: the SQL migrations, the HTML
+templates, the build files (CMakeLists.txt, Dockerfile, docker-compose.yml,
+run.sh) and the documentation carry no tag and are covered only by this
+file.  That is a labelling gap, not a licensing one, and tagging them is
+worth doing.
+
+
+Why "or later" is not decoration
+--------------------------------
+
+Version 3 is not hypothetical here.  The daemon links OpenSSL 3.x, which is
+Apache-2.0, and Apache-2.0 cannot be combined with version 2 alone: its
+patent-termination and indemnification clauses are "further restrictions"
+of the kind GPLv2 section 6 forbids.  Version 3 was written to accommodate
+exactly those clauses.
+
+The mechanism is an option, not a relicense.  Per GPLv2 section 9 the choice
+belongs to whoever exercises the rights, not to us: these files stay
+GPL-2.0-or-later and their SPDX tags never become GPL-3.0.  What "or later"
+does is make a compliant path exist where under GPL-2.0-only none did.
+
+Three consequences follow, and each is easier to state now than to discover
+later.
+
+  - It was never the copyright holders who were blocked.  Section 6 binds
+    licensees; an owner conveying their own work needs no license from
+    themselves.  What GPL-2.0-only did was hand everyone else a work they
+    could build but could not lawfully redistribute once linked.  The
+    relicense fixes that for them, not for us.
+
+  - Anyone who does convey a linked binary is choosing version 3 in
+    practice, because the version 2 branch of the option hits the same wall
+    as before.  The source tree is GPL-2.0-or-later; a conveyed binary that
+    links OpenSSL is effectively GPL-3.0-or-later.  Both are true at once.
+
+  - The option only works forwards.  Copies already published under
+    GPL-2.0-only -- including everything on upstream/master and the existing
+    release tags -- keep the terms they were given.
+
+Two things this does not fix.  Nothing in the build pins OpenSSL >= 3.0
+(`find_package(OpenSSL ...)` at CMakeLists.txt, src/gwdiscord/CMakeLists.txt
+and web/cmake/FindMySQL.cmake all take any version), and OpenSSL 1.1.1 and
+earlier carry the old dual OpenSSL/SSLeay license, whose advertising clause
+is incompatible with version 2 and version 3 alike.  And "or later" leaves
+the version 2 arm unusable for linked binaries, which an explicit OpenSSL
+linking exception would restore; adding one needs both copyright holders,
+which will never be easier than it is now.
+
+
+Third-party components
+----------------------
+
+None of the following is relicensed by this project; each keeps its own
+terms, and a binary distribution must carry them.
+
+    TDLib (submodules/td)                BSL-1.0
+    MySQL Connector/C++                  GPL-2.0 WITH Universal-FOSS-Exception-1.0
+    libmysqlclient (via the above)       GPL-2.0 WITH Universal-FOSS-Exception-1.0
+    Drogon (submodules/drogon)           MIT
+    trantor (within drogon)              BSD-3-Clause
+    JsonCpp (via drogon)                 MIT
+    MariaDB Connector/C                  LGPL-2.1-or-later
+    OpenSSL 3.x                          Apache-2.0
+    libsodium                            ISC
+    libcurl                              curl (MIT-like)
+    zlib                                 Zlib
+    Boost (Beast/Asio, header-only)      BSL-1.0
+    libstdc++                            GPL-3.0-or-later WITH GCC-exception-3.1
+    nlohmann/json (web/third_party)      MIT
+    inja (web/third_party)               MIT
+    jQuery, flatpickr, lottie, select2   MIT (texts in web/static/*.LICENSE)
+
+libcurl pulls in the distribution's TLS, resolver and authentication stack
+(GnuTLS, nettle, GMP, libidn2, libpsl, libssh, Kerberos and others).  Those
+are unmodified operating-system packages under their own terms and are not
+enumerated here; a binary distribution that bundles them must carry theirs.
+
+One entry is load-bearing and would be hard to reconstruct.  MySQL
+Connector/C++ and libmysqlclient are GPL-2.0-**only** by Oracle's explicit
+election ("Oracle elects to use only the General Public License version 2
+(GPLv2) at this time", submodules/mysql-connector-cpp/LICENSE.txt), and
+GPLv2-only code cannot be combined with GPLv3.  What makes the combination
+lawful is Oracle's Universal FOSS Exception v1.0, clause (iii), which
+permits linking with other FSF-free software "after enabling
+interoperability using the Interfaces of one or both, and distributing the
+resulting combination under different licenses for the respective portions
+thereof."
+
+That clause applies here because src/mysql/ uses the connector through its
+public headers only and links it dynamically.  Two conditions come with it.
+Copying connector implementation code into first-party files, or vendoring
+it statically, would take the exception away.  And the exception defines the
+other side as software distributed *with complete corresponding source*, so
+the version 3 election above holds only while source accompanies any binary
+-- a precondition that did not exist under GPL-2.0-only, where GPLv2
+section 2(b) propagated natively and the exception was never needed.
+
+
+What is and is not distributed
+------------------------------
+
+Today this project distributes source only, through its git remotes.  The
+`tgloggerd:latest` container image is a toolchain: it carries the compiler
+and the runtime libraries, and none of this project's code.  The source tree
+and build outputs are bind-mounted from the host at run time, so conveying
+that image conveys no part of the Program and triggers no obligation under
+this license.  Publishing a built binary or an image that contains one is a
+different act, and the paragraphs above are what govern it.
+
+
+Separable sub-projects
+----------------------
+
+src/gwdiscord and src/gwmcp are self-contained libraries that happen to live
+in this repository.  Both were GPL-2.0-or-later before the rest of the tree
+was, both name a single copyright holder rather than two, and each carries
+its own copies of the license texts so that lifting the directory out takes
+its terms with it.

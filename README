@@ -159,3 +159,25 @@ TDLib ships very large headers that noticeably slow tgloggerd's
 compilation, so the code that touches TDLib is kept to a minimum. All
 direct TDLib usage lives in src/tgloggerd/TDLib.cpp, which exposes a
 small wrapper (tgloggerd::TDLib) through TDLib.hpp.
+
+# License
+
+tgloggerd is free software under the GNU General Public License, either
+version 2 or (at your option) any later version. Both license texts ship
+with the tree: COPYING is version 2, COPYING.GPLv3 is version 3. Source
+files carry an SPDX-License-Identifier: GPL-2.0-or-later tag; the
+migrations, templates and build files do not yet, and are covered by
+LICENSE, which also records the two copyright holders and the terms of
+the third-party code the build links.
+
+The "or later" is doing real work rather than following convention. The
+daemon links OpenSSL 3.x, which is Apache-2.0, and Apache-2.0 cannot be
+combined with version 2 alone -- its patent-termination and
+indemnification clauses are the "further restrictions" GPLv2 section 6
+forbids. Version 3 accommodates them, so a recipient who takes the work
+under version 3 has a combination that is consistent; under
+GPL-2.0-only no such path existed. The choice is the recipient's, per
+GPLv2 section 9, so in practice the source tree is GPL-2.0-or-later
+while any shipped binary that links OpenSSL is GPL-3.0-or-later. See
+LICENSE for what that implies, including the one third-party exception
+the arrangement now depends on, and two things it does not fix.

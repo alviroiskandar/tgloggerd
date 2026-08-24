@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web -- Discord -> Telegram routes admin page. Wires the select2
  * chat picker (AJAX to /platform-fwd/discord-telegram/chats), the add/edit form (POST /platform-fwd/discord-telegram/save)

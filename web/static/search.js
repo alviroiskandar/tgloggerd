@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web -- advanced-search UI for the listing pages (/users, /groups,
  * ...). Progressive enhancement over the server-rendered first page: a

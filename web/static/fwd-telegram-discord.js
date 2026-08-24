@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * tgloggerd web -- Discord webhook integrations admin page. Wires the select2
  * chat picker (AJAX to /platform-fwd/telegram-discord/chats), the add/edit form (POST

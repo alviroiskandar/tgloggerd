@@ -77,7 +77,7 @@ set(BUILD_TESTING  OFF CACHE BOOL "" FORCE)
 add_subdirectory(../submodules/drogon ${CMAKE_BINARY_DIR}/drogon EXCLUDE_FROM_ALL)
 
 # libsodium provides argon2id password hashing (crypto_pwhash_str); its ISC
-# license is GPL-2.0 compatible.
+# license is compatible with both arms of GPL-2.0-or-later.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SODIUM REQUIRED libsodium)
 
