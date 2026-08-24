@@ -126,6 +126,28 @@ bool originAllowed(const drogon::HttpRequestPtr &req)
 }
 
 /*
+ * NO WWW-Authenticate HEADER ON 401 -- deliberately, and it must stay that way.
+ *
+ * The MCP authorization spec makes OAuth 2.1 OPTIONAL ("Authorization is
+ * OPTIONAL for MCP implementations"), but it makes the header MEAN something
+ * specific: a 401 carrying WWW-Authenticate is the signal that the server is an
+ * OAuth protected resource, and clients "MUST parse WWW-Authenticate headers
+ * and respond appropriately" -- by fetching
+ * /.well-known/oauth-protected-resource, discovering an authorization server,
+ * and attempting Dynamic Client Registration.
+ *
+ * This server implements none of that. Sending the header therefore advertised
+ * a flow that does not exist: Claude Desktop probed the discovery endpoints,
+ * got 404s, and failed with "Couldn't register with tgloggerd's sign-in
+ * service... add an OAuth Client ID" -- never reaching the token it had been
+ * given. Omitting the header leaves the 401 as a plain "no valid credential",
+ * which is what it is.
+ *
+ * Adding OAuth later means adding the discovery endpoints and the header
+ * together, never the header alone.
+ */
+
+/*
  * The presented credential: header first, then query string.
  *
  * The header is the right way and is preferred whenever present. The query
@@ -191,7 +213,6 @@ McpController::post(drogon::HttpRequestPtr req)
 			"\"Authorization: Bearer <token>\", or append "
 			"?key=<token> if your client cannot set headers.",
 			drogon::k401Unauthorized);
-		resp->addHeader("WWW-Authenticate", "Bearer");
 		co_return resp;
 	}
 
@@ -206,11 +227,9 @@ McpController::post(drogon::HttpRequestPtr req)
 				   drogon::k500InternalServerError);
 	}
 	if (!owner) {
-		auto resp = rpcError(gwmcp::rpc::INVALID_REQUEST,
-				     "Invalid or revoked token",
-				     drogon::k401Unauthorized);
-		resp->addHeader("WWW-Authenticate", "Bearer");
-		co_return resp;
+		co_return rpcError(gwmcp::rpc::INVALID_REQUEST,
+				   "Invalid or revoked token",
+				   drogon::k401Unauthorized);
 	}
 
 	/* Best-effort; a failed stamp must not fail the request. */

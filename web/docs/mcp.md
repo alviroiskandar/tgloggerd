@@ -61,7 +61,32 @@ the audit trail survives; deactivating an account disables its tokens too.
 
 This route carries no session filters. Every other route redirects to `/login` when the
 cookie is missing, which is useless to a machine client — it would receive a 302 where it
-expects JSON. `/mcp` answers **401** with `WWW-Authenticate: Bearer`.
+expects JSON. `/mcp` answers a plain **401**.
+
+### Why the 401 carries no `WWW-Authenticate` header
+
+This looks like a bug and is not. OAuth is **optional** for MCP servers, but the header is
+not decorative: a 401 carrying `WWW-Authenticate` is the signal that the server is an OAuth
+protected resource, and clients *"MUST parse `WWW-Authenticate` headers and respond
+appropriately"* — by fetching `/.well-known/oauth-protected-resource`, discovering an
+authorization server, and attempting Dynamic Client Registration.
+
+This server implements none of that, so sending the header advertised a flow that does not
+exist. Claude Desktop duly probed the discovery endpoints, got 404s, and failed with
+*"Couldn't register with tgloggerd's sign-in service… add an OAuth Client ID"* — never
+reaching the token it had already been given.
+
+**If OAuth is added later, add the discovery endpoints and the header together — never the
+header alone.**
+
+### A caveat on `?key=`
+
+The authorization spec says access tokens **"MUST NOT be included in the URI query
+string."** That rule is about OAuth access tokens and this server is not an OAuth resource
+server, so it is not violating a rule it is subject to — but the practical consequence
+stands: **query-string credentials are outside what MCP standardises, so no client is
+obliged to support them.** Some pass the URL through verbatim and it works; others may
+not. A client that can set a header should always use one.
 
 ## Transport
 
@@ -76,7 +101,7 @@ streaming**.
 | `POST` with a notification | `202`, **empty body** |
 | `GET` | `405` + `Allow: POST` (no SSE stream offered) |
 | `DELETE` | `405` (stateless; no session to end) |
-| Missing/revoked token | `401` + `WWW-Authenticate: Bearer` |
+| Missing/revoked token | `401`, **no** `WWW-Authenticate` (see below) |
 | Unsupported `MCP-Protocol-Version` | `400` |
 | Disallowed `Origin` | `403` |
 
