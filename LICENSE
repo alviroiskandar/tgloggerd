@@ -98,6 +98,7 @@ terms, and a binary distribution must carry them.
     nlohmann/json (web/third_party)      MIT
     inja (web/third_party)               MIT
     jQuery, flatpickr, lottie, select2   MIT (texts in web/static/*.LICENSE)
+    stopwords-iso/stopwords-id           MIT (data in web/src/mcp/Stopwords.hpp)
 
 libcurl pulls in the distribution's TLS, resolver and authentication stack
 (GnuTLS, nettle, GMP, libidn2, libpsl, libssh, Kerberos and others).  Those

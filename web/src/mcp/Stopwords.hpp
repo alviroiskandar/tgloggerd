@@ -1,6 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later AND MIT
 /*
  * Copyright (C) 2026 Alviro Iskandar Setiawan <alviro.iskandar@gnuweeb.org>
+ *
+ * The word data below is not ours. The Indonesian list is
+ * Copyright (c) 2016 Gene Diaz, MIT (stopwords-iso/stopwords-id); the English
+ * list is the NLTK English stopword corpus. MIT asks that its notice travel
+ * with the copy, which is why the tag above is a compound expression: the
+ * surrounding code is GPL-2.0-or-later, the data it wraps is MIT, and both
+ * apply to this file. See LICENSE at the repository root.
  */
 /*
  * GENERATED -- do not edit by hand.
@@ -11,7 +18,7 @@
  * under you silently changes your results.
  *
  * Sources:
- *   https://raw.githubusercontent.com/stopwords-iso/stopwords-id/refs/heads/master/stopwords-id.txt
+ *   https://github.com/stopwords-iso/stopwords-id (MIT, LICENSE in that repo)
  *   https://gist.githubusercontent.com/sebleier/554280 (NLTK English stopwords)
  *
  * 885 unique entries. Sorted, so the lookup below can binary-search.
