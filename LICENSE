@@ -75,6 +75,10 @@ the version 2 arm unusable for linked binaries, which an explicit OpenSSL
 linking exception would restore; adding one needs both copyright holders,
 which will never be easier than it is now.
 
+Those two and everything else this change left open are written up in
+docs/licensing-open-issues.md, with the evidence for each and what closing
+it would take.
+
 
 Third-party components
 ----------------------
