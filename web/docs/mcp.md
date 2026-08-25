@@ -166,6 +166,41 @@ from a model and may be arbitrarily shaped by accident.
 **`match`** is MySQL boolean-mode full text: `+must -exclude "phrase"` all work. Words
 shorter than three characters are ignored by the index (`innodb_ft_min_token_size`).
 
+### Three timestamps, and why that matters
+
+A message carries three, and confusing them silently returns the wrong rows:
+
+| Field | Means | Ask it for |
+|---|---|---|
+| `date` | when it was **sent** | "what was said last week" |
+| `edit_date` | when it was **last edited** | "what changed last week" |
+| `deleted_at` | when the deletion was **observed** | "what was removed last week" |
+
+They are not interchangeable. A message sent in December 2022 and edited in December 2024
+appears in **no** window on `date` — so "everything edited in December 2024", asked with a
+`date` filter, misses it. Measured on this archive that exact query returns 74 messages by
+send time and 75 by edit time; the one it drops is message `681387`, edited 735 days after
+it was sent.
+
+`edited` and `deleted` are the presence forms — `is_not_null` for "it happened",
+`is_null` for "it did not" — where `edited` reads a column that stores `0` rather than
+`NULL` and is compiled accordingly.
+
+Ordering on all three is index-backed (migration `000025`); see
+[Performance notes](#performance-notes).
+
+### Convenience fields
+
+`sender_is_bot` filters on whether the author is a bot, joined from the user table, so bot
+noise can be excluded without first discovering any bot's id:
+
+```json
+{"not": {"field": "sender_is_bot", "op": "=", "value": true}}
+```
+
+`text_length` compares the character count, for skipping megaposts during a scan
+(`{"field": "text_length", "op": "<", "value": 500}`).
+
 ## Tools
 
 | Tool | Notes |
@@ -181,7 +216,8 @@ shorter than three characters are ignored by the index (`innodb_ft_min_token_siz
 | `telegram_get_user_history` | How a profile changed over time: names, usernames, bios, phones, photos. |
 | `telegram_get_group` | One group's full record: usernames, photo, counts, participant count, message span. |
 | `telegram_get_group_history` | Titles, descriptions, usernames, photos and admin changes over time. |
-| `telegram_get_message_history` | One message's earlier versions and its deletion record. |
+| `telegram_get_message_history` | ONE message's earlier versions and its deletion record. `format: "diff"` for unified diffs. |
+| `telegram_get_messages` | **Batch.** Up to 100 messages of a group by id; `include_history` inlines every revision. |
 | `telegram_popular_words` | A group's most-used words, noise filtered. Defaults to the last 30 days. |
 
 Every message result carries **`is_edited` and `is_deleted`**, always present rather than
@@ -218,6 +254,102 @@ A zero from `telegram_count_user_messages` is ambiguous on its own — unknown u
 group, or a group nobody exposed — so when the group is not on the allowlist it adds a
 `note` saying so. That is not a leak: the caller supplied the id, and the answer is about
 the allowlist, not about whether the group exists.
+
+### Scanning cheaply
+
+A wide scan usually wants to know **which** messages match, not what they say — and the
+text is nearly all of the bytes. Four controls, on every tool that returns message rows.
+Each defaults to the old full row, so an existing client sees no change.
+
+| Parameter | Effect |
+|---|---|
+| `fields: [...]` | Return only these keys. `message_id` is always included — it is the handle every follow-up needs, and a row without one is not a smaller answer but an unusable one. |
+| `truncate_text: N` | Cut each text to N bytes (UTF-8 safe). Rows that were cut carry `text_truncated: true`. |
+| `include_media: false` | Drop the media object — the largest per-row cost, rarely wanted while scanning. |
+| `compact: true` | Omit `false`/empty fields, and hoist `group_id`/`group_title` to the envelope when `group_id` was a call parameter. |
+
+Measured on 200 real rows, comparing the default response with
+`fields:["message_id","sender_username","date","edit_date","text"]`, `truncate_text:80`,
+`include_media:false`, `compact:true`:
+
+| Scan | Default | Shaped | |
+|---|---|---|---|
+| long posts (`text_length > 500`) | 507,370 B | 37,860 B | **13.4×** |
+| identity only (no `text` field) | 94,813 B | 14,560 B | **6.5×** |
+| recent 200 (average text 89 chars) | 94,813 B | 24,266 B | 3.9× |
+
+The last row is the honest floor: with an average text of 89 characters, an 80-byte
+truncation has almost nothing to remove. The win scales with how much text you are not
+asking for.
+
+### Paging a live archive
+
+`offset` is wrong for an archive that is still being written: new messages arrive between
+pages, every later offset shifts by however many landed, and rows get silently duplicated
+or skipped. Pass back the `next_cursor` from the previous response instead — it names the
+last row (its sort value and row id), so the next page resumes exactly where the last one
+stopped regardless of what was inserted meanwhile.
+
+- The cursor is **opaque**; pass it back verbatim, never construct one.
+- It is only valid for the ordering that produced it. A cursor minted under
+  `order_by: date` used on an `edit_date` scan is refused with a message saying so, rather
+  than silently returning plausible nonsense.
+- Relevance ordering (the default when a `match` is present) has **no** cursor — a score is
+  not a position. Add an explicit `order_by` to page a text search.
+- A short page is the end, and carries no cursor.
+
+`order: "asc" | "desc"` (default `desc`) and `order_by: date | edit_date | deleted_at`
+control the sort. `limit: 0` with `include_total: true` returns just the count, so a job
+can be sized before it is paged.
+
+### Edits and deletions: the two-call pattern
+
+"List everything edited in the last week, with what changed" used to mean paging the whole
+week by send time, filtering client-side, then one `telegram_get_message_history` call per
+edited message. On this archive that is roughly sixty calls. It is now two:
+
+```json
+// 1. what changed, and which of those actually have a recoverable revision
+{"filter": {"field": "edit_date", "op": "between",
+            "value": ["2026-08-17", "2026-08-25"]},
+ "group_id": -1001483770714, "order_by": "edit_date", "limit": 200,
+ "fields": ["message_id", "sender_username", "edit_date", "previous_version_count"],
+ "include_media": false, "compact": true}
+
+// 2. the revisions themselves, for as many as 100 messages at once
+{"group_id": -1001483770714, "message_ids": [1314576, 1314540, ...],
+ "include_history": true}
+```
+
+`previous_version_count` on the search row is what makes the first call sufficient:
+**edited and recoverable are not the same thing.** Telegram marks a message edited, but an
+earlier version exists only if the daemon was running and saw the edit happen. Without the
+count on the row, discovering which edits have anything to show meant one call each — and
+on the December 2024 window above, *all 75* have `previous_version_count: 0`.
+
+`telegram_get_messages` never fails a batch because one id is unknown: those come back in
+`missing_ids` while everything found comes back in `found`. An id in an unreadable group is
+reported missing, for the same reason the other tools return nothing for one — saying
+otherwise would confirm it exists.
+
+`telegram_get_message_history` also takes `format: "diff"`, which returns a unified diff
+between consecutive versions instead of the full text of each. A one-word correction to a
+long message costs the whole message twice in `full` mode; in `diff` mode it costs the
+message once plus the changed line. Measured on a 600-byte message: 1,869 B → 1,125 B.
+Diffs are line-based and bounded — past 400 changed lines the entry degrades to a summary
+rather than burning CPU on a large LCS.
+
+### `telegram_get_users` in bulk
+
+`user_id` is the primary key, so the `in` operator resolves up to 100 users in one indexed
+call. Use it instead of looping:
+
+```json
+{"filter": {"field": "user_id", "op": "in", "value": [123, 456, 789]}}
+```
+
+`telegram_get_group` takes `group_ids: [...]` for the same reason, returning
+`{groups, missing_ids}` instead of a single object.
 
 ### `telegram_popular_words`
 
@@ -345,6 +477,26 @@ past the 5-second statement timeout. Migration `000024` adds the index; the same
 **0.22s**, a 30-day leaderboard **8ms**, and reading a month of message text for word
 counting went 2.55s → **0.03s**. Word counting orders by `date`, not `message_id`, so the
 same index supplies the ordering instead of a filesort over the window.
+
+**The gate binds a literal id list, not a semi-join — and that is a performance
+decision, not a stylistic one.** It used to be
+`chat_id IN (SELECT group_id FROM telegram_public_groups)`. With the subquery MySQL drives
+the join from the allowlist table and estimates ~90 rows per group against a real 238k, so
+it never picks the `(chat_id, <timestamp>)` indexes: ordering by `edit_date` measured
+**6.18s** — past the 5-second statement timeout, so the query could not complete at all —
+*with the index already present*. Binding the ids as constants turns the same query into a
+reverse covering range scan: **0.012s**. Every other shape improved too (date-ordered
+0.138s → 0.0024s, full-text 0.136s → 0.048s), so there is no case where the old form was
+better. The allowlist is curated and therefore small, which is what makes inlining it
+affordable, and it still fails closed: an empty allowlist compiles to `1=0`, which matches
+nothing, rather than to an empty `IN ()`, which is not valid SQL. It is produced in exactly
+one function (`msgGate`), so "did we remember the gate?" is still a grep.
+
+**Ordering on `edit_date` or `deleted_at` needs `(chat_id, edit_date)` and
+`(chat_id, deleted_at)`.** Migration `000025`. Same shape as `000024` did for `date`: the
+range becomes one contiguous stretch of index walked in reverse, which supplies the
+`ORDER BY` for free. The two changes are a pair — reverting either one alone puts the
+query back over the timeout.
 
 **Listing a group's senders needs `(chat_id, sender_user_id)`.** Without it, "who has ever
 posted here?" reads every message in the group and de-duplicates — 2.3s over one group's

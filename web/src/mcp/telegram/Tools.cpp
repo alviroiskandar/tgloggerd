@@ -32,18 +32,79 @@ namespace flt = tgweb::mcp::filter;
 constexpr int DEFAULT_LIMIT = 50;
 constexpr int MAX_LIMIT = 200;
 
+/* Ids per batch call. Matches the filter grammar's MAX_IN_ITEMS, so a
+ * telegram_get_users {"op":"in"} batch and a telegram_get_messages batch have
+ * the same ceiling and a caller only has to remember one number. */
+constexpr size_t MAX_BATCH_IDS = 100;
+
 /*
  * THE EXPOSURE GATE.
  *
- * Every message query is ANDed with this. It is a single named constant used
- * everywhere rather than a phrase repeated per tool, so that "did we remember
- * the gate?" is answerable by grep rather than by reading each query.
+ * Every message query is ANDed with this. It is produced in exactly one place
+ * so that "did we remember the gate?" is answerable by grep rather than by
+ * reading each query, and it fails closed: an empty allowlist compiles to
+ * `1=0`, which matches nothing, rather than to an empty IN list, which is not
+ * even valid SQL.
  *
- * A semi-join against the allowlist rather than a JOIN: it cannot duplicate
- * rows, and it fails closed -- an empty allowlist matches nothing.
+ * It binds a LITERAL LIST of allowed ids rather than the semi-join it used to
+ * be (`chat_id IN (SELECT group_id FROM telegram_public_groups)`). That is a
+ * performance decision, and a large one. With the subquery MySQL drives the
+ * join from the allowlist table and estimates ~90 rows per group against a
+ * real 238k, so it never picks the (chat_id, <timestamp>) indexes: ordering by
+ * edit_date measured 6.18 seconds -- past the statement timeout -- WITH the
+ * index present. Bound constants let the optimiser turn the same query into a
+ * reverse covering range scan: 0.012 s. Every other shape improved too
+ * (date-ordered 0.138 s -> 0.0024 s, full-text 0.136 s -> 0.048 s), so there
+ * is no case where the old form was better.
+ *
+ * The allowlist is curated and therefore small, which is what makes inlining
+ * it affordable.
  */
-constexpr const char *MSG_GATE =
-	" AND m.chat_id IN (SELECT group_id FROM telegram_public_groups)";
+struct Gate {
+	std::string              sql;   /* " AND m.chat_id IN (?,?)" or " AND 1=0" */
+	std::vector<std::string> binds;
+	bool matchesNothing = false;    /* nothing readable; skip the query */
+};
+
+/* The exposed group ids. Cheap: a covering scan of a curated table. */
+std::vector<int64_t> exposedGroups(const drogon::orm::DbClientPtr &db);
+
+/*
+ * Build the gate, optionally narrowed to one group.
+ *
+ * A group the caller named but that is not on the allowlist yields
+ * matchesNothing rather than an error: refusing explicitly would confirm the
+ * group exists, which is itself something the allowlist withholds.
+ */
+Gate msgGate(const drogon::orm::DbClientPtr &db, const Json &args,
+	     const char *groupKey = "group_id")
+{
+	Gate g;
+	std::vector<int64_t> groups = exposedGroups(db);
+
+	if (args.contains(groupKey) && args[groupKey].is_number_integer()) {
+		const int64_t want = args[groupKey].get<long long>();
+		const bool ok = std::find(groups.begin(), groups.end(), want) !=
+				groups.end();
+		groups.clear();
+		if (ok)
+			groups.push_back(want);
+	}
+
+	if (groups.empty()) {
+		g.sql = " AND 1=0";
+		g.matchesNothing = true;
+		return g;
+	}
+
+	g.sql = " AND m.chat_id IN (";
+	for (size_t i = 0; i < groups.size(); i++) {
+		g.sql += i ? ",?" : "?";
+		g.binds.push_back(std::to_string(groups[i]));
+	}
+	g.sql += ")";
+	return g;
+}
 
 /* The same gate expressed for a query whose alias for telegram_groups is g. */
 constexpr const char *GROUP_GATE =
@@ -223,44 +284,73 @@ DateRange dateRange(const Json &args, long long defaultStart = 0)
 	return dr;
 }
 
-/* Message fields a caller may filter on. */
+/*
+ * Message fields a caller may filter on.
+ *
+ * Three timestamps, and the difference between them is the whole point of
+ * `edit_date` and `deleted_at` existing here: `date` is when a message was
+ * SENT. A message sent in January and edited in August does not appear in any
+ * window on `date`, so "what changed this week?" was previously not
+ * expressible -- a caller had to page the week by send time and would silently
+ * miss exactly the edits it was looking for.
+ */
 const flt::Field kMsgFields[] = {
 	{ "text", "m.text", flt::FType::FullText, "",
 	  "message body; word-based, so words shorter than 3 characters are "
-	  "ignored by the index" },
+	  "ignored by the index", "" },
 	{ "group_id", "m.chat_id", flt::FType::Int, "",
-	  "the group's id (negative)" },
+	  "the group's id (negative)", "" },
 	{ "sender_user_id", "m.sender_user_id", flt::FType::Int, "",
-	  "author's Telegram user id" },
+	  "author's Telegram user id", "" },
 	{ "message_id", "m.message_id", flt::FType::Int, "",
-	  "per-group message id" },
+	  "per-group message id", "" },
 	{ "date", "m.date", flt::FType::DateTs, "",
-	  "when it was sent; accepts YYYY-MM-DD or a unix timestamp" },
+	  "when it was SENT; accepts YYYY-MM-DD or a unix timestamp", "" },
 	{ "content_type", "m.content_type", flt::FType::Enum,
 	  "text,photo,video,document,audio,voice,sticker,animation,service,unknown",
-	  "kind of message" },
-	{ "is_forwarded", "m.is_forwarded", flt::FType::Bool, "", "" },
-	{ "is_channel_post", "m.is_channel_post", flt::FType::Bool, "", "" },
+	  "kind of message", "" },
+	{ "is_forwarded", "m.is_forwarded", flt::FType::Bool, "", "", "" },
+	{ "is_channel_post", "m.is_channel_post", flt::FType::Bool, "", "", "" },
 	{ "deleted", "m.deleted_at", flt::FType::Bool, "",
-	  "use op is_null for live messages, is_not_null for deleted ones" },
+	  "use op is_null for live messages, is_not_null for deleted ones", "" },
+	{ "edited", "m.edit_date", flt::FType::Presence, "",
+	  "use op is_not_null for messages that were edited, is_null for "
+	  "untouched ones -- the mirror of `deleted`", "" },
+	{ "edit_date", "m.edit_date", flt::FType::DateTs, "",
+	  "when it was LAST EDITED. Use this, not `date`, to find edits in a "
+	  "window; ordering by it is index-backed", "" },
+	{ "deleted_at", "m.deleted_at", flt::FType::DateTs, "",
+	  "when the deletion was OBSERVED. Use this, not `date`, to find "
+	  "deletions in a window", "FROM_UNIXTIME(?)" },
+	{ "sender_is_bot", "EXISTS(SELECT 1 FROM telegram_users bu "
+			   "WHERE bu.id = m.sender_user_id AND bu.type = 'bot')",
+	  flt::FType::Bool, "",
+	  "true for messages sent by a bot -- excludes bot noise without "
+	  "having to know any bot's id", "" },
+	{ "text_length", "CHAR_LENGTH(m.text)", flt::FType::Int, "",
+	  "characters of text; use < to skip megaposts while scanning", "" },
 };
 const flt::Schema kMsgSchema{ kMsgFields,
 			      sizeof(kMsgFields) / sizeof(kMsgFields[0]) };
 
 /* User fields. */
 const flt::Field kUserFields[] = {
-	{ "user_id", "u.id", flt::FType::Int, "", "Telegram user id" },
+	{ "user_id", "u.id", flt::FType::Int, "",
+	  "Telegram user id; with op \"in\" this is the batch path -- it is "
+	  "the primary key, so a list of up to 100 ids is a single indexed "
+	  "lookup", "" },
 	{ "username", "un.username", flt::FType::Text, "",
-	  "current public username, without the @" },
-	{ "first_name", "u.first_name", flt::FType::Text, "", "" },
-	{ "last_name", "u.last_name", flt::FType::Text, "", "" },
+	  "current public username, without the @", "" },
+	{ "first_name", "u.first_name", flt::FType::Text, "", "", "" },
+	{ "last_name", "u.last_name", flt::FType::Text, "", "", "" },
 	{ "phone_number", "COALESCE(e.phone_number,'')", flt::FType::Text, "",
-	  "only set for contacts" },
-	{ "bio", "COALESCE(e.bio,'')", flt::FType::Text, "", "" },
-	{ "type", "u.type", flt::FType::Enum, "regular,deleted,bot,unknown", "" },
-	{ "is_bot", "(u.type = 'bot')", flt::FType::Bool, "", "" },
+	  "only set for contacts", "" },
+	{ "bio", "COALESCE(e.bio,'')", flt::FType::Text, "", "", "" },
+	{ "type", "u.type", flt::FType::Enum, "regular,deleted,bot,unknown",
+	  "", "" },
+	{ "is_bot", "(u.type = 'bot')", flt::FType::Bool, "", "", "" },
 	{ "msg_count", "u.msg_count", flt::FType::Int, "",
-	  "messages seen from this user across the archive" },
+	  "messages seen from this user across the archive", "" },
 };
 const flt::Schema kUserSchema{ kUserFields,
 			       sizeof(kUserFields) / sizeof(kUserFields[0]) };
@@ -298,50 +388,332 @@ Json mediaJson(const drogon::orm::Row &r, bool withNames)
 	return md;
 }
 
-Json messageRow(const drogon::orm::Row &r)
+/*
+ * How much of a row to emit.
+ *
+ * A scan is usually looking for WHICH messages match, not for their contents,
+ * and the contents are almost all of the bytes: one multi-kilobyte bot post
+ * costs more than a hundred ids. These four controls exist so a caller can ask
+ * the cheap question cheaply, and every one defaults to the old full-fat row so
+ * an existing client sees no change.
+ */
+/* Every key messageRow can emit -- the allowlist for the `fields` projection. */
+const char *const kRowFields[] = {
+	"message_id", "group_id", "group_title", "sender_user_id",
+	"sender_name", "sender_username", "date", "sent_at", "content_type",
+	"text", "is_forwarded", "is_channel_post", "reply_to_message_id",
+	"is_edited", "is_deleted", "edit_date", "deleted_at",
+	"previous_version_count", "history_available_via", "media",
+};
+
+struct RowOpts {
+	std::vector<std::string> fields;      /* empty = every key */
+	size_t truncateText = 0;             /* 0 = never truncate */
+	bool includeMedia = true;
+	bool compact = false;                /* drop false/empty, hoist group */
+	bool hoistGroup = false;             /* caller named one group */
+
+	bool wants(const char *k) const
+	{
+		if (fields.empty())
+			return true;
+		for (const auto &f : fields)
+			if (f == k)
+				return true;
+		return false;
+	}
+};
+
+/*
+ * The size controls, read from a tool's arguments.
+ *
+ * `compact` also implies hoisting the group columns, but only when the caller
+ * named the group -- otherwise they differ per row and are not invariant.
+ */
+RowOpts rowOpts(const Json &args)
+{
+	RowOpts o;
+	if (args.contains("fields")) {
+		if (!args["fields"].is_array())
+			throw ToolError("\"fields\" must be an array of strings");
+		for (const auto &f : args["fields"]) {
+			if (!f.is_string())
+				throw ToolError("\"fields\" must contain strings");
+			const std::string k = f.get<std::string>();
+			/*
+			 * A misspelled key would otherwise be silently dropped,
+			 * and the caller would get rows missing the very field
+			 * they asked for with no hint why. Naming the valid set
+			 * lets a model correct itself instead of guessing.
+			 */
+			bool known = false;
+			for (const char *v : kRowFields) {
+				if (k == v) {
+					known = true;
+					break;
+				}
+			}
+			if (!known) {
+				std::string all;
+				for (const char *v : kRowFields)
+					all += std::string(all.empty() ? "" : ", ") + v;
+				throw ToolError("unknown field \"" + k +
+						"\" in \"fields\"; expected any of: " +
+						all);
+			}
+			o.fields.push_back(k);
+		}
+	}
+	if (args.contains("truncate_text") &&
+	    args["truncate_text"].is_number_integer()) {
+		const long long n = args["truncate_text"].get<long long>();
+		o.truncateText = n <= 0 ? 0 : (size_t)n;
+	}
+	if (args.contains("include_media") && args["include_media"].is_boolean())
+		o.includeMedia = args["include_media"].get<bool>();
+	if (args.contains("compact") && args["compact"].is_boolean())
+		o.compact = args["compact"].get<bool>();
+	o.hoistGroup = o.compact && args.contains("group_id") &&
+		       args["group_id"].is_number_integer();
+	return o;
+}
+
+/*
+ * Cut text to at most `max` BYTES without splitting a UTF-8 sequence, the same
+ * rule the Discord forwarder uses. Returns true when anything was removed, so
+ * the row can say so rather than leaving a caller to guess whether a message
+ * really ended mid-word.
+ */
+bool truncateUtf8(std::string &t, size_t max)
+{
+	if (!max || t.size() <= max)
+		return false;
+	size_t cut = max;
+	while (cut > 0 && ((unsigned char)t[cut] & 0xC0) == 0x80)
+		cut--;
+	t.resize(cut);
+	return true;
+}
+
+/*
+ * Opaque pagination cursor.
+ *
+ * OFFSET is wrong for a live archive: new messages arrive while a client is
+ * paging, every later page shifts by however many landed, and rows are silently
+ * seen twice or missed entirely. A cursor names the last row instead -- its
+ * sort value and its row id -- so the next page resumes exactly where the
+ * previous one stopped no matter what was inserted meanwhile.
+ *
+ * The sort key travels inside the cursor and is checked on the way back in: a
+ * cursor minted under `order_by: edit_date` is meaningless to a `date` scan,
+ * and silently applying it would return plausible nonsense.
+ *
+ * base64url of "key|value|id". Opaque by intent -- clients must not construct
+ * or parse it -- but trivially decodable by us, which is what makes a bad one
+ * diagnosable rather than mysterious.
+ */
+const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		    "0123456789-_";
+
+std::string b64uEncode(const std::string &in)
+{
+	std::string out;
+	size_t i = 0;
+	for (; i + 3 <= in.size(); i += 3) {
+		const uint32_t v = ((uint32_t)(unsigned char)in[i] << 16) |
+				   ((uint32_t)(unsigned char)in[i + 1] << 8) |
+				   (uint32_t)(unsigned char)in[i + 2];
+		out += kB64[(v >> 18) & 63];
+		out += kB64[(v >> 12) & 63];
+		out += kB64[(v >> 6) & 63];
+		out += kB64[v & 63];
+	}
+	if (i + 1 == in.size()) {
+		const uint32_t v = (uint32_t)(unsigned char)in[i] << 16;
+		out += kB64[(v >> 18) & 63];
+		out += kB64[(v >> 12) & 63];
+	} else if (i + 2 == in.size()) {
+		const uint32_t v = ((uint32_t)(unsigned char)in[i] << 16) |
+				   ((uint32_t)(unsigned char)in[i + 1] << 8);
+		out += kB64[(v >> 18) & 63];
+		out += kB64[(v >> 12) & 63];
+		out += kB64[(v >> 6) & 63];
+	}
+	return out;
+}
+
+bool b64uDecode(const std::string &in, std::string &out)
+{
+	auto sextet = [](char c) -> int {
+		if (c >= 'A' && c <= 'Z') return c - 'A';
+		if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+		if (c >= '0' && c <= '9') return c - '0' + 52;
+		if (c == '-') return 62;
+		if (c == '_') return 63;
+		return -1;
+	};
+	if (in.empty() || in.size() % 4 == 1 || in.size() > 512)
+		return false;
+	uint32_t acc = 0;
+	int bits = 0;
+	out.clear();
+	for (char c : in) {
+		const int d = sextet(c);
+		if (d < 0)
+			return false;
+		acc = (acc << 6) | (uint32_t)d;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			out += (char)((acc >> bits) & 0xFF);
+		}
+	}
+	return true;
+}
+
+struct Cursor {
+	std::string key;   /* the order column the cursor was minted under */
+	std::string value; /* its value on the last row emitted */
+	int64_t id = 0;    /* that row's internal id, to break ties */
+	bool ok = false;
+};
+
+std::string cursorEncode(const std::string &key, const std::string &value,
+			 int64_t id)
+{
+	return b64uEncode(key + "|" + value + "|" + std::to_string(id));
+}
+
+Cursor cursorDecode(const std::string &s)
+{
+	Cursor c;
+	std::string raw;
+	if (!b64uDecode(s, raw))
+		return c;
+	const size_t a = raw.find('|');
+	if (a == std::string::npos)
+		return c;
+	const size_t b = raw.find('|', a + 1);
+	if (b == std::string::npos)
+		return c;
+	c.key = raw.substr(0, a);
+	c.value = raw.substr(a + 1, b - a - 1);
+	c.id = strtoll(raw.c_str() + b + 1, nullptr, 10);
+	/* Values are numeric in every ordering we mint; reject anything else
+	 * rather than letting a hand-made cursor reach the SQL. */
+	if (c.value.empty() ||
+	    c.value.find_first_not_of("0123456789-") != std::string::npos)
+		return c;
+	c.ok = true;
+	return c;
+}
+
+Json messageRow(const drogon::orm::Row &r, const RowOpts &o)
 {
 	Json j;
-	j["message_id"] = colI64(r, "message_id");
-	j["group_id"] = colI64(r, "chat_id");
-	j["group_title"] = colStr(r, "group_title");
-	j["sender_user_id"] = colI64(r, "sender_user_id");
-	j["sender_name"] = colStr(r, "sender_name");
-	j["sender_username"] = colStr(r, "sender_username");
-	j["date"] = colI64(r, "date");
-	j["sent_at"] = colStr(r, "sent_at");
-	j["content_type"] = colStr(r, "content_type");
 	/*
-	 * RAW text, deliberately. dao::search HTML-escapes every cell because
-	 * its output lands in a browser; this output lands in a model, where
-	 * "it&#39;s &lt;b&gt;" is simply wrong and unescaping it later would be
-	 * lossy.
+	 * message_id is emitted whatever the projection says. It is the handle
+	 * every follow-up call needs (telegram_get_messages, history), so a row
+	 * without one is not a smaller answer, it is an unusable one.
 	 */
-	j["text"] = colStr(r, "text");
-	j["is_forwarded"] = colI64(r, "is_forwarded") != 0;
-	j["is_channel_post"] = colI64(r, "is_channel_post") != 0;
-	if (!r["reply_to_msg_id"].isNull())
+	j["message_id"] = colI64(r, "message_id");
+
+	/* The group columns repeat identically on every row of a single-group
+	 * scan; compact mode hoists them to the envelope instead. */
+	if (!o.hoistGroup) {
+		if (o.wants("group_id"))
+			j["group_id"] = colI64(r, "chat_id");
+		if (o.wants("group_title"))
+			j["group_title"] = colStr(r, "group_title");
+	}
+
+	if (o.wants("sender_user_id"))
+		j["sender_user_id"] = colI64(r, "sender_user_id");
+	if (o.wants("sender_name")) {
+		const std::string v = colStr(r, "sender_name");
+		if (!o.compact || !v.empty())
+			j["sender_name"] = v;
+	}
+	if (o.wants("sender_username")) {
+		const std::string v = colStr(r, "sender_username");
+		if (!o.compact || !v.empty())
+			j["sender_username"] = v;
+	}
+	if (o.wants("date"))
+		j["date"] = colI64(r, "date");
+	if (o.wants("sent_at"))
+		j["sent_at"] = colStr(r, "sent_at");
+	if (o.wants("content_type"))
+		j["content_type"] = colStr(r, "content_type");
+
+	if (o.wants("text")) {
+		/*
+		 * RAW text, deliberately. dao::search HTML-escapes every cell
+		 * because its output lands in a browser; this output lands in a
+		 * model, where "it&#39;s &lt;b&gt;" is simply wrong and
+		 * unescaping it later would be lossy.
+		 */
+		std::string text = colStr(r, "text");
+		if (truncateUtf8(text, o.truncateText)) {
+			/* Say so rather than let a caller mistake the cut for
+			 * the end of the message. The full text is one
+			 * telegram_get_messages call away. */
+			j["text_truncated"] = true;
+		}
+		if (!o.compact || !text.empty())
+			j["text"] = std::move(text);
+	}
+
+	const bool fwd = colI64(r, "is_forwarded") != 0;
+	const bool chan = colI64(r, "is_channel_post") != 0;
+	if (o.wants("is_forwarded") && (!o.compact || fwd))
+		j["is_forwarded"] = fwd;
+	if (o.wants("is_channel_post") && (!o.compact || chan))
+		j["is_channel_post"] = chan;
+
+	if (o.wants("reply_to_message_id") && !r["reply_to_msg_id"].isNull())
 		j["reply_to_message_id"] = colI64(r, "reply_to_msg_id");
+
 	/*
-	 * Always present, never inferred from absence. A reader must be able to
-	 * tell "not edited" from "the field was omitted", and a message whose
-	 * text has since changed or vanished is a different thing from one that
-	 * has not -- which matters most when the content is being quoted.
+	 * Always present outside compact mode, never inferred from absence. A
+	 * reader must be able to tell "not edited" from "the field was
+	 * omitted", and a message whose text has since changed or vanished is a
+	 * different thing from one that has not -- which matters most when the
+	 * content is being quoted. Compact mode is the caller explicitly asking
+	 * for the opposite trade, so there false means absent.
 	 */
 	const bool edited = colI64(r, "edit_date") != 0;
 	const bool deleted = !r["deleted_at"].isNull();
-	j["is_edited"] = edited;
-	j["is_deleted"] = deleted;
-	if (edited)
+	if (o.wants("is_edited") && (!o.compact || edited))
+		j["is_edited"] = edited;
+	if (o.wants("is_deleted") && (!o.compact || deleted))
+		j["is_deleted"] = deleted;
+	if (edited && o.wants("edit_date"))
 		j["edit_date"] = colI64(r, "edit_date");
-	if (deleted)
+	if (deleted && o.wants("deleted_at"))
 		j["deleted_at"] = colStr(r, "deleted_at");
-	if (edited || deleted) {
-		/* Point at the tool that can say what changed, since the text
+
+	/*
+	 * How many earlier versions the archive actually holds, carried on the
+	 * row itself. Edited and RECOVERABLE are different things -- an edit
+	 * seen before the daemon was watching leaves a flag and no snapshot --
+	 * and without this a caller had to make one history call per edited
+	 * message just to discover which ones had anything to show.
+	 */
+	if (edited && o.wants("previous_version_count") &&
+	    !r["prev_versions"].isNull())
+		j["previous_version_count"] = colI64(r, "prev_versions");
+
+	if ((edited || deleted) && o.wants("history_available_via") &&
+	    !o.compact) {
+		/* Point at the tools that can say what changed, since the text
 		 * above is only the latest version. */
-		j["history_available_via"] = "telegram_get_message_history";
+		j["history_available_via"] =
+			"telegram_get_messages (include_history) or "
+			"telegram_get_message_history";
 	}
 
-	if (!r["file_id"].isNull())
+	if (o.includeMedia && o.wants("media") && !r["file_id"].isNull())
 		j["media"] = mediaJson(r, true);
 	return j;
 }
@@ -364,7 +736,16 @@ constexpr const char *MSG_SELECT =
 	"  WHERE x.user_id = m.sender_user_id AND x.kind = 'active' "
 	"  ORDER BY x.position LIMIT 1) AS sender_username, "
 	"f.id AS file_id, f.file_type, f.file_size, f.file_ext, "
-	"f.orig_file_name, f.on_disk ";
+	"f.orig_file_name, f.on_disk, m.id AS id_internal, "
+	/*
+	 * How many earlier versions exist for this message. A correlated
+	 * count, but it runs only in phase 2 -- over at most `limit` already
+	 * chosen rows -- against a 1.4k-row table keyed by exactly this
+	 * column, so it is a handful of index lookups. It saves the caller one
+	 * whole round trip per edited message.
+	 */
+	"(SELECT COUNT(1) FROM telegram_group_message_edits pe "
+	"  WHERE pe.group_message_id = m.id) AS prev_versions ";
 
 /*
  * The display joins, shared by both places that decorate a chosen set of
@@ -376,6 +757,84 @@ constexpr const char *MSG_JOINS =
 	"JOIN `telegram_groups` g ON g.id = m.chat_id "
 	"LEFT JOIN telegram_users su ON su.id = m.sender_user_id "
 	"LEFT JOIN telegram_files f ON f.id = m.file_id ";
+
+/*
+ * How a message scan is ordered, and how a cursor for it is spelled.
+ *
+ * Only these three columns can be ordered on, because only these three have a
+ * (chat_id, <column>) index behind them -- ordering by anything else would
+ * filesort the whole gated set. Relevance is a fourth ordering and is special:
+ * it has no stable cursor, because a score is not a position.
+ */
+struct OrderSpec {
+	std::string key;      /* date | edit_date | deleted_at | relevance */
+	std::string col;      /* SQL column, for ORDER BY and cursor compare */
+	std::string keyExpr;  /* same value as a NUMBER, for the cursor */
+	std::string valExpr;  /* how a cursor value is spelled back in */
+	std::string sql;      /* the full ORDER BY */
+	bool asc = false;
+	bool cursorable = true;
+};
+
+OrderSpec parseOrder(const Json &args, const std::string &ftExpr)
+{
+	OrderSpec o;
+	if (args.contains("order") && args["order"].is_string()) {
+		const std::string v = args["order"].get<std::string>();
+		if (v != "asc" && v != "desc")
+			throw ToolError("\"order\" must be \"asc\" or \"desc\"");
+		o.asc = v == "asc";
+	}
+
+	o.key = "date";
+	if (args.contains("order_by") && args["order_by"].is_string())
+		o.key = args["order_by"].get<std::string>();
+
+	if (o.key == "date") {
+		o.col = "m.date";
+		o.keyExpr = "m.date";
+		o.valExpr = "?";
+	} else if (o.key == "edit_date") {
+		o.col = "m.edit_date";
+		o.keyExpr = "m.edit_date";
+		o.valExpr = "?";
+	} else if (o.key == "deleted_at") {
+		/*
+		 * deleted_at is a DATETIME while a cursor carries unix seconds,
+		 * so the two directions convert on opposite sides: out through
+		 * UNIX_TIMESTAMP, back in through FROM_UNIXTIME. Converting on
+		 * the way in keeps the column bare and the index usable.
+		 */
+		o.col = "m.deleted_at";
+		o.keyExpr = "UNIX_TIMESTAMP(m.deleted_at)";
+		o.valExpr = "FROM_UNIXTIME(?)";
+	} else {
+		throw ToolError("\"order_by\" must be one of: date, edit_date, "
+				"deleted_at");
+	}
+
+	const char *dir = o.asc ? "ASC" : "DESC";
+	/*
+	 * The row id breaks ties. Without it two messages sharing a timestamp
+	 * have no defined order between pages, so a cursor could repeat one and
+	 * skip the other.
+	 */
+	o.sql = o.col + " " + std::string(dir) + ", m.id " + dir;
+
+	/*
+	 * A full-text search overrides all of it unless the caller asked for a
+	 * specific ordering: ordering a MATCH by date makes MySQL filesort
+	 * every hit, and on 4.6M rows a broad term simply times out. Relevance
+	 * walks the fulltext index in order, so LIMIT stops early -- at the
+	 * cost of a cursor, since relevance is not a column to resume from.
+	 */
+	if (!ftExpr.empty() && !args.contains("order_by")) {
+		o.key = "relevance";
+		o.sql = "MATCH(" + ftExpr + ") AGAINST(? IN BOOLEAN MODE) DESC";
+		o.cursorable = false;
+	}
+	return o;
+}
 
 /*
  * Every message query goes through here, so the exposure gate cannot be
@@ -393,64 +852,150 @@ constexpr const char *MSG_JOINS =
  * plans to 18 rows examined and 18 milliseconds. The joins then run against at
  * most `limit` ids, where they cost nothing.
  */
-Json runMessageQuery(const drogon::orm::DbClientPtr &db,
-		     const std::string &whereExtra,
-		     const std::vector<std::string> &binds,
-		     const std::string &orderBy, const std::string &orderBind,
-		     int limit, int offset, bool includeTotal)
+struct QueryReq {
+	Gate gate;
+	std::string whereExtra;
+	std::vector<std::string> binds;   /* whereExtra's binds only */
+	OrderSpec order;
+	std::string orderBind;            /* relevance term, bound twice */
+	Cursor cursor;
+	int limit = DEFAULT_LIMIT;
+	int offset = 0;
+	bool includeTotal = false;
+	RowOpts row;
+	int64_t hoistedGroup = 0;
+};
+
+Json runMessageQuery(const drogon::orm::DbClientPtr &db, const QueryReq &q)
 {
-	/* Phase 1: single table, no joins, so the index can drive the order. */
-	std::string inner =
-		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ m.id "
-		"FROM telegram_group_messages m WHERE 1=1" +
-		std::string(MSG_GATE);
-	if (!whereExtra.empty())
-		inner += " AND " + whereExtra;
-	inner += " ORDER BY " + orderBy + " LIMIT " + std::to_string(limit) +
-		 " OFFSET " + std::to_string(offset);
-
-	/* Phase 2: decorate. Ordering again costs nothing on <= limit rows. */
-	const std::string sql =
-		std::string(MSG_SELECT) + "FROM (" + inner + ") sel " +
-		"JOIN telegram_group_messages m ON m.id = sel.id " +
-		MSG_JOINS + "ORDER BY " + orderBy;
-
-	/*
-	 * Placeholders are positional, and the inner query comes first in the
-	 * SQL text: filter binds, then the inner ORDER BY's bind, then the
-	 * outer one. A relevance ORDER BY restates MATCH(...) AGAINST(?), so it
-	 * needs its own bind at each of the two places it appears.
-	 */
-	std::vector<std::string> pageBinds = binds;
-	if (!orderBind.empty()) {
-		pageBinds.push_back(orderBind);
-		pageBinds.push_back(orderBind);
-	}
-
 	Json out;
 	out["messages"] = Json::array();
-	for (const auto &r : execTool(db, sql, pageBinds))
-		out["messages"].push_back(messageRow(r));
+
+	/*
+	 * Binds are positional and the inner query comes first in the SQL text,
+	 * so they are appended in exactly the order the placeholders appear:
+	 * gate, filter, cursor, inner relevance term, outer relevance term.
+	 */
+	std::string where = q.gate.sql;
+	std::vector<std::string> binds = q.gate.binds;
+	if (!q.whereExtra.empty()) {
+		where += " AND " + q.whereExtra;
+		binds.insert(binds.end(), q.binds.begin(), q.binds.end());
+	}
+
+	std::string pageWhere = where;
+	std::vector<std::string> pageBinds = binds;
+	if (q.cursor.ok) {
+		/*
+		 * Resume strictly after the last row emitted: past it on the
+		 * sort column, or level with it and past it on the id.
+		 */
+		const std::string cmp = q.order.asc ? ">" : "<";
+		pageWhere += " AND (" + q.order.col + " " + cmp + " " +
+			     q.order.valExpr + " OR (" + q.order.col + " = " +
+			     q.order.valExpr + " AND m.id " + cmp + " ?))";
+		pageBinds.push_back(q.cursor.value);
+		pageBinds.push_back(q.cursor.value);
+		pageBinds.push_back(std::to_string(q.cursor.id));
+	}
+
+	/* limit 0 is a legitimate ask: "how many, without the rows". */
+	if (q.limit > 0 && !q.gate.matchesNothing) {
+		const std::string inner =
+			"SELECT /*+ MAX_EXECUTION_TIME(5000) */ m.id, " +
+			q.order.keyExpr + " AS ckey "
+			"FROM telegram_group_messages m WHERE 1=1" + pageWhere +
+			" ORDER BY " + q.order.sql +
+			" LIMIT " + std::to_string(q.limit) +
+			" OFFSET " + std::to_string(q.offset);
+
+		const std::string sql =
+			std::string(MSG_SELECT) + ", sel.ckey "
+			"FROM (" + inner + ") sel " +
+			"JOIN telegram_group_messages m ON m.id = sel.id " +
+			MSG_JOINS + "ORDER BY " + q.order.sql;
+
+		std::vector<std::string> allBinds = pageBinds;
+		if (!q.orderBind.empty()) {
+			allBinds.push_back(q.orderBind); /* inner ORDER BY */
+			allBinds.push_back(q.orderBind); /* outer ORDER BY */
+		}
+
+		int64_t lastId = 0;
+		std::string lastKey;
+		for (const auto &r : execTool(db, sql, allBinds)) {
+			out["messages"].push_back(messageRow(r, q.row));
+			lastId = colI64(r, "id_internal");
+			lastKey = colStr(r, "ckey");
+		}
+
+		/*
+		 * A cursor only when a full page came back: a short page is the
+		 * end, and handing one out there invites a pointless extra
+		 * round trip that returns nothing.
+		 */
+		if (q.order.cursorable && lastId &&
+		    (int)out["messages"].size() == q.limit) {
+			out["next_cursor"] = cursorEncode(
+				q.order.key, lastKey.empty() ? "0" : lastKey,
+				lastId);
+		}
+	}
 
 	out["count"] = out["messages"].size();
-	out["limit"] = limit;
-	out["offset"] = offset;
+	out["limit"] = q.limit;
+	if (!q.cursor.ok)
+		out["offset"] = q.offset;
+	out["order_by"] = q.order.key;
+	out["order"] = q.order.asc ? "asc" : "desc";
+	if (q.row.hoistGroup)
+		out["group_id"] = q.hoistedGroup;
 
-	if (includeTotal) {
+	if (q.includeTotal) {
 		/*
 		 * Opt-in: counting a broad filter over 4.6M rows is the
 		 * expensive half, and a caller reading the first page rarely
-		 * needs it. No ORDER BY here, so no order bind.
+		 * needs it. No ORDER BY here, so no order bind -- and no cursor
+		 * clause either, since a total is of the whole match, not of
+		 * what is left after the page already read.
 		 */
-		std::string csql =
-			"SELECT /*+ MAX_EXECUTION_TIME(5000) */ COUNT(1) AS n "
-			"FROM telegram_group_messages m WHERE 1=1" +
-			std::string(MSG_GATE);
-		if (!whereExtra.empty())
-			csql += " AND " + whereExtra;
-		auto cr = execTool(db, csql, binds,
-				     "count failed");
-		out["total"] = cr.empty() ? 0 : cr[0]["n"].as<int64_t>();
+		if (q.gate.matchesNothing) {
+			out["total"] = 0;
+		} else {
+			const std::string csql =
+				"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+				"COUNT(1) AS n FROM telegram_group_messages m "
+				"WHERE 1=1" + where;
+			/*
+			 * A count that times out must not destroy the answer.
+			 * Counting a broad full-text match is the case that
+			 * does it: the fulltext index carries no chat_id, so a
+			 * common term walks every match in the whole 5M-row
+			 * table before the group filter can reject them --
+			 * measured at 11 seconds for "kernel" against a
+			 * 5-second limit, and just as slow before this tool
+			 * ever offered a count. The rows are already in hand at
+			 * this point, so return them and say why the total is
+			 * missing, rather than throwing away a good page over
+			 * an optional extra.
+			 */
+			try {
+				auto cr = execTool(db, csql, binds,
+						   "count failed");
+				out["total"] = cr.empty()
+						       ? 0
+						       : cr[0]["n"].as<int64_t>();
+			} catch (const ToolError &) {
+				out["total_unavailable"] =
+					"the total could not be counted within "
+					"the time limit -- this happens with a "
+					"broad text match, whose count scans "
+					"every match in the archive before the "
+					"group filter applies. Narrow the "
+					"match, or drop include_total; the "
+					"messages above are unaffected.";
+			}
+		}
 	}
 	return out;
 }
@@ -467,7 +1012,7 @@ std::vector<int64_t> exposedGroups(const drogon::orm::DbClientPtr &db)
 
 /* Join display columns onto an explicit, already-authorised set of ids. */
 Json decorateIds(const drogon::orm::DbClientPtr &db,
-		 const std::vector<int64_t> &ids)
+		 const std::vector<int64_t> &ids, const RowOpts &o)
 {
 	Json arr = Json::array();
 	if (ids.empty())
@@ -483,7 +1028,7 @@ Json decorateIds(const drogon::orm::DbClientPtr &db,
 		std::string(MSG_SELECT) + "FROM telegram_group_messages m " +
 		MSG_JOINS + "WHERE m.id IN (" + in + ") ORDER BY m.date DESC";
 	for (const auto &r : execTool(db, sql, binds))
-		arr.push_back(messageRow(r));
+		arr.push_back(messageRow(r, o));
 	return arr;
 }
 
@@ -502,7 +1047,8 @@ Json decorateIds(const drogon::orm::DbClientPtr &db,
  * what makes that affordable.
  */
 Json listRecent(const drogon::orm::DbClientPtr &db,
-		const std::vector<int64_t> &groups, int limit, int offset)
+		const std::vector<int64_t> &groups, int limit, int offset,
+		const RowOpts &o)
 {
 	struct Hit {
 		int64_t id;
@@ -532,7 +1078,7 @@ Json listRecent(const drogon::orm::DbClientPtr &db,
 		ids.push_back(hits[i].id);
 
 	Json out;
-	out["messages"] = decorateIds(db, ids);
+	out["messages"] = decorateIds(db, ids, o);
 	out["count"] = out["messages"].size();
 	out["limit"] = limit;
 	out["offset"] = offset;
@@ -708,6 +1254,82 @@ void countWords(const std::string &text, const WordFilter &filter,
 	}
 }
 
+/*
+ * The response-size controls, shared by every tool that returns message rows.
+ *
+ * A scan usually wants to know WHICH messages match, and the text is nearly all
+ * of the bytes -- one multi-kilobyte post outweighs a hundred ids. Each of
+ * these defaults to the old full row, so an existing client sees no change.
+ */
+void addRowShapeProps(Json &props)
+{
+	props["fields"] = Json{
+		{ "type", "array" },
+		{ "items", Json{ { "type", "string" } } },
+		{ "description",
+		  "Return only these keys per message, e.g. "
+		  "[\"message_id\",\"sender_username\",\"date\",\"edit_date\"]. "
+		  "Valid: message_id, group_id, group_title, sender_user_id, "
+		  "sender_name, sender_username, date, sent_at, content_type, "
+		  "text, is_forwarded, is_channel_post, reply_to_message_id, "
+		  "is_edited, is_deleted, edit_date, deleted_at, "
+		  "previous_version_count, history_available_via, media. "
+		  "message_id is always included -- it is the handle every "
+		  "follow-up call needs. Cuts response size several-fold on a "
+		  "wide scan." }
+	};
+	props["truncate_text"] = Json{
+		{ "type", "integer" },
+		{ "description",
+		  "Cut each message's text to this many bytes; rows that were "
+		  "cut carry text_truncated: true. Retrieve the full text of "
+		  "the ones that matter with telegram_get_messages." }
+	};
+	props["include_media"] = Json{
+		{ "type", "boolean" },
+		{ "description",
+		  "Default true. Set false to drop the media object (url, "
+		  "size, filename) -- the largest per-row cost, and rarely "
+		  "needed while scanning." }
+	};
+	props["compact"] = Json{
+		{ "type", "boolean" },
+		{ "description",
+		  "Default false. Omits false and empty fields instead of "
+		  "serialising them, and when group_id was passed, hoists "
+		  "group_id/group_title out of every row into the envelope." }
+	};
+}
+
+/* Ordering and paging, shared by the tools that scan messages. */
+void addPagingProps(Json &props)
+{
+	props["order_by"] = Json{
+		{ "type", "string" },
+		{ "enum", Json::array({ "date", "edit_date", "deleted_at" }) },
+		{ "description",
+		  "Which timestamp to sort on. Default date (when sent). Use "
+		  "edit_date to list what changed, deleted_at to list what was "
+		  "removed -- both are index-backed. With a text match and no "
+		  "order_by, results come back by relevance instead." }
+	};
+	props["order"] = Json{
+		{ "type", "string" },
+		{ "enum", Json::array({ "desc", "asc" }) },
+		{ "description", "Default desc (newest first)." }
+	};
+	props["cursor"] = Json{
+		{ "type", "string" },
+		{ "description",
+		  "Pass back the next_cursor from the previous response to get "
+		  "the next page. PREFER THIS OVER offset: the archive is live, "
+		  "so offsets shift as new messages arrive and rows get "
+		  "duplicated or skipped mid-scan. A cursor resumes exactly "
+		  "where the last page stopped. It is opaque -- pass it "
+		  "verbatim, do not build one." }
+	};
+}
+
 Json inputSchemaForMessages(bool withFilter)
 {
 	Json props;
@@ -724,15 +1346,26 @@ Json inputSchemaForMessages(bool withFilter)
 	props["group_id"] = Json{ { "type", "integer" },
 				  { "description",
 				    "Restrict to one group (negative id)." } };
-	props["limit"] = propLimit();
-	props["offset"] = Json{ { "type", "integer" },
-				{ "description", "Rows to skip; default 0." } };
+	props["limit"] = propLimit(
+		"0-200, default 50. Use limit: 0 with include_total to get "
+		"just the count, so a job can be sized before paging it.");
+	props["offset"] = Json{
+		{ "type", "integer" },
+		{ "description",
+		  "Rows to skip; default 0. Prefer cursor for paging." }
+	};
 	props["include_total"] = Json{
 		{ "type", "boolean" },
 		{ "description",
 		  "Also return the total match count. Off by default because "
-		  "counting a broad filter is expensive." }
+		  "counting a broad filter is expensive. With a broad text "
+		  "match the count can exceed the time limit; when it does the "
+		  "messages are still returned and total_unavailable explains "
+		  "why, so the call is never wasted." }
 	};
+	if (withFilter)
+		addPagingProps(props);
+	addRowShapeProps(props);
 	return Json{ { "type", "object" }, { "properties", props } };
 }
 
@@ -870,9 +1503,61 @@ void add_telegram_list_groups(gwmcp::ToolRegistry &registry,
 }
 
 /* ---- telegram_get_group ---- */
+Json run_telegram_get_group_one(const drogon::orm::DbClientPtr &db,
+				const Json &args, int64_t gidArg);
+
 Json run_telegram_get_group(const drogon::orm::DbClientPtr &db, const Json &args)
 {
-	const int64_t gid = requireInt(args, "group_id");
+	/*
+	 * Batch form. Kept separate from the single form rather than folded
+	 * into it because the single form's response is the flat object
+	 * existing callers already parse; wrapping that in a list for everyone
+	 * would break them for no gain.
+	 */
+	if (args.contains("group_ids")) {
+		if (!args["group_ids"].is_array())
+			throw ToolError("group_ids must be an array of "
+					"integers");
+		if (args["group_ids"].empty())
+			throw ToolError("group_ids must not be empty");
+		if (args["group_ids"].size() > MAX_BATCH_IDS)
+			throw ToolError("group_ids accepts at most " +
+					std::to_string(MAX_BATCH_IDS) +
+					" ids per call");
+		Json out;
+		out["groups"] = Json::array();
+		out["missing_ids"] = Json::array();
+		for (const auto &v : args["group_ids"]) {
+			if (!v.is_number_integer())
+				throw ToolError("group_ids must contain "
+						"integers");
+			const int64_t g = v.get<long long>();
+			/*
+			 * One unreadable id must not sink the batch, for the
+			 * same reason telegram_get_messages reports missing
+			 * ids: the caller would otherwise have to bisect to
+			 * find which id was the problem.
+			 */
+			try {
+				out["groups"].push_back(
+					run_telegram_get_group_one(db, args, g));
+			} catch (const ToolError &) {
+				out["missing_ids"].push_back(g);
+			}
+		}
+		out["count"] = out["groups"].size();
+		out["missing_count"] = out["missing_ids"].size();
+		return out;
+	}
+	return run_telegram_get_group_one(db, args,
+					  requireInt(args, "group_id"));
+}
+
+Json run_telegram_get_group_one(const drogon::orm::DbClientPtr &db,
+				const Json &args, int64_t gidArg)
+{
+	(void)args; /* the single-group body takes no options today */
+	const int64_t gid = gidArg;
 	const std::string bind = std::to_string(gid);
 
 	Json out;
@@ -1011,13 +1696,23 @@ void add_telegram_get_group(gwmcp::ToolRegistry &registry,
 		"how many admins it has, and the span of messages "
 		"recorded.\n\n"
 		"Only groups returned by telegram_list_groups can be "
-		"queried; anything else is reported as not found.";
+		"queried; anything else is reported as not found.\n\n"
+		"Pass group_ids: [...] instead of group_id to look up several "
+		"groups in one call.";
 	t.inputSchema = Json{
 		{ "type", "object" },
 		{ "properties",
-		  Json{ { "group_id",
-			  propGroupId() } } },
-		{ "required", Json::array({ "group_id" }) },
+		  Json{ { "group_id", propGroupId() },
+			{ "group_ids",
+			  Json{ { "type", "array" },
+				{ "items", Json{ { "type", "integer" } } },
+				{ "description",
+				  "Look up several groups in one call (at "
+				  "most " + std::to_string(MAX_BATCH_IDS) +
+					  "). Returns {groups, missing_ids} "
+				  "instead of a single group object; "
+				  "unreadable ids are reported rather than "
+				  "failing the batch." } } } } },
 	};
 	t.handler = [db](const Json &args) {
 		return run_telegram_get_group(db, args);
@@ -1315,12 +2010,10 @@ void add_telegram_list_group_admins(gwmcp::ToolRegistry &registry,
 Json run_telegram_list_recent_messages(const drogon::orm::DbClientPtr &db, const Json &args)
 {
 	std::vector<int64_t> groups;
-	if (args.contains("group_id") &&
-	    args["group_id"].is_number_integer()) {
-		const int64_t g =
-			requireInt(args, "group_id");
-		/* Honour the gate: an unexposed group simply
-		 * has no rows to offer. */
+	if (args.contains("group_id") && args["group_id"].is_number_integer()) {
+		const int64_t g = requireInt(args, "group_id");
+		/* Honour the gate: an unexposed group simply has no rows to
+		 * offer. */
 		for (int64_t e : exposedGroups(db)) {
 			if (e == g)
 				groups.push_back(g);
@@ -1328,8 +2021,12 @@ Json run_telegram_list_recent_messages(const drogon::orm::DbClientPtr &db, const
 	} else {
 		groups = exposedGroups(db);
 	}
-	return listRecent(db, groups, clampLimit(args),
-			  clampOffset(args));
+
+	RowOpts o = rowOpts(args);
+	Json out = listRecent(db, groups, clampLimit(args), clampOffset(args), o);
+	if (o.hoistGroup)
+		out["group_id"] = args["group_id"].get<long long>();
+	return out;
 }
 
 void add_telegram_list_recent_messages(gwmcp::ToolRegistry &registry,
@@ -1682,6 +2379,7 @@ Json run_telegram_popular_words(const drogon::orm::DbClientPtr &db, const Json &
 	 */
 	const long long defStart = (long long)time(nullptr) - 30LL * 86400LL;
 	const DateRange dr = dateRange(args, defStart);
+	const Gate gate = msgGate(db, args);
 	const WordFilter wf = wordFilterFromArgs(args);
 	const int scanCap = clampIntArg(args, "max_messages", 50000,
 					1, 200000);
@@ -1696,7 +2394,7 @@ Json run_telegram_popular_words(const drogon::orm::DbClientPtr &db, const Json &
 		"FROM telegram_group_messages m "
 		"WHERE m.chat_id = ? AND m.text IS NOT NULL "
 		"  AND m.content_type <> 'service'" +
-		std::string(MSG_GATE) + dr.sql +
+		gate.sql + dr.sql +
 		/*
 		 * By date, not message_id: the range is on date, so
 		 * idx_group_messages_chat_date (migration 000024) supplies
@@ -1707,6 +2405,7 @@ Json run_telegram_popular_words(const drogon::orm::DbClientPtr &db, const Json &
 		" ORDER BY m.date DESC LIMIT " + std::to_string(scanCap);
 
 	std::vector<std::string> binds{ std::to_string(gid) };
+	binds.insert(binds.end(), gate.binds.begin(), gate.binds.end());
 	binds.insert(binds.end(), dr.binds.begin(), dr.binds.end());
 
 	std::unordered_map<std::string, int64_t> freq;
@@ -1845,42 +2544,43 @@ Json run_telegram_search_messages(const drogon::orm::DbClientPtr &db, const Json
 	if (args.contains("filter"))
 		c = flt::compile(kMsgSchema, args["filter"]);
 
-	std::string where = c.sql;
-	std::vector<std::string> binds = c.binds;
+	QueryReq q;
+	/* group_id is folded into the gate rather than ANDed separately, so
+	 * the optimiser sees one constant list instead of two conditions. */
+	q.gate = msgGate(db, args);
+	q.whereExtra = c.sql;
+	q.binds = c.binds;
+	q.order = parseOrder(args, c.hasFullText() ? c.ftExpr : std::string());
+	if (q.order.key == "relevance")
+		q.orderBind = c.ftValue;
+	q.limit = clampIntArg(args, "limit", DEFAULT_LIMIT, 0, MAX_LIMIT);
+	q.offset = clampOffset(args);
+	q.includeTotal = args.contains("include_total") &&
+			 args["include_total"].is_boolean() &&
+			 args["include_total"].get<bool>();
+	q.row = rowOpts(args);
+	if (q.row.hoistGroup)
+		q.hoistedGroup = args["group_id"].get<long long>();
 
-	if (args.contains("group_id") &&
-	    args["group_id"].is_number_integer()) {
-		const std::string g = "m.chat_id = ?";
-		where = where.empty() ? g : "(" + where +
-						    " AND " + g +
-						    ")";
-		binds.push_back(std::to_string(
-			requireInt(args, "group_id")));
+	if (args.contains("cursor") && args["cursor"].is_string()) {
+		q.cursor = cursorDecode(args["cursor"].get<std::string>());
+		if (!q.cursor.ok)
+			throw ToolError("cursor is not one this server issued; "
+					"pass back next_cursor verbatim, or omit "
+					"it to start over");
+		if (q.cursor.key != q.order.key)
+			throw ToolError(
+				"this cursor was issued for order_by \"" +
+				q.cursor.key + "\" but the call asks for \"" +
+				q.order.key +
+				"\"; a cursor is only valid for the ordering "
+				"that produced it");
+		if (!q.order.cursorable)
+			throw ToolError("relevance ordering has no cursor; add "
+					"an explicit order_by to page");
 	}
 
-	bool total = args.contains("include_total") &&
-		     args["include_total"].is_boolean() &&
-		     args["include_total"].get<bool>();
-
-	/*
-	 * Ordering a MATCH by date makes MySQL filesort every
-	 * hit -- on 4.6M rows a broad term simply times out.
-	 * When the filter has a full-text condition, order by
-	 * relevance instead: that walks the fulltext index in
-	 * order, so LIMIT stops early. Date order is still used
-	 * when there is no MATCH to exploit.
-	 */
-	std::string order = "m.date DESC";
-	std::string orderBind;
-	if (c.hasFullText()) {
-		order = "MATCH(" + c.ftExpr +
-			") AGAINST(? IN BOOLEAN MODE) DESC";
-		orderBind = c.ftValue;
-	}
-
-	return runMessageQuery(db, where, binds,
-			       order, orderBind, clampLimit(args),
-			       clampOffset(args), total);
+	return runMessageQuery(db, q);
 }
 
 void add_telegram_search_messages(gwmcp::ToolRegistry &registry,
@@ -1906,10 +2606,347 @@ void add_telegram_search_messages(gwmcp::ToolRegistry &registry,
 		"{\"not\":{\"field\":\"content_type\",\"op\":\"=\","
 		"\"value\":\"photo\"}}]}\n\n"
 		"Only readable groups are searched; see "
-		"telegram_list_groups.";
+		"telegram_list_groups.\n\n"
+		"WORKING WITH EDITS AND DELETIONS. `date` is when a message "
+		"was SENT, so a message sent in January and edited in August "
+		"appears in no window on `date` -- filter on `edit_date` or "
+		"`deleted_at` instead, and order by them. Every edited row "
+		"carries previous_version_count, so you can tell which edits "
+		"actually have a recoverable revision WITHOUT a follow-up "
+		"call, then fetch just those with telegram_get_messages "
+		"(include_history: true).\n\n"
+		"Example -- everything edited in one week, cheapest form:\n"
+		"{\"filter\":{\"field\":\"edit_date\",\"op\":\"between\","
+		"\"value\":[\"2026-01-01\",\"2026-01-08\"]},"
+		"\"order_by\":\"edit_date\",\"limit\":200,"
+		"\"fields\":[\"message_id\",\"sender_username\","
+		"\"edit_date\",\"previous_version_count\"],"
+		"\"include_media\":false,\"compact\":true}\n\n"
+		"To exclude bot noise without knowing any bot's id, add "
+		"{\"not\":{\"field\":\"sender_is_bot\",\"op\":\"=\","
+		"\"value\":true}}.\n\n"
+		"SIZE AND PAGING. Use fields/truncate_text/include_media/"
+		"compact to keep a wide scan small, cursor (not offset) to "
+		"page a live archive, and limit: 0 with include_total when you "
+		"only need to know how big the job is.";
 	t.inputSchema = inputSchemaForMessages(true);
 	t.handler = [db](const Json &args) {
 		return run_telegram_search_messages(db, args);
+	};
+	registry.add(std::move(t));
+}
+
+/*
+ * A unified diff between two versions of a message.
+ *
+ * A one-word correction to a long post currently costs the whole post twice --
+ * once as the old version, once as the new -- and the reader still has to spot
+ * what moved. A diff is both smaller and the actual answer to "what changed".
+ *
+ * Line-based, with the usual three-part shape: trim the common prefix and
+ * suffix, then run an LCS over what is left. The trim is what keeps this cheap
+ * in the normal case, because the normal case is a large message with a small
+ * change in it.
+ *
+ * BOUNDED ON PURPOSE. An LCS is O(n*m), and message text is caller-controlled,
+ * so a pathological pair of long dissimilar messages could otherwise burn real
+ * CPU inside a request. Past the cap the diff degrades to a summary line rather
+ * than trying harder; the full text is still one format:"full" call away.
+ */
+constexpr size_t DIFF_MAX_LINES = 400;
+
+std::vector<std::string> splitLines(const std::string &s)
+{
+	std::vector<std::string> out;
+	size_t start = 0;
+	while (start <= s.size()) {
+		const size_t nl = s.find('\n', start);
+		if (nl == std::string::npos) {
+			out.push_back(s.substr(start));
+			break;
+		}
+		out.push_back(s.substr(start, nl - start));
+		start = nl + 1;
+	}
+	return out;
+}
+
+std::string unifiedDiff(const std::string &oldText, const std::string &newText)
+{
+	if (oldText == newText)
+		return "";
+
+	std::vector<std::string> a = splitLines(oldText);
+	std::vector<std::string> b = splitLines(newText);
+
+	/* Common prefix / suffix: the parts a diff would only echo back. */
+	size_t pre = 0;
+	while (pre < a.size() && pre < b.size() && a[pre] == b[pre])
+		pre++;
+	size_t suf = 0;
+	while (suf < a.size() - pre && suf < b.size() - pre &&
+	       a[a.size() - 1 - suf] == b[b.size() - 1 - suf])
+		suf++;
+
+	const size_t an = a.size() - pre - suf;
+	const size_t bn = b.size() - pre - suf;
+
+	if (an > DIFF_MAX_LINES || bn > DIFF_MAX_LINES) {
+		return "@@ too large to diff @@\n-" + std::to_string(an) +
+		       " line(s) replaced by " + std::to_string(bn) +
+		       " line(s); request format \"full\" for the text\n";
+	}
+
+	/* LCS over the differing middle only. */
+	std::vector<std::vector<uint16_t>> dp(an + 1,
+					      std::vector<uint16_t>(bn + 1, 0));
+	for (size_t i = an; i-- > 0;) {
+		for (size_t j = bn; j-- > 0;) {
+			dp[i][j] = a[pre + i] == b[pre + j]
+					   ? (uint16_t)(dp[i + 1][j + 1] + 1)
+					   : std::max(dp[i + 1][j],
+						      dp[i][j + 1]);
+		}
+	}
+
+	std::string out = "@@ -" + std::to_string(pre + 1) + " +" +
+			  std::to_string(pre + 1) + " @@\n";
+	size_t i = 0, j = 0;
+	while (i < an && j < bn) {
+		if (a[pre + i] == b[pre + j]) {
+			out += " " + a[pre + i] + "\n";
+			i++;
+			j++;
+		} else if (dp[i + 1][j] >= dp[i][j + 1]) {
+			out += "-" + a[pre + i] + "\n";
+			i++;
+		} else {
+			out += "+" + b[pre + j] + "\n";
+			j++;
+		}
+	}
+	for (; i < an; i++)
+		out += "-" + a[pre + i] + "\n";
+	for (; j < bn; j++)
+		out += "+" + b[pre + j] + "\n";
+	return out;
+}
+
+/* ---- telegram_get_messages ---- */
+/*
+ * Every edit snapshot for a set of already-authorised message row ids, grouped
+ * by message.
+ *
+ * One query for the whole batch rather than one per message: the edits table is
+ * keyed by group_message_id, so an IN list of a hundred ids is a hundred index
+ * lookups in a single round trip. This is the whole reason the tool exists --
+ * the pattern it replaces was N separate telegram_get_message_history calls.
+ */
+std::unordered_map<int64_t, Json>
+editsForRows(const drogon::orm::DbClientPtr &db,
+	     const std::vector<int64_t> &rowIds)
+{
+	std::unordered_map<int64_t, Json> out;
+	if (rowIds.empty())
+		return out;
+
+	std::string in;
+	std::vector<std::string> binds;
+	for (size_t i = 0; i < rowIds.size(); i++) {
+		in += i ? ",?" : "?";
+		binds.push_back(std::to_string(rowIds[i]));
+	}
+	const std::string sql =
+		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "
+		"e.group_message_id, e.content_type, e.text, e.edit_date, "
+		"e.created_at, "
+		"f.id AS file_id, f.file_type, f.file_size, f.on_disk "
+		"FROM telegram_group_message_edits e "
+		"LEFT JOIN telegram_files f ON f.id = e.file_id "
+		"WHERE e.group_message_id IN (" + in + ") ORDER BY e.id ASC";
+
+	for (const auto &e : execTool(db, sql, binds)) {
+		const int64_t owner = colI64(e, "group_message_id");
+		Json v;
+		v["content_type"] = colStr(e, "content_type");
+		v["text"] = colStr(e, "text");
+		if (colI64(e, "edit_date"))
+			v["edit_date"] = colI64(e, "edit_date");
+		v["observed_at"] = colStr(e, "created_at");
+		if (!e["file_id"].isNull())
+			v["media"] = mediaJson(e, false);
+		if (!out.count(owner))
+			out[owner] = Json::array();
+		out[owner].push_back(std::move(v));
+	}
+	return out;
+}
+
+Json run_telegram_get_messages(const drogon::orm::DbClientPtr &db,
+			       const Json &args)
+{
+	const int64_t gid = requireInt(args, "group_id");
+
+	if (!args.contains("message_ids") || !args["message_ids"].is_array())
+		throw ToolError("message_ids is required and must be an array "
+				"of integers");
+	const Json &idsIn = args["message_ids"];
+	if (idsIn.empty())
+		throw ToolError("message_ids must not be empty");
+	if (idsIn.size() > MAX_BATCH_IDS)
+		throw ToolError("message_ids accepts at most " +
+				std::to_string(MAX_BATCH_IDS) +
+				" ids per call; split the batch");
+
+	std::vector<int64_t> want;
+	std::string in;
+	std::vector<std::string> binds{ std::to_string(gid) };
+	for (const auto &v : idsIn) {
+		if (!v.is_number_integer())
+			throw ToolError("message_ids must contain integers");
+		const int64_t id = v.get<long long>();
+		want.push_back(id);
+		in += in.empty() ? "?" : ",?";
+		binds.push_back(std::to_string(id));
+	}
+
+	const bool withHistory = args.contains("include_history") &&
+				 args["include_history"].is_boolean() &&
+				 args["include_history"].get<bool>();
+	const Gate gate = msgGate(db, args);
+	RowOpts o = rowOpts(args);
+	/* The group is a call parameter here by definition, so compact always
+	 * has an invariant to hoist. */
+	o.hoistGroup = o.compact;
+
+	Json out;
+	out["group_id"] = gid;
+	out["found"] = Json::array();
+	out["missing_ids"] = Json::array();
+
+	std::vector<int64_t> rowIds;
+	std::unordered_map<int64_t, size_t> slotOf; /* row id -> index in found */
+	std::unordered_set<int64_t> seen;
+
+	if (!gate.matchesNothing) {
+		std::vector<std::string> qb = binds;
+		qb.insert(qb.end(), gate.binds.begin(), gate.binds.end());
+		const std::string sql =
+			std::string(MSG_SELECT) +
+			"FROM telegram_group_messages m " + MSG_JOINS +
+			"WHERE m.chat_id = ? AND m.message_id IN (" + in + ")" +
+			gate.sql + " ORDER BY m.message_id ASC";
+
+		for (const auto &r : execTool(db, sql, qb)) {
+			const int64_t mid = colI64(r, "message_id");
+			seen.insert(mid);
+			Json row = messageRow(r, o);
+			const int64_t rowId = colI64(r, "id_internal");
+			if (withHistory) {
+				rowIds.push_back(rowId);
+				slotOf[rowId] = out["found"].size();
+			}
+			out["found"].push_back(std::move(row));
+		}
+	}
+
+	/*
+	 * An unknown id is reported, never fatal. A batch of a hundred ids
+	 * where one has been purged should still return the ninety-nine --
+	 * failing the call would make the caller bisect to find the bad id.
+	 * A id in an unexposed group is "missing" for the same reason the
+	 * other tools return nothing for one: saying otherwise would confirm
+	 * it exists.
+	 */
+	for (int64_t id : want) {
+		if (!seen.count(id))
+			out["missing_ids"].push_back(id);
+	}
+
+	if (withHistory) {
+		auto byOwner = editsForRows(db, rowIds);
+		for (const auto &kv : slotOf) {
+			Json &row = out["found"][kv.second];
+			auto it = byOwner.find(kv.first);
+			row["previous_versions"] =
+				it == byOwner.end() ? Json::array() : it->second;
+			row["previous_version_count"] =
+				row["previous_versions"].size();
+			/*
+			 * Edited and RECOVERABLE are not the same: an edit seen
+			 * before the daemon was watching leaves the flag and no
+			 * snapshot. Say so on the row rather than let an empty
+			 * list read as "nothing changed".
+			 */
+			const bool ed = row.contains("is_edited") &&
+					row["is_edited"].get<bool>();
+			if (ed && row["previous_versions"].empty())
+				row["note"] =
+					"marked edited, but no earlier version "
+					"was captured -- the edit predates "
+					"archiving or happened while the "
+					"daemon was down";
+		}
+	}
+
+	out["count"] = out["found"].size();
+	out["missing_count"] = out["missing_ids"].size();
+	return out;
+}
+
+void add_telegram_get_messages(gwmcp::ToolRegistry &registry,
+			       const drogon::orm::DbClientPtr &db)
+{
+	gwmcp::Tool t;
+	t.name = "telegram_get_messages";
+	t.title = "Fetch many messages by id, optionally with their revisions";
+	t.description =
+		"Fetch up to " + std::to_string(MAX_BATCH_IDS) +
+		" messages of one group by id, in a single call.\n\n"
+		"USE THIS INSTEAD OF LOOPING. With include_history: true it "
+		"also inlines every earlier version and the deletion record "
+		"for each message, which is what telegram_get_message_history "
+		"returns for ONE message -- so a set of fifty edited messages "
+		"costs one call here rather than fifty there.\n\n"
+		"Unknown ids never fail the batch: they come back in "
+		"missing_ids while everything found comes back in found. An id "
+		"in a group that is not readable is reported missing.\n\n"
+		"Typical two-call workflow for \"what was edited this week, "
+		"and what changed\":\n"
+		"  1. telegram_search_messages with filter {\"field\":"
+		"\"edit_date\",\"op\":\"between\",\"value\":[\"2026-01-01\","
+		"\"2026-01-08\"]}, order_by edit_date, "
+		"fields [\"message_id\",\"previous_version_count\"]\n"
+		"  2. telegram_get_messages with those message_ids and "
+		"include_history: true\n\n"
+		"The size controls (fields, truncate_text, include_media, "
+		"compact) work here too.";
+
+	Json props;
+	props["group_id"] = propGroupId();
+	props["message_ids"] = Json{
+		{ "type", "array" },
+		{ "items", Json{ { "type", "integer" } } },
+		{ "description",
+		  "The message ids within that group; at most " +
+			  std::to_string(MAX_BATCH_IDS) + "." }
+	};
+	props["include_history"] = Json{
+		{ "type", "boolean" },
+		{ "description",
+		  "Default false. When true each message also carries "
+		  "previous_versions (oldest first) and "
+		  "previous_version_count -- collapsing N history calls into "
+		  "this one." }
+	};
+	addRowShapeProps(props);
+	t.inputSchema = Json{
+		{ "type", "object" },
+		{ "properties", props },
+		{ "required", Json::array({ "group_id", "message_ids" }) },
+	};
+	t.handler = [db](const Json &args) {
+		return run_telegram_get_messages(db, args);
 	};
 	registry.add(std::move(t));
 }
@@ -1920,9 +2957,14 @@ void add_telegram_search_messages(gwmcp::ToolRegistry &registry,
  * the progression and ends at `current`.
  */
 void msgHistVersions(const drogon::orm::DbClientPtr &db, Json &out,
-		     int64_t rowId)
+		     int64_t rowId, bool asDiff, const std::string &currentText)
 {
-	out["previous_versions"] = Json::array();
+	struct Ver {
+		Json meta;
+		std::string text;
+	};
+	std::vector<Ver> vers;
+
 	for (const auto &e : execTool(
 		     db,
 		     "SELECT e.content_type, e.text, e.edit_date, "
@@ -1932,15 +2974,57 @@ void msgHistVersions(const drogon::orm::DbClientPtr &db, Json &out,
 		     "LEFT JOIN telegram_files f ON f.id = e.file_id "
 		     "WHERE e.group_message_id = ? ORDER BY e.id ASC",
 		     { std::to_string(rowId) })) {
-		Json v;
-		v["content_type"] = colStr(e, "content_type");
-		v["text"] = colStr(e, "text");
+		Ver v;
+		v.text = colStr(e, "text");
+		v.meta["content_type"] = colStr(e, "content_type");
 		if (colI64(e, "edit_date"))
-			v["edit_date"] = colI64(e, "edit_date");
-		v["observed_at"] = colStr(e, "created_at");
+			v.meta["edit_date"] = colI64(e, "edit_date");
+		v.meta["observed_at"] = colStr(e, "created_at");
 		if (!e["file_id"].isNull())
-			v["media"] = mediaJson(e, false);
-		out["previous_versions"].push_back(std::move(v));
+			v.meta["media"] = mediaJson(e, false);
+		vers.push_back(std::move(v));
+	}
+
+	if (!asDiff) {
+		out["previous_versions"] = Json::array();
+		for (auto &v : vers) {
+			Json j = std::move(v.meta);
+			j["text"] = std::move(v.text);
+			out["previous_versions"].push_back(std::move(j));
+		}
+		return;
+	}
+
+	/*
+	 * Diff mode. One array, not two: each entry carries the change AND the
+	 * metadata of the version it produced, so nothing is stated twice. A
+	 * separate previous_versions list alongside the diffs would put the
+	 * edit dates in the response twice and make the "smaller" format
+	 * bigger than the full one for a short message.
+	 */
+	out["diffs"] = Json::array();
+	for (size_t i = 0; i < vers.size(); i++) {
+		const std::string &from = vers[i].text;
+		const bool toSnapshot = i + 1 < vers.size();
+		const std::string &to = toSnapshot ? vers[i + 1].text
+						   : currentText;
+		Json d;
+		d["from_version"] = (int64_t)i;
+		/* The last diff lands on the live message, not a snapshot. */
+		d["to_version"] = toSnapshot ? Json((int64_t)(i + 1))
+					     : Json("current");
+		/* Metadata of the version this diff PRODUCED. */
+		const Json &meta = toSnapshot ? vers[i + 1].meta : Json();
+		if (toSnapshot) {
+			if (meta.contains("edit_date"))
+				d["edit_date"] = meta["edit_date"];
+			d["observed_at"] = meta["observed_at"];
+		}
+		const std::string u = unifiedDiff(from, to);
+		d["diff"] = u;
+		if (u.empty())
+			d["unchanged_text"] = true;
+		out["diffs"].push_back(std::move(d));
 	}
 }
 
@@ -1948,6 +3032,11 @@ Json run_telegram_get_message_history(const drogon::orm::DbClientPtr &db, const 
 {
 	const int64_t gid = requireInt(args, "group_id");
 	const int64_t mid = requireInt(args, "message_id");
+	const Gate gate = msgGate(db, args);
+
+	std::vector<std::string> binds{ std::to_string(gid),
+					std::to_string(mid) };
+	binds.insert(binds.end(), gate.binds.begin(), gate.binds.end());
 
 	/*
 	 * Resolve the caller's (group, message) pair to the internal row id
@@ -1964,9 +3053,8 @@ Json run_telegram_get_message_history(const drogon::orm::DbClientPtr &db, const 
 		"f.id AS file_id, f.file_type, f.file_size, f.on_disk "
 		"FROM telegram_group_messages m "
 		"LEFT JOIN telegram_files f ON f.id = m.file_id "
-		"WHERE m.chat_id = ? AND m.message_id = ?" +
-		std::string(MSG_GATE),
-		{ std::to_string(gid), std::to_string(mid) });
+		"WHERE m.chat_id = ? AND m.message_id = ?" + gate.sql,
+		binds);
 	if (rows.empty())
 		throw ToolError("no readable message " + std::to_string(mid) +
 				" in group " + std::to_string(gid));
@@ -1998,9 +3086,21 @@ Json run_telegram_get_message_history(const drogon::orm::DbClientPtr &db, const 
 	}
 	out["current"] = std::move(cur);
 
-	msgHistVersions(db, out, colI64(r, "id"));
+	std::string fmt = "full";
+	if (args.contains("format") && args["format"].is_string()) {
+		fmt = args["format"].get<std::string>();
+		if (fmt != "full" && fmt != "diff")
+			throw ToolError("\"format\" must be \"full\" or "
+					"\"diff\"");
+	}
+	msgHistVersions(db, out, colI64(r, "id"), fmt == "diff",
+			colStr(r, "text"));
+	out["format"] = fmt;
 
-	const size_t n = out["previous_versions"].size();
+	const size_t n = out.contains("previous_versions")
+				 ? out["previous_versions"].size()
+				 : (out.contains("diffs") ? out["diffs"].size()
+							  : 0);
 	out["previous_version_count"] = n;
 
 	/*
@@ -2044,7 +3144,14 @@ void add_telegram_get_message_history(gwmcp::ToolRegistry &registry,
 		"records WHEN it was observed, it does not erase what "
 		"was said.\n\n"
 		"Identify the message by group_id plus message_id, as "
-		"returned by the message tools. Only readable groups.";
+		"returned by the message tools. Only readable groups.\n\n"
+		"FOR MORE THAN ONE MESSAGE, use telegram_get_messages with "
+		"include_history: true -- it returns the same information for "
+		"up to 100 messages in a single call. This tool is the "
+		"single-message form.\n\n"
+		"format: \"diff\" returns unified diffs between consecutive "
+		"versions rather than the full text of each, which is much "
+		"smaller when a long message got a small edit.";
 	t.inputSchema = Json{
 		{ "type", "object" },
 		{ "properties",
@@ -2054,7 +3161,17 @@ void add_telegram_get_message_history(gwmcp::ToolRegistry &registry,
 			  Json{ { "type", "integer" },
 				{ "description",
 				  "The message's id within that "
-				  "group." } } } } },
+				  "group." } } },
+			{ "format",
+			  Json{ { "type", "string" },
+				{ "enum", Json::array({ "full", "diff" }) },
+				{ "description",
+				  "full (default) returns the complete text "
+				  "of every version. diff returns a unified "
+				  "diff between consecutive versions instead "
+				  "-- far smaller when a long message was "
+				  "edited slightly, and it shows what "
+				  "actually changed." } } } } },
 		{ "required",
 		  Json::array({ "group_id", "message_id" }) },
 	};
@@ -2440,6 +3557,12 @@ void add_telegram_get_users(gwmcp::ToolRegistry &registry,
 		"\nNote names are not indexed, so a name search scans "
 		"the user table -- prefer user_id or username when you "
 		"have one.\n\n"
+		"BATCH LOOKUP. To resolve many users at once, use the \"in\" "
+		"operator on user_id -- it is the primary key, so up to 100 "
+		"ids resolve in a single indexed call:\n"
+		"{\"field\":\"user_id\",\"op\":\"in\",\"value\":"
+		"[123,456,789]}\n"
+		"Do not loop one call per user.\n\n"
 		"This tool is not restricted to readable groups: it "
 		"describes accounts, not conversations.";
 	t.inputSchema = Json{
@@ -2473,6 +3596,7 @@ void registerTools(gwmcp::ToolRegistry &registry, drogon::orm::DbClientPtr db)
 	add_telegram_count_user_messages(registry, db);
 	add_telegram_popular_words(registry, db);
 	add_telegram_search_messages(registry, db);
+	add_telegram_get_messages(registry, db);
 	add_telegram_get_message_history(registry, db);
 	add_telegram_get_user(registry, db);
 	add_telegram_get_user_history(registry, db);
