@@ -128,6 +128,7 @@ std::string bindValue(const Field &f, const nlohmann::json &v)
 		return s;
 	}
 	case FType::Bool:
+	case FType::Presence:
 		if (v.is_boolean())
 			return v.get<bool>() ? "1" : "0";
 		if (v.is_number_integer())
@@ -228,10 +229,21 @@ std::string compileLeaf(Ctx &ctx, const nlohmann::json &node)
 	if (op == "match")
 		fail("field \"" + key + "\" does not support \"match\"");
 
-	if (op == "is_null")
-		return "(" + expr + " IS NULL)";
-	if (op == "is_not_null")
-		return "(" + expr + " IS NOT NULL)";
+	/* How this field spells a bound value; "?" unless it needs converting. */
+	const std::string ph = f->valExpr.empty() ? std::string("?")
+						  : std::string(f->valExpr);
+
+	if (op == "is_null" || op == "is_not_null") {
+		/*
+		 * A 0-sentinel column has no NULL to test, so the same question
+		 * -- did this ever happen? -- is asked of the value instead.
+		 */
+		if (f->type == FType::Presence)
+			return op == "is_null" ? "(" + expr + " = 0)"
+					       : "(" + expr + " <> 0)";
+		return op == "is_null" ? "(" + expr + " IS NULL)"
+				       : "(" + expr + " IS NOT NULL)";
+	}
 
 	if (!hasValue)
 		fail("operator \"" + op + "\" on field \"" + key +
@@ -248,7 +260,7 @@ std::string compileLeaf(Ctx &ctx, const nlohmann::json &node)
 		for (size_t i = 0; i < v.size(); i++) {
 			if (i)
 				out += ", ";
-			out += "?";
+			out += ph;
 			ctx.binds.push_back(bindValue(*f, v[i]));
 		}
 		out += "))";
@@ -260,7 +272,7 @@ std::string compileLeaf(Ctx &ctx, const nlohmann::json &node)
 			fail("\"between\" needs an array of exactly two values");
 		ctx.binds.push_back(bindValue(*f, v[0]));
 		ctx.binds.push_back(bindValue(*f, v[1]));
-		return "(" + expr + " BETWEEN ? AND ?)";
+		return "(" + expr + " BETWEEN " + ph + " AND " + ph + ")";
 	}
 
 	static const struct {
@@ -273,7 +285,7 @@ std::string compileLeaf(Ctx &ctx, const nlohmann::json &node)
 	for (const auto &c : kCmp) {
 		if (op == c.op) {
 			ctx.binds.push_back(bindValue(*f, v));
-			return "(" + expr + " " + c.sql + " ?)";
+			return "(" + expr + " " + c.sql + " " + ph + ")";
 		}
 	}
 
@@ -381,6 +393,9 @@ std::string describeFields(const Schema &schema)
 				      break;
 		case FType::DateTs:   out += "date"; break;
 		case FType::Bool:     out += "boolean"; break;
+		case FType::Presence: out += "presence, use op is_null / "
+					     "is_not_null";
+				      break;
 		}
 		out += ")";
 		if (!f.desc.empty()) {

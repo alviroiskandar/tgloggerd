@@ -42,6 +42,14 @@ enum class FType {
 	Enum,     /* must be one of `enumVals` */
 	DateTs,   /* ISO-8601 or unix seconds in, unix seconds out */
 	Bool,     /* true/false */
+	/*
+	 * A column that stores 0 to mean "never happened" -- edit_date is the
+	 * one. NULL is not available there (the column is NOT NULL DEFAULT 0),
+	 * so is_null / is_not_null are compiled to `= 0` / `<> 0` instead.
+	 * That keeps the caller's mental model identical to a nullable column
+	 * like deleted_at, and stays a range the index can use.
+	 */
+	Presence,
 };
 
 struct Field {
@@ -50,6 +58,17 @@ struct Field {
 	FType            type;
 	std::string_view enumVals;  /* CSV, for FType::Enum */
 	std::string_view desc;      /* shown in the tool's inputSchema */
+
+	/*
+	 * How a bound value is spelled in the SQL, when "?" alone is not
+	 * comparable with `expr`. deleted_at is a DATETIME while the caller
+	 * writes a date or a unix timestamp, so it binds "FROM_UNIXTIME(?)":
+	 * the conversion lands on the VALUE side, leaving the column bare and
+	 * therefore still index-usable. Wrapping the column instead --
+	 * UNIX_TIMESTAMP(m.deleted_at) >= ? -- would compile but could not use
+	 * an index. Empty means plain "?".
+	 */
+	std::string_view valExpr;
 };
 
 struct Schema {
