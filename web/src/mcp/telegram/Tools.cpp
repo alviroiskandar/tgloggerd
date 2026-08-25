@@ -3200,10 +3200,13 @@ Json run_telegram_get_user(const drogon::orm::DbClientPtr &db, const Json &args)
 		"e.restriction_reason, e.has_sensitive_content, "
 		"e.restricts_new_chats, e.paid_message_star_count, "
 		"e.personal_chat_id, e.emoji_status_custom_emoji_id, "
-		"e.profile_accent_color_id "
+		"e.profile_accent_color_id, "
+		"pf.on_disk AS photo_on_disk "
 		"FROM telegram_users u "
 		"LEFT JOIN telegram_user_extra_info e "
 		"  ON e.user_id = u.id "
+		"LEFT JOIN telegram_files pf "
+		"  ON pf.id = u.profile_photo_file_id "
 		"WHERE u.id = ?";
 
 	Json out;
@@ -3289,15 +3292,20 @@ Json run_telegram_get_user(const drogon::orm::DbClientPtr &db, const Json &args)
 		colI64(r, "profile_photo_file_id");
 	if (photo) {
 		out["profile_photo_file_id"] = photo;
-		/* The fetchable link. Omitted rather
-		 * than emitted relative when no public
-		 * base URL is configured, since a
-		 * relative path is useless to a client
-		 * that is not a browser on this site. */
-		const std::string u =
-			fileurl::forFile((uint64_t)photo);
-		if (!u.empty())
-			out["profile_photo_url"] = u;
+		/*
+		 * The fetchable link, only when the bytes are actually stored:
+		 * /files/<token> answers 404 for a file that was pruned, so a
+		 * link would promise something the archive cannot deliver.
+		 * Omitted rather than emitted relative when no public base URL
+		 * is configured, since a relative path is useless to a client
+		 * that is not a browser on this site.
+		 */
+		if (colI64(r, "photo_on_disk")) {
+			const std::string u =
+				fileurl::forFile((uint64_t)photo);
+			if (!u.empty())
+				out["profile_photo_url"] = u;
+		}
 	}
 
 	/* Every active username, not just the first: a user may
@@ -3383,16 +3391,22 @@ void userHistPhotos(const drogon::orm::DbClientPtr &db, Json &out,
 	out["photos"] = Json::array();
 	for (const auto &r : execTool(
 		     db,
-		     "SELECT file_id, created_at FROM "
-		     "telegram_user_hist_profile_photo "
-		     "WHERE user_id = ? ORDER BY id DESC LIMIT " + lim,
+		     "SELECT h.file_id, h.created_at, f.on_disk "
+		     "FROM telegram_user_hist_profile_photo h "
+		     "LEFT JOIN telegram_files f ON f.id = h.file_id "
+		     "WHERE h.user_id = ? "
+		     "ORDER BY h.id DESC LIMIT " + lim,
 		     { bind })) {
 		const int64_t fid = colI64(r, "file_id");
 		Json j;
 		j["file_id"] = fid;
-		const std::string u = fileurl::forFile((uint64_t)fid);
-		if (!u.empty())
-			j["url"] = u;
+		/* Only when the bytes are actually there -- see groupHistPhotos
+		 * for the same gate, and mediaJson for why it matters. */
+		if (colI64(r, "on_disk")) {
+			const std::string u = fileurl::forFile((uint64_t)fid);
+			if (!u.empty())
+				j["url"] = u;
+		}
 		j["observed_at"] = colStr(r, "created_at");
 		out["photos"].push_back(std::move(j));
 	}
