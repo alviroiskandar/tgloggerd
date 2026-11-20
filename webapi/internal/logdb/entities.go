@@ -32,6 +32,9 @@ type FileRef struct {
 	Ext    string // without the dot, or ""
 	Name   string // the name sent through Telegram, or ""
 	Type   string // file_type
+	// Generated: a still the daemon took from a stored video
+	// (generated_from_file_id set), which Telegram never had.
+	Generated bool
 }
 
 // User is a telegram_users row with what its summary shows.
@@ -135,7 +138,7 @@ func uniq(ids []int64) []int64 {
 func fileColumnsOf(alias string) string {
 	return alias + ".id, " + alias + ".on_disk, " + alias + ".file_size, " +
 		"COALESCE(" + alias + ".file_ext, ''), " + alias + ".orig_file_name, " +
-		alias + ".file_type"
+		alias + ".file_type, " + alias + ".generated_from_file_id IS NOT NULL"
 }
 
 // nullFile scans the columns of fileColumnsOf.
@@ -146,10 +149,11 @@ type nullFile struct {
 	ext    sql.NullString
 	name   sql.NullString
 	typ    sql.NullString
+	gen    sql.NullBool
 }
 
 func (n *nullFile) dest() []any {
-	return []any{&n.id, &n.onDisk, &n.size, &n.ext, &n.name, &n.typ}
+	return []any{&n.id, &n.onDisk, &n.size, &n.ext, &n.name, &n.typ, &n.gen}
 }
 
 // ref is the file, given the id the referring row holds (0 for none).
@@ -158,7 +162,8 @@ func (n *nullFile) ref(id uint64) FileRef {
 		return FileRef{ID: id}
 	}
 	return FileRef{ID: uint64(n.id.Int64), Exists: true, OnDisk: n.onDisk.Bool,
-		Size: uint64(n.size.Int64), Ext: n.ext.String, Name: n.name.String, Type: n.typ.String}
+		Size: uint64(n.size.Int64), Ext: n.ext.String, Name: n.name.String, Type: n.typ.String,
+		Generated: n.gen.Bool}
 }
 
 const userSelect = "SELECT u.id, u.first_name, u.last_name, u.type, " +

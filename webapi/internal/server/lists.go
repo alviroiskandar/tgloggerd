@@ -1195,7 +1195,7 @@ func (s *Server) fileRow(sc scope.Scope, signedIn bool, r logdb.Row,
 		h = strings.ToLower(h)
 		f.SHA256 = &h
 	}
-	l := s.fileLink(sc, signedIn, f.ID, f.Size, f.Stored)
+	l := s.fileLink(sc, signedIn, f.ID, f.Size, f.Stored, r.Bool("is_generated"))
 	f.URL, f.Fetchable, f.Fetch = l.URL, l.Fetchable, l.Fetch
 	if hasThumb(f.Stored, f.FileType, f.Ext) {
 		f.Thumb = f.URL
@@ -1209,7 +1209,7 @@ func (s *Server) fileRow(sc scope.Scope, signedIn bool, r logdb.Row,
 	if st, ok := stills[f.ID]; ok {
 		// Stored, so the size does not matter.
 		if id := cmp.Or(st.Cover, st.Thumbnail); id != 0 {
-			f.Thumb = s.fileLink(sc, signedIn, id, 0, true).URL
+			f.Thumb = s.fileLink(sc, signedIn, id, 0, true, false).URL
 		}
 		// As the chat's media (mediaDetail): only valid base64.
 		if _, err := base64.StdEncoding.DecodeString(st.Minithumb); err == nil && st.Minithumb != "" {

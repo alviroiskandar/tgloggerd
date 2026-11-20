@@ -178,8 +178,11 @@ type fileLink struct {
 	Fetch *string
 }
 
-// fileLink links a file for a request (mayFetch, ViaPage).
-func (s *Server) fileLink(sc scope.Scope, signedIn bool, id, size uint64, stored bool) fileLink {
+// fileLink links a file for a request (mayFetch, ViaPage). A still
+// the daemon generated from a stored video (generated) is never
+// fetchable: Telegram never had it, and the daemon takes it again from
+// the video when it is evicted, so one not stored has no link.
+func (s *Server) fileLink(sc scope.Scope, signedIn bool, id, size uint64, stored, generated bool) fileLink {
 	if id == 0 {
 		return fileLink{}
 	}
@@ -187,6 +190,9 @@ func (s *Server) fileLink(sc scope.Scope, signedIn bool, id, size uint64, stored
 	u := "/files/" + tok
 	if stored {
 		return fileLink{URL: &u}
+	}
+	if generated {
+		return fileLink{}
 	}
 	switch s.mayFetch(sc, size, signedIn, media.ViaPage) {
 	case media.Allowed:
@@ -408,7 +414,15 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Not in the store: ask the daemon to fetch it from Telegram, if
-	// this request may.
+	// this request may. A generated still is not on Telegram (the
+	// daemon would answer 410 "generated"); it is not stored until the
+	// daemon takes it again from its video.
+	if meta.Generated {
+		statusPage(w, http.StatusNotFound, "File not stored",
+			"This picture was taken from a stored video and is not in "+
+				"storage now; it is made again from the video.")
+		return
+	}
 	switch s.mayFetch(sc, meta.Size, sess != nil, media.ViaLink) {
 	case media.Off:
 		statusPage(w, http.StatusNotFound, "File not stored",

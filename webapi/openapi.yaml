@@ -6328,8 +6328,9 @@ components:
             shows it with where it plays a role there: a rich block's
             thumbnail at its position, an animated chat photo's still
             photo, a video link preview's cover, else the preview's
-            photo (never the video's own URL); else null. An animated
-            (.tgs) sticker has none.
+            photo (never the video's own URL); else a still the
+            daemon generated from the stored video; else null. An
+            animated (.tgs) sticker has none.
         minithumb:
           type: string
           description: >-

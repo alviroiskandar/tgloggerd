@@ -79,6 +79,13 @@ func (s *Server) fetchFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A still generated from a stored video is not on Telegram: the
+	// daemon would answer 410 "generated" without asking it.
+	if meta.Generated {
+		s.refuse(w, r, v, http.StatusGone, "gone", "fetch.gone")
+		return
+	}
+
 	switch s.mayFetch(sc, meta.Size, true, media.ViaAction) {
 	case media.Allowed:
 	case media.Denied:

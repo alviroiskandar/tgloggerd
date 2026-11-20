@@ -30,10 +30,14 @@ type File struct {
 	Size     uint64 // file_size; 0 = unknown
 	OnDisk   bool   // the bytes are in the store
 	AliasOf  uint64 // the row holding the same bytes, 0 if none
+	// Generated: a still the daemon took from a stored video
+	// (generated_from_file_id set), which Telegram never had.
+	Generated bool
 }
 
 const fileColumns = "SELECT id, LOWER(HEX(sha256)), file_ext, file_type, " +
-	"orig_file_name, file_size, on_disk, alias_of FROM telegram_files " +
+	"orig_file_name, file_size, on_disk, alias_of, " +
+	"generated_from_file_id IS NOT NULL FROM telegram_files " +
 	"WHERE id = ?"
 
 func file(ctx context.Context, db *sql.DB, id uint64) (File, error) {
@@ -45,7 +49,7 @@ func file(ctx context.Context, db *sql.DB, id uint64) (File, error) {
 		size, fileID uint64
 	)
 	err := db.QueryRowContext(ctx, fileColumns, id).Scan(&fileID, &hex, &ext,
-		&f.Type, &f.OrigName, &size, &onDisk, &aliasOf)
+		&f.Type, &f.OrigName, &size, &onDisk, &aliasOf, &f.Generated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return File{}, ErrNotFound
 	}

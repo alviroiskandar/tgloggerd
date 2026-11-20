@@ -164,6 +164,14 @@ someone asks for it:
 - `/files/<token>` itself keeps its rule: without a session small files
   only, with one (and `fetch_files`) any size, so the URL the action
   answers with works, and so does a link handed out earlier.
+- A still the daemon generated from a stored video
+  (docs/design/message-types.md, "Generated stills";
+  `generated_from_file_id` set) is never fetchable: Telegram never had
+  it, and the daemon takes it again from the video when it is evicted.
+  Not stored, it has `fetchable` false and `url` and `fetch` null for
+  every viewer, its link answers 404 "File not stored" and the action
+  410 `gone`, neither asking the daemon (which would answer 410
+  `generated`).
 
 The decision is made in one place, `Server.mayFetch()` in
 `webapi/internal/server/media.go` with `media.Policy`, which tells a
@@ -172,15 +180,19 @@ link (`/files/<token>`), a page view and the action apart.
 ## Video stills
 
 A video, animation, video note or video (.webm) sticker shows a still
-picture before it plays, from what Telegram sends; no frame is taken
-from the video itself. The daemon stores two kinds of picture with the
-message, each a file of its own in the store, under its cap and
-eviction like any other (docs/design/message-types.md section 4.3):
+picture before it plays. The daemon stores up to two kinds of picture
+with the message, each a file of its own in the store, under its cap
+and eviction like any other (docs/design/message-types.md section 4.3):
 
 - the video's cover, when its sender set one (role `cover`);
 - the thumbnail TDLib offers with most videos, when it is a still
   image (JPEG, PNG or WebP; role `thumbnail`, file_type `thumbnail`).
   Messages logged before the daemon stored thumbnails have none.
+- for a stored video with neither, a still the daemon took from the
+  video's own bytes ("Generated stills" there): a `thumbnail` too,
+  with `generated_from_file_id` set. Telegram never had it, so it is
+  never fetchable (above); a Telegram thumbnail stored later replaces
+  it.
 
 Besides those, a message logged since migration 000034 records TDLib's
 minithumbnail, a tiny blurred JPEG, in its `content_extra`.
@@ -195,7 +207,9 @@ placeholder.
 The files list's rows (FileRow) of those kinds carry `thumb` as the
 stored cover, else the stored thumbnail, of any message the viewer
 sees that carried the file (the same video sent again carries the same
-pictures), and `minithumb` likewise. `thumb` is never the video's own
+pictures), and `minithumb` likewise. A Telegram thumbnail of any of
+those messages, in either message table, comes before a generated
+still of another, and the smallest id among equals. `thumb` is never the video's own
 URL, and never an unstored picture's, so showing the list fetches
 nothing. Both are read for a whole page at once, in one query per
 message table. A thumbnail's own row is listed as a `photo`, its own

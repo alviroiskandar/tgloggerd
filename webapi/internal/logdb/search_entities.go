@@ -446,7 +446,8 @@ var Files = &Entity{
 	from: "telegram_files f",
 	sel: "f.id, f.file_type, f.file_ext, f.orig_file_name, " +
 		"f.file_size, f.hit_count, f.on_disk, f.created_at, " +
-		"f.accessed_at, f.tg_file_id, HEX(f.sha256) AS sha256_hex",
+		"f.accessed_at, f.tg_file_id, HEX(f.sha256) AS sha256_hex, " +
+		"f.generated_from_file_id IS NOT NULL AS is_generated",
 	idCol:    "f.id",
 	defSort:  "f.id",
 	defOrder: "DESC",
