@@ -387,6 +387,32 @@ int TgLoggerd::start(void)
 			}
 		});
 	});
+	/*
+	 * An animated current photo's video: recorded without its bytes,
+	 * like the photo lists' files, and linked to the history row of its
+	 * still (the row trackProfilePhotoChange made for it, if any).
+	 */
+	tdlib_->setPhotoVideoHandler([this](int64_t owner_id, bool is_group,
+					    const models::File &still,
+					    const models::File &video) {
+		serial_->post([this, owner_id, is_group, still, video] {
+			try {
+				const uint64_t sid = db_->upsertFileMeta(still).id;
+				const uint64_t vid = db_->upsertFileMeta(video).id;
+				if (db_->setPhotoHistoryVideo(owner_id, is_group,
+							      sid, vid))
+					pr_info(l_, "photo video: %s %lld: video"
+						" file %llu linked to photo file"
+						" %llu", is_group ? "group" : "user",
+						(long long)owner_id,
+						(unsigned long long)vid,
+						(unsigned long long)sid);
+			} catch (const std::exception &e) {
+				pr_error(l_, "photo video: %lld: %s",
+					 (long long)owner_id, e.what());
+			}
+		});
+	});
 	tdlib_->setUserFullInfoHandler([this](const models::UserFullInfo &fi) {
 		serial_->post([this, fi] {
 			try {

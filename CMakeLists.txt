@@ -359,6 +359,21 @@ target_compile_options(chat_recheck_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(chat_recheck_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
+# The video of an animated profile or group photo in the photo history,
+# against a throwaway MySQL with every migration applied
+# (TGL_TEST_MYSQL_* in the test's header); not part of the default build:
+#   cmake --build build --target photo_history_db_test && build/photo_history_db_test
+add_executable(photo_history_db_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/photo_history_db_test.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp)
+target_include_directories(photo_history_db_test PRIVATE src)
+target_compile_options(photo_history_db_test PRIVATE -Wall -Wextra)
+target_link_libraries(photo_history_db_test PRIVATE connector-jdbc
+	nlohmann_json::nlohmann_json Threads::Threads)
+
 # discordd -- the Discord daemon (logs Discord messages, forwards them to
 # Telegram). Added last: it links Td::TdStatic and connector-jdbc from the
 # subprojects above, and pulls in the self-contained gwdiscord library. Its

@@ -117,18 +117,24 @@ int64_t queryInt(const InternalApi::Request &req, const char *name,
  * listing earlier photos fetches none), or 0 when the file carries no
  * remote id to record.
  */
-uint64_t recordPhotoFile(DB &db, const td_api::file *f)
+uint64_t recordFile(DB &db, const td_api::file *f, const char *type,
+		    const char *ext)
 {
 	if (!f || !f->remote_ || f->remote_->id_.empty())
 		return 0;
 	models::File mf;
 	mf.tg_file_id = f->remote_->id_;
 	mf.tg_unique_id = f->remote_->unique_id_;
-	mf.file_type = "photo";
+	mf.file_type = type;
 	mf.file_size = f->size_ > 0 ? (uint64_t)f->size_ : 0;
 	mf.on_disk = false;
-	mf.file_ext = "jpg";
+	mf.file_ext = ext;
 	return db.upsertFileMeta(mf).id;
+}
+
+uint64_t recordPhotoFile(DB &db, const td_api::file *f)
+{
+	return recordFile(db, f, "photo", "jpg");
 }
 
 std::string uniqueOf(const td_api::file *f)
@@ -138,20 +144,28 @@ std::string uniqueOf(const td_api::file *f)
 
 /*
  * Record one photo (its largest size) and its history row, and describe it
- * for the answer. @date is the photo's own date (0 when unknown).
+ * for the answer. @date is the photo's own date (0 when unknown). @video
+ * is the MPEG-4 of an animated photo (the big animation, else the small
+ * one; nullptr for a still), recorded without its bytes like the still and
+ * linked to the history row as video_file_id.
  */
 nlohmann::json photoEntry(DB &db, bool is_group, int64_t owner, int64_t photo_id,
 			  const td_api::file *f, int64_t date, bool animated,
-			  bool is_current)
+			  bool is_current, const td_api::file *video = nullptr)
 {
 	uint64_t fid = recordPhotoFile(db, f);
-	if (fid != 0)
+	uint64_t vid = 0;
+	if (fid != 0) {
 		db.ensurePhotoHistory(owner, is_group, fid, date);
+		vid = recordFile(db, video, "video", "mp4");
+		db.setPhotoHistoryVideo(owner, is_group, fid, vid);
+	}
 	return {
 		{ "photo_id", photo_id ? nlohmann::json(std::to_string(photo_id))
 				       : nlohmann::json(nullptr) },
 		{ "date", date > 0 ? nlohmann::json(date) : nlohmann::json(nullptr) },
 		{ "file_id", fid ? nlohmann::json(fid) : nlohmann::json(nullptr) },
+		{ "video_file_id", vid ? nlohmann::json(vid) : nlohmann::json(nullptr) },
 		{ "is_current", is_current },
 		{ "animated", animated },
 	};
@@ -197,7 +211,8 @@ nlohmann::json userPhotos(TDLib &t, DB &db, int64_t user_id, int64_t offset,
 				db, false, user_id, ph->id_,
 				chat_photo_best_size_of(ph->sizes_), ph->added_date_,
 				ph->animation_ != nullptr,
-				current != 0 && ph->id_ == current));
+				current != 0 && ph->id_ == current,
+				chat_photo_animation(ph.get())));
 		}
 		return { { "outcome", "ok" }, { "message", "" },
 			 { "photos", photos }, { "total", list->total_count_ } };
@@ -263,7 +278,7 @@ nlohmann::json chatPhotos(TDLib &t, DB &db, int64_t chat_id, int64_t offset,
 			photos.push_back(photoEntry(
 				db, true, chat_id, found[i]->id_, f,
 				found[i]->added_date_, found[i]->animation_ != nullptr,
-				is_current));
+				is_current, chat_photo_animation(found[i].get())));
 		}
 		/*
 		 * The current photo, set before the history Telegram keeps

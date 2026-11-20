@@ -470,6 +470,19 @@ public:
 		std::function<void(const models::UserFullInfo &)> cb);
 
 	/*
+	 * Set the callback for the video of an animated current photo, seen
+	 * in a user's or a group's full info: @still is the photo's largest
+	 * size and @video its MPEG-4 (the big animation, else the small one),
+	 * both described for a metadata-only telegram_files row. The callee
+	 * links the video to the history row of that still. Loop thread;
+	 * keep DB work off it.
+	 */
+	void setPhotoVideoHandler(
+		std::function<void(int64_t owner_id, bool is_group,
+				   const models::File &still,
+				   const models::File &video)> cb);
+
+	/*
 	 * Set the callback invoked when a user's (big) profile photo has
 	 * finished downloading.
 	 */
