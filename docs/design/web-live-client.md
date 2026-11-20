@@ -4,7 +4,8 @@ Status: built in `web/app/` and in service since 2026-11-18, against
 the Go service's event stream and entity lookup. The browser side
 of [web-live.md](web-live.md): how the React application in `web/app/`
 subscribes to `GET /api/events`, what each event refreshes, how
-refreshes are throttled, and what happens without the stream.
+refreshes are throttled, what happens without the stream, and how a
+signed-out visitor of a public chat follows it (section 7).
 
 ## 1. Principles
 
@@ -113,7 +114,53 @@ unknown) are not asked for again until the next page load.
   for that chat and polling; turning it on again refetches from the
   cursor.
 
-## 7. Needs from the server
+## 7. Signed-out viewers
+
+A visitor reading the public chat of an exposed group follows that
+chat live too, as decided in
+[the decision log](decisions/2026-11-21-chat-live-public.md). Its
+stream differs from a signed-in one; the server side is in
+`webapi/openapi.yaml` (GET /api/events).
+
+- Which pages: only the public chat (route `group_chat`, signed out)
+  opens a stream, with its own `chat:<id>` topic and nothing else.
+  Every other signed-out page has none, and no signed-out page asks for
+  `messages`, `user:`, `group:` or `stats`; the entity cache stays off.
+- Reader: the stream is read with fetch (`src/live/fetchsource.ts`),
+  not `EventSource`, which hides a refusal's status and headers: a
+  visitor refused for the caps gets 503 with a Retry-After, and the
+  reader keeps it for the next attempt. It never reconnects on its own
+  and sends no Last-Event-ID.
+- No seqs: the manager runs in its signed-out mode. Frames have no
+  `id:` and events no seq, so it sends no `last=`, keeps no seq and
+  drops no event as a repeat. There is no resuming: the server starts
+  every open with a `resync`, so each reconnect is one refetch, and the
+  manager makes up no resync of its own.
+- Refetch rate: that first `resync` carries `refetch_interval`, the
+  least number of seconds between two refetches of a chat window (5
+  when absent). All of a visitor's refetches go under one key at that
+  interval, so a burst of events is one refetch: the tail for a new
+  message at the newest, the window in one pass for a message filled
+  in, an edit, a deletion or a stored file; a message after a window
+  with newer pages is left to those pages, and a `resync` refetches the
+  tail at the newest and the window otherwise. Visitors' windows come
+  from a cache the server shares between them, up to 2 s old.
+- Without the stream: never the one-second tail polling. While the
+  stream is refused or down, the chat refetches its window every 30 s
+  while the tab is visible, not at all while hidden, and once when it
+  becomes visible again. The footer then says "Live updates
+  unavailable; checking for new messages every 30 seconds." in place
+  of "New messages appear as they are logged.", and goes back once the
+  stream is open.
+- Reconnects: the back-off of section 6 with its jitter, and never
+  before a refusal's Retry-After; the wait is then the Retry-After plus
+  a jittered part of the first step (1.25 to 2.5 s).
+- Session events: a visitor has no session to lose, so `revoked` is
+  ignored. `scope_changed` (the group was withdrawn from exposure)
+  reloads the page data, whose answer says whether the chat is still
+  public.
+
+## 8. Needs from the server
 
 These would make the client simpler or correct; the first four matter
 most.
@@ -150,7 +197,7 @@ most.
    when nothing it shows changed (a bio change on a page that shows only
    names).
 
-## 8. Tests
+## 9. Tests
 
 - The manager is tested against a fake event source: topic changes
   reconnect once with `last`, events for unmounted topics are ignored,
