@@ -60,6 +60,16 @@ test('a message filled in later lands in its place, not at the bottom', async ({
 	await expect(page.locator('.c-unseen')).toHaveCount(0);
 });
 
+test('a window scrolled back to the oldest still shows edits live', async ({ page, emit }) => {
+	await page.goto(`/groups/${G}/chat?after=0`);
+	await expect(page.locator('.a-livestate.is-live')).toBeVisible();
+	const msgs = (await (await page.request.get(`/api/page/groups/${G}/chat?after=0`)).json()).props as { has_newer: boolean; messages: { message_id: number; content_type: string }[] };
+	expect(msgs.has_newer, 'the oldest window has newer pages').toBe(true);
+	const m = msgs.messages.find((x, k) => k > 2 && x.content_type === 'text')!;
+	await emit({ kind: 'message.edited', chat_id: G, message_id: m.message_id });
+	await expect(page.locator(`#m${m.message_id}`)).toContainText('(edited live)');
+});
+
 test('without the stream the chat polls, and goes live again when it returns', async ({ page, emit, standinUrl }) => {
 	await page.goto(`/groups/${G}/chat`);
 	await expect(page.locator('.a-livestate.is-live')).toBeVisible();
