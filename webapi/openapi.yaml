@@ -3704,6 +3704,12 @@ paths:
         which stays the account its requests are attributed to
         (minted_by): disabling that account disables the token. Audited
         as mcp_token_create, with the name, and owner_set.
+
+
+        scope narrows what the token reads (McpScopeWrite; left out or
+        empty, it reads every exposed group). It is checked as
+        renameMcpToken checks it and, when not empty, audited as
+        mcp_token_scope as well.
       security:
         - session: []
           csrf: []
@@ -3720,6 +3726,8 @@ paths:
                 owner_id:
                   type: integer
                   format: int64
+                scope:
+                  $ref: '#/components/schemas/McpScopeWrite'
       responses:
         '201':
           description: Created.
@@ -3739,7 +3747,16 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
-          $ref: '#/components/responses/Csrf'
+          description: >-
+            The CSRF token is missing or wrong (error csrf), a gate is
+            up, or the scope names a private chat the viewer may not
+            give this token (error forbidden: the viewer is not a
+            superadmin, or the token's owner is not one); message says
+            which.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -3747,14 +3764,31 @@ paths:
     patch:
       operationId: renameMcpToken
       tags: [mcp]
-      summary: Rename an MCP bearer token
+      summary: Rename an MCP bearer token, or set its scope
       description: >-
         For whoever manages the token (see revokeMcpToken); a token the
-        viewer does not manage is 404 like an unknown one. The name is
-        trimmed and cut to 64 characters and must not end up empty (400
-        bad_request). A revoked token can be renamed too. An unchanged
-        name answers 204 and audits nothing; a change is audited as
-        mcp_token_rename, with the old and the new name.
+        viewer does not manage is 404 like an unknown one. The body
+        carries name, scope or both; with neither it is 400
+        bad_request. The name is trimmed and cut to 64 characters and
+        must not end up empty (400 bad_request). A revoked token can be
+        renamed too. An unchanged name answers 204 and audits nothing; a
+        change is audited as mcp_token_rename, with the old and the new
+        name.
+
+
+        scope replaces the token's scope as a whole (McpScopeWrite; an
+        empty list makes it read every exposed group again). An entry
+        of an unknown kind, with an id of the wrong sign, naming a
+        federation that does not exist, a group the viewer cannot see
+        or an unknown user, or more than 200 entries, is 400
+        bad_request, and nothing is changed. A private entry is
+        written only by a superadmin, on a token owned by a superadmin
+        or without an owner record; anyone else is 403 forbidden, so an
+        admin editing a token that still holds an inactive private
+        entry drops it to save. An unchanged scope audits nothing; a
+        change is audited as mcp_token_scope, with the entries
+        written. The scope is applied from the token's next request
+        on.
       security:
         - session: []
           csrf: []
@@ -3766,19 +3800,29 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name]
               properties:
                 name:
                   type: string
+                scope:
+                  $ref: '#/components/schemas/McpScopeWrite'
       responses:
         '204':
-          description: Renamed.
+          description: Renamed, or its scope set.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
-          $ref: '#/components/responses/Csrf'
+          description: >-
+            The CSRF token is missing or wrong (error csrf), a gate is
+            up, or the scope names a private chat the viewer may not
+            give this token (error forbidden: the viewer is not a
+            superadmin, or the token's owner is not one); message says
+            which.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -3865,8 +3909,11 @@ paths:
 
 
         The tools read only the groups an administrator put on the
-        exposure list (telegram_public_groups); the user tools describe
-        accounts and are not limited to it. A tool's failure the caller
+        exposure list (telegram_public_groups), narrowed by the token's
+        scope when it has one (McpScopeEntry); a superadmin's token may
+        also be given private chats, which the message tools then read
+        when named by their id. The user tools describe accounts and are
+        limited by neither. A tool's failure the caller
         can fix (a bad filter, an unknown id) is a result with isError
         true; a malformed call is a JSON-RPC error. Both are answered
         with 200, and so is a body that is empty or not JSON (error
@@ -10958,19 +11005,31 @@ components:
         "Shared", active). minted_by is the account that minted it,
         which its requests are attributed to: when that account is
         disabled the token stops working, whoever owns it.
-      required: [tokens, owners, can_transfer]
+
+
+        A token's scope is what it reads (McpScopeEntry), empty for
+        every exposed group. scope_options is what the token form may
+        offer: the federations, the exposed groups the viewer can see,
+        and private, true for a superadmin (who may give a private
+        chat to a token a superadmin owns, or one without an owner
+        record).
+      required: [tokens, owners, can_transfer, scope_options]
       properties:
         tokens:
           type: array
           items:
             type: object
-            required: [id, name, owner, minted_by, created, last_used, revoked]
+            required: [id, name, owner, minted_by, created, last_used, revoked, scope]
             properties:
               id:
                 type: integer
                 format: int64
               name:
                 type: string
+              scope:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpScopeEntry'
               owner:
                 $ref: '#/components/schemas/FwdPerson'
               minted_by:
@@ -10986,6 +11045,65 @@ components:
           items:
             $ref: '#/components/schemas/FwdPerson'
         can_transfer:
+          type: boolean
+        scope_options:
+          type: object
+          required: [federations, groups, private]
+          properties:
+            federations:
+              type: array
+              items:
+                $ref: '#/components/schemas/FedRef'
+            groups:
+              type: array
+              description: The exposed groups the viewer can see, by title.
+              items:
+                $ref: '#/components/schemas/FedRef'
+            private:
+              type: boolean
+    McpScopeKind:
+      type: string
+      description: >-
+        federation (a federation's id, 0 for Default), group (a
+        group's negative chat id) or private (a one-to-one chat: the
+        peer user's id).
+      enum: [federation, group, private]
+    McpScopeWrite:
+      type: array
+      description: >-
+        A token's scope as written: each entry once, at most 200
+        (decisions/2026-11-20-mcp-token-scope.md).
+      items:
+        type: object
+        required: [kind, id]
+        properties:
+          kind:
+            $ref: '#/components/schemas/McpScopeKind'
+          id:
+            type: integer
+            format: int64
+    McpScopeEntry:
+      type: object
+      description: >-
+        One entry of a token's scope, federations first, then groups,
+        then private chats, each by id. name is the federation's name,
+        the group's title or the user's name ("" when it no longer
+        exists). active is whether the entry reaches anything now: a
+        federation that exists, a group exposed to MCP, a private chat
+        on a token whose owner is a superadmin (or that has no owner
+        record). An inactive entry is kept and reaches nothing; a token
+        whose entries are all inactive reads nothing, never every
+        exposed group.
+      required: [kind, id, name, active]
+      properties:
+        kind:
+          $ref: '#/components/schemas/McpScopeKind'
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        active:
           type: boolean
     # The MCP endpoint (web/docs/mcp.md).
     McpMessage:
