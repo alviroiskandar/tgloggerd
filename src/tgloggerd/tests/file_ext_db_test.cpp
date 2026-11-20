@@ -17,9 +17,12 @@
  * Without TGL_TEST_MYSQL_HOST it does nothing and exits 77 (skipped).
  */
 #include <tgloggerd/DB.hpp>
+#include <tgloggerd/StoragePath.hpp>
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 
@@ -115,6 +118,68 @@ int main()
 		models::KnownFile k = db.upsertFileMeta(meta);
 		CHECK(extOf(raw, k.id) == "tgs",
 		      "a row without bytes still takes the extension");
+	}
+
+	printf("bytes stored after the metadata:\n");
+	{
+		const std::string h2(64, 'b');
+		models::File meta = file("late", "", std::string("tgs"));
+		meta.on_disk = false;
+		uint64_t mid = db.upsertFileMeta(meta).id;
+		/* TDLib's local path had no extension. */
+		std::string row_ext = "unset";
+		uint64_t id = db.upsertFile(file("late", h2, std::nullopt),
+					    &row_ext);
+		CHECK(id == mid, "the bytes go to the metadata-only row");
+		CHECK(row_ext == "tgs",
+		      "the blob is to be named by the row's extension");
+	}
+
+	printf("the same bytes again under another extension:\n");
+	{
+		const std::string h3(64, 'c');
+		uint64_t id = db.upsertFile(file("first", h3,
+						 std::string("jpeg")));
+		std::string row_ext;
+		uint64_t again = db.upsertFile(file("second", h3,
+						    std::string("jpg")),
+					       &row_ext);
+		CHECK(again == id, "the bytes find their row");
+		CHECK(row_ext == "jpeg", "the row keeps its extension");
+	}
+
+	printf("renameBlob:\n");
+	{
+		namespace fs = std::filesystem;
+		const fs::path dir = fs::temp_directory_path() /
+				     "file_ext_db_test-store";
+		fs::remove_all(dir);
+		const std::string h(64, 'd');
+		auto put = [&](const std::string &ext) {
+			fs::path p = blobPath(dir.string(), h, ext);
+			fs::create_directories(p.parent_path());
+			std::ofstream(p) << "x";
+		};
+		auto has = [&](const std::string &ext) {
+			return fs::exists(blobPath(dir.string(), h, ext));
+		};
+		std::error_code ec;
+
+		put("");
+		CHECK(renameBlob(dir.string(), h, "", "tgs", ec) && !ec,
+		      "an extensionless blob is renamed");
+		CHECK(has("tgs") && !has(""), "it is under the new name only");
+
+		put("jpg");
+		CHECK(renameBlob(dir.string(), h, "jpg", "tgs", ec) && !ec,
+		      "a second copy when the name exists already");
+		CHECK(has("tgs") && !has("jpg"), "the second copy is removed");
+
+		CHECK(renameBlob(dir.string(), h, "png", "tgs", ec) && !ec,
+		      "a copy moved away by another store is no error");
+		CHECK(!renameBlob(dir.string(), h, "png", "webp", ec) && ec,
+		      "no copy under either name is an error");
+		fs::remove_all(dir);
 	}
 
 	cleanup(raw);

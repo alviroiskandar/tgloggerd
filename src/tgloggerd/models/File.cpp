@@ -63,7 +63,7 @@ FileCandidates find_file_candidates(mysql::Transaction &tx,
 }
 } /* namespace */
 
-uint64_t DB::upsertFile(const models::File &f)
+uint64_t DB::upsertFile(const models::File &f, std::string *row_ext)
 {
 	/*
 	 * De-duplicate by content: the SHA-256 is stored as BINARY(32), so
@@ -178,6 +178,13 @@ uint64_t DB::upsertFile(const models::File &f)
 				   { (int64_t)id, (int64_t)other });
 		}
 	});
+	if (row_ext) {
+		auto rows = db_.query("SELECT COALESCE(file_ext, '')"
+				      " FROM telegram_files WHERE id = ?",
+				      { (int64_t)id });
+		*row_ext = rows.empty() ? std::string()
+					: rows[0][0].value_or("");
+	}
 	return id;
 }
 
