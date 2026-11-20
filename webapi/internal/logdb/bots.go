@@ -133,7 +133,7 @@ func botQuery(kind, where string) string {
 	}
 	// The photo comes in the same query, so a list of bots costs one
 	// query per kind however many there are.
-	photo := "0, 0, NULL, NULL, NULL, NULL, NULL, NULL"
+	photo := "0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL"
 	join := ""
 	if kind == KindTelegram {
 		photo = "bu.id IS NOT NULL, COALESCE(bu.profile_photo_file_id, 0), " + fileColumnsOf("bf")

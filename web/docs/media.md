@@ -164,6 +164,14 @@ someone asks for it:
 - `/files/<token>` itself keeps its rule: without a session small files
   only, with one (and `fetch_files`) any size, so the URL the action
   answers with works, and so does a link handed out earlier.
+- A still the daemon generated from a stored video
+  (docs/design/message-types.md, "Generated stills";
+  `generated_from_file_id` set) is never fetchable: Telegram never had
+  it, and the daemon takes it again from the video when it is evicted.
+  Not stored, it has `fetchable` false and `url` and `fetch` null for
+  every viewer, its link answers 404 "File not stored" and the action
+  410 `gone`, neither asking the daemon (which would answer 410
+  `generated`).
 
 The decision is made in one place, `Server.mayFetch()` in
 `webapi/internal/server/media.go` with `media.Policy`, which tells a

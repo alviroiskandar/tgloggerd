@@ -66,7 +66,7 @@ func (v view) file(f logdb.FileRef) (l fileLink, stored bool) {
 	if f.ID == 0 || !f.Exists {
 		return fileLink{}, false
 	}
-	return v.s.fileLink(v.sc, v.session, f.ID, f.Size, f.OnDisk), f.OnDisk
+	return v.s.fileLink(v.sc, v.session, f.ID, f.Size, f.OnDisk, f.Generated), f.OnDisk
 }
 
 // photo is a picture's URL, or nil.

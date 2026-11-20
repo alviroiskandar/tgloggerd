@@ -67,7 +67,7 @@ const tabSelect = "SELECT m.id AS row_id, m.message_id, m.date, m.sender_user_id
 // message's file, joined as f.
 const tabFileColumns = ", f.id, f.file_type, f.file_ext, f.orig_file_name, f.file_size, " +
 	"f.hit_count, f.on_disk, f.created_at, f.accessed_at, f.tg_file_id, " +
-	"HEX(f.sha256) AS sha256_hex"
+	"HEX(f.sha256) AS sha256_hex, f.generated_from_file_id IS NOT NULL AS is_generated"
 
 // GroupFiles is a page of the group's messages that carry a file of
 // one of FileKinds, or of kind alone ("" for every kind), below the
