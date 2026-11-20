@@ -146,6 +146,8 @@ export interface paths {
          *     To resume, reconnect with the last seq seen, as `last` or as the Last-Event-ID header the browser sends on its own reconnect (the header wins). Recent events are kept, so a short disconnect loses nothing; a longer one, or one across a restart of the daemon, starts with a resync.
          *
          *     Topics: `chat:<chat_id>` (message.new, message.edited, message.deleted and file.stored of one chat), `messages` (the same for every chat the viewer may see), `user:<id>` (user.updated), `group:<chat_id>` (group.updated), `stats` (stats.changed) and `bots` (bot.updated, for the bots the viewer may see). Repeats count once; at most 2000 topics, and the request line may run to tens of kilobytes. Kinds may be added; a client skips kinds it does not know.
+         *
+         *     Signed out: a visitor reading the public chat of an exposed group (MCP exposure) may open a stream without a session, for `chat:<chat_id>` topics of exposed groups only, at most 4 per stream (WEBAPI_LIVE_PUBLIC_TOPICS). Any other topic, a group that is not exposed or does not exist, or more chats than that answer 401 unauthenticated alike, as the chat window answers a visitor. Such a stream differs from a signed-in one: its frames carry no `id:` line and its events no seq (no resuming: `last` and Last-Event-ID are ignored and every stream starts with a `resync`, whose `refetch_interval` is the least number of seconds the client leaves between two refetches of a chat window); file.stored carries no file_id; the `retry:` is longer and varies per stream. A group withdrawn from exposure ends the stream with a session event of reason scope_changed, never revoked. Visitors' streams have caps of their own, apart from the signed-in ones, which keep their slots when the visitors' are taken: in all, per client address (an IPv4 address or an IPv6 /64) and opens per address per minute; a refused visitor gets 503 unavailable with Retry-After and should then refetch its chat every 30 seconds at most, not poll the tail.
          */
         get: operations["getEvents"];
         put?: never;
@@ -222,6 +224,8 @@ export interface paths {
          *     Messages sent as an album (consecutive rows sharing a media album id) come as one message: the first item's ids, date and sender, its media as `media` and the other items' as `album`, the caption and edits of the item that has one. A window whose edge cuts an album is extended to hold all of it, so an album always folds the same way; a window after an album's own message id therefore starts with that album again, which a client drops by `id`.
          *
          *     Visibility: a group the viewer's scope sees, or any exposed group (MCP exposure), whose chat is public; a private chat to a viewer that sees private messages. A signed-out visitor may read the chats of exposed groups and gets 401 for anything else, whether it exists or not; a signed-in viewer gets 404 for what it may not see. A reply quotes a message of another chat only when the viewer sees that chat (reply_to.chat_id names it); otherwise reply_to is null. Senders are shown in full (counts, contact name) only to viewers that see all users.
+         *
+         *     A signed-out visitor's window is answered from a cache shared by every visitor, keyed by the chat and the query, so it may be up to WEBAPI_LIVE_PUBLIC_CACHE_SECS (2 by default) old; while one is being read, the visitors asking for the same window wait for that read instead of starting their own.
          *
          *     Recheck: serving a window also asks the daemon, in the background, to read that stretch of the chat from Telegram again (POST /v1/chats/{chat_id}/recheck), so messages, edits and deletions the logger missed are stored and arrive as the usual live events. The answer never waits for it, and nothing in it says whether one was asked. A window without before, after, around or after_ts is the newest stretch, asked at most once a minute per chat; any other is the stretch around its anchor, asked at most once an hour per chat and anchor. The requests of all signed-out visitors together share one budget, which keeps its last part for newest stretches (webapi/README, "Recheck"). The chat and message pages ask the same way.
          */
@@ -1784,7 +1788,7 @@ export interface components {
         LiveEvent: {
             /**
              * Format: int64
-             * @description Grows with each event and is the frame's id; compare, do not compute with it. Absent on a session event.
+             * @description Grows with each event and is the frame's id; compare, do not compute with it. Absent on a session event, and on every event of a signed-out stream.
              */
             seq?: number;
             /**
@@ -1809,9 +1813,11 @@ export interface components {
             user_id?: number;
             /**
              * Format: int64
-             * @description file.stored.
+             * @description file.stored; absent on a signed-out stream.
              */
             file_id?: number;
+            /** @description The first resync of a signed-out stream: the least number of seconds between two refetches of a chat window the client asks for on the stream's events (they are answered from a shared cache, WEBAPI_LIVE_PUBLIC_REFETCH_SECS). */
+            refetch_interval?: number;
             /**
              * Format: int64
              * @description bot.updated: a bot the viewer may see was added, changed (its status, name, enabled state or identity) or removed; at most 5 seconds late. To admins and superadmins; a member with forward refetches its bots itself.
@@ -4897,11 +4903,11 @@ export interface operations {
             query: {
                 /** @description Comma-separated topics, e.g. chat:-1001234567890,user:42,messages,stats. */
                 topics: string;
-                /** @description The last seq the client has seen; without it the stream starts from now. */
+                /** @description The last seq the client has seen; without it the stream starts from now. Ignored on a signed-out stream. */
                 last?: number;
             };
             header?: {
-                /** @description Set by the browser's EventSource on its own reconnect; wins over last. A value that is not a seq resumes nothing (a resync). */
+                /** @description Set by the browser's EventSource on its own reconnect; wins over last. A value that is not a seq resumes nothing (a resync). Ignored on a signed-out stream. */
                 "Last-Event-ID"?: string;
             };
             path?: never;
@@ -4922,8 +4928,18 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthenticated"];
-            /** @description No stream: live updates are off or the daemon's stream is not connected (error live_off), too many streams are open (error unavailable), or the session could not be checked (error unavailable). The client polls meanwhile and tries again after Retry-After seconds. */
+            /** @description No valid session, and the topics are not ones a signed-out stream may have (error unauthenticated); a revoked session cookie is cleared. */
+            401: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Gate"];
+            /** @description No stream: live updates are off or the daemon's stream is not connected (error live_off), too many streams are open (error unavailable), or the session could not be checked (error unavailable). For a signed-out stream also: the visitors' streams in all or from this address are at their cap, or this address opened too many streams in the last minute (error unavailable). A signed-in client polls meanwhile; every client tries again after Retry-After seconds. */
             503: {
                 headers: {
                     "Cache-Control": components["headers"]["NoStore"];

@@ -639,6 +639,31 @@ paths:
         viewer may see). Repeats count once; at most 2000 topics, and
         the request line may run to tens of kilobytes. Kinds may be
         added; a client skips kinds it does not know.
+
+
+        Signed out: a visitor reading the public chat of an exposed
+        group (MCP exposure) may open a stream without a session, for
+        `chat:<chat_id>` topics of exposed groups only, at most 4 per
+        stream (WEBAPI_LIVE_PUBLIC_TOPICS). Any other topic, a group
+        that is not exposed or does not exist, or more chats than that
+        answer 401 unauthenticated alike, as the chat window answers a
+        visitor. Such a stream differs from a signed-in one: its frames
+        carry no `id:` line and its events no seq (no resuming: `last`
+        and Last-Event-ID are ignored and every stream starts with a
+        `resync`, whose `refetch_interval` is the least number of
+        seconds the client leaves between two refetches of a chat
+        window); file.stored carries no file_id; the `retry:` is longer
+        and varies per stream. A group withdrawn from exposure ends the
+        stream with a session event of reason scope_changed, never
+        revoked. Visitors' streams have caps of their own, apart from
+        the signed-in ones, which keep their slots when the visitors'
+        are taken: in all, per client address (an IPv4 address or an
+        IPv6 /64) and opens per address per minute; a refused visitor
+        gets 503 unavailable with Retry-After and should then refetch
+        its chat every 30 seconds at most, not poll the tail.
+      security:
+        - {}
+        - session: []
       parameters:
         - name: topics
           in: query
@@ -651,7 +676,9 @@ paths:
         - name: last
           in: query
           required: false
-          description: The last seq the client has seen; without it the stream starts from now.
+          description: >-
+            The last seq the client has seen; without it the stream
+            starts from now. Ignored on a signed-out stream.
           schema:
             type: integer
             format: int64
@@ -662,7 +689,7 @@ paths:
           description: >-
             Set by the browser's EventSource on its own reconnect;
             wins over last. A value that is not a seq resumes nothing
-            (a resync).
+            (a resync). Ignored on a signed-out stream.
           schema:
             type: string
       responses:
@@ -685,14 +712,30 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
-          $ref: '#/components/responses/Unauthenticated'
+          description: >-
+            No valid session, and the topics are not ones a signed-out
+            stream may have (error unauthenticated); a revoked session
+            cookie is cleared.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Gate'
         '503':
           description: >-
             No stream: live updates are off or the daemon's stream is
             not connected (error live_off), too many streams are open
             (error unavailable), or the session could not be checked
-            (error unavailable). The client polls meanwhile and tries
-            again after Retry-After seconds.
+            (error unavailable). For a signed-out stream also: the
+            visitors' streams in all or from this address are at their
+            cap, or this address opened too many streams in the last
+            minute (error unavailable). A signed-in client polls
+            meanwhile; every client tries again after Retry-After
+            seconds.
           headers:
             Cache-Control:
               $ref: '#/components/headers/NoStore'
@@ -954,6 +997,13 @@ paths:
         only when the viewer sees that chat (reply_to.chat_id names
         it); otherwise reply_to is null. Senders are shown in full
         (counts, contact name) only to viewers that see all users.
+
+
+        A signed-out visitor's window is answered from a cache shared
+        by every visitor, keyed by the chat and the query, so it may be
+        up to WEBAPI_LIVE_PUBLIC_CACHE_SECS (2 by default) old; while
+        one is being read, the visitors asking for the same window wait
+        for that read instead of starting their own.
 
 
         Recheck: serving a window also asks the daemon, in the
@@ -5352,7 +5402,8 @@ components:
           format: int64
           description: >-
             Grows with each event and is the frame's id; compare, do not
-            compute with it. Absent on a session event.
+            compute with it. Absent on a session event, and on every
+            event of a signed-out stream.
         kind:
           type: string
           enum: [hello, resync, session, message.new, message.edited, message.deleted, user.updated, group.updated, file.stored, stats.changed, bot.updated]
@@ -5372,7 +5423,15 @@ components:
         file_id:
           type: integer
           format: int64
-          description: file.stored.
+          description: file.stored; absent on a signed-out stream.
+        refetch_interval:
+          type: integer
+          minimum: 1
+          description: >-
+            The first resync of a signed-out stream: the least number
+            of seconds between two refetches of a chat window the
+            client asks for on the stream's events (they are answered
+            from a shared cache, WEBAPI_LIVE_PUBLIC_REFETCH_SECS).
         bot_id:
           type: integer
           format: int64
