@@ -326,6 +326,9 @@ live.Source, leaving the fan-out as it is.
     are off (WEBAPI_LIVE=0 or no WEB_TGLOGGERD_API) or the daemon's
     stream is not connected; 503 unavailable with
     WEBAPI_LIVE_MAX_SUBSCRIBERS streams open. Both carry Retry-After.
+    The cap counts browser streams only: the search indexers subscribe
+    to the hub outside it (Hub.SubscribeInternal), so a burst of
+    browsers cannot lock them out.
     When the daemon's stream drops, open streams stay for 5 seconds in
     case it comes straight back, then close; their clients reconnect,
     are refused and poll until it is back.
@@ -747,7 +750,8 @@ text of a media message), keyed by scope and row id, so every write is
 idempotent:
 
   - Events: the daemon's message.new, .edited and .deleted, from the
-    live hub (one more subscriber of the service's one subscription),
+    live hub (one more subscriber of the service's one subscription,
+    outside the cap on browser streams),
     or, while live updates are off, from a hub of the indexers' own
     over the daemon's stream, so the three indices hold one of the
     daemon's subscriber slots. The

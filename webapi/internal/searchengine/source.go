@@ -15,8 +15,9 @@ import (
 // HubSource feeds the indexer from the service's live Hub, as one more
 // subscriber of the one subscription to the daemon's event stream the
 // service holds, so the indexer takes none of the daemon's own
-// subscriber slots. Without a Hub (WEBAPI_LIVE=0), the indexer reads
-// the daemon's stream itself (live.DaemonSource).
+// subscriber slots, nor any of the browsers' (Hub.SubscribeInternal).
+// Without a Hub (WEBAPI_LIVE=0), the indexer reads the daemon's stream
+// itself (live.DaemonSource).
 type HubSource struct {
 	Hub *live.Hub
 	// Want is the kinds of events the indexer acts on; nil is the
@@ -41,7 +42,7 @@ func (h HubSource) Stream(ctx context.Context, since uint64, emit func(live.Even
 	if want == nil {
 		want = isMessageEvent
 	}
-	sub, st, err := h.Hub.Subscribe(since, func(e live.Event) (live.Event, bool) {
+	sub, st, err := h.Hub.SubscribeInternal(since, func(e live.Event) (live.Event, bool) {
 		return e, want(e.Kind)
 	})
 	if err != nil {
