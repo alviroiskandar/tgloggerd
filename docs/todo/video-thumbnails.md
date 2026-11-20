@@ -44,7 +44,15 @@ in the files grid and preview. Left:
   what is left is to start the service and turn the pass on, and for
   the Go service not to offer a fetch of an evicted generated still
   (`tg_file_id` `generated:`, answered 410 `generated`).
-- Search and list results that show media: not looked at yet.
+- Search and list results that show media: done. The files list and
+  a group's Files tab give every video its still, a video that only
+  plays a role in a message (a rich block, an animated chat photo, a
+  link preview's medium) too, from the picture the chat shows it with
+  (web/docs/media.md, "Video stills"). The other lists show no media
+  picture: the message lists and the search API's message answers
+  give a text snippet, the dashboard and MCP answers none. The search
+  API's files answer keeps its `thumb` cell as the row's own
+  `/files/<token>` link, as the Drogon answer it ports does.
 - Not in scope: animated (.tgs) stickers, which the chat already plays
   with Lottie; a thumbnail for them is a separate question.
 
