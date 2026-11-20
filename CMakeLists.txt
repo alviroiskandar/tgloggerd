@@ -394,6 +394,21 @@ target_compile_options(thumbnails_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(thumbnails_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
+# A stored file's row and its blob agree on the extension (models/File.cpp),
+# against a throwaway MySQL with every migration applied (TGL_TEST_MYSQL_*
+# as community_db_test); not part of the default build:
+#   cmake --build build --target file_ext_db_test && build/file_ext_db_test
+add_executable(file_ext_db_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/file_ext_db_test.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp)
+target_include_directories(file_ext_db_test PRIVATE src)
+target_compile_options(file_ext_db_test PRIVATE -Wall -Wextra)
+target_link_libraries(file_ext_db_test PRIVATE connector-jdbc
+	nlohmann_json::nlohmann_json Threads::Threads)
+
 # The daemon's side of the stills service's protocol, against a stand-in
 # service on a Unix socket; not part of the default build:
 #   cmake --build build --target stills_client_test && build/stills_client_test

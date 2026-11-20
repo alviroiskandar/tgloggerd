@@ -236,7 +236,11 @@ models::KnownFile DB::upsertFileMeta(const models::File &f)
 				"UPDATE telegram_files SET"
 				" hit_count = hit_count + 1,"
 				" tg_unique_id = COALESCE(tg_unique_id, ?),"
-				" file_ext = COALESCE(file_ext, ?),"
+				/* The blob of a row with bytes is named
+				 * <sha256>[.file_ext] (blobPath): its
+				 * extension is fixed once they are stored. */
+				" file_ext = IF(sha256 IS NULL,"
+				" COALESCE(file_ext, ?), file_ext),"
 				" orig_file_name = IF(orig_file_name = '', ?, orig_file_name),"
 				/* Seen again: in use, keep it from eviction. */
 				" accessed_at = NOW()"
