@@ -102,7 +102,7 @@ change.
 | 404 | `not_found` | Unknown file or user id, or no such endpoint. |
 | 405 | `method_not_allowed` | The path exists under another method; `Allow` lists them. |
 | 409 | `not_a_contact`, `unsupported` | The operation does not apply to this user as they are (see the endpoint). |
-| 410 | `gone` | The file is gone from Telegram or not accessible to the account. |
+| 410 | `gone`, `generated` | The file is gone from Telegram or not accessible to the account; `generated`: the file is a still the daemon took from a stored video, which Telegram never had. |
 | 413 | `too_large` | Request body over 64 KiB. The connection is closed. |
 | 416 | `bad_range` | A fetch's `offset` is at or past the end of the file. |
 | 429 | `rate_limited`, `flood_wait` | The daemon's own limit for the operation, or Telegram's flood wait. Comes with `Retry-After` (seconds). Not retried by the daemon. |
@@ -169,8 +169,10 @@ A file's cache state.
 - `has_unique_id`: TDLib's `remote.unique_id` is recorded for the row.
 - `fetchable`: whether asking for a fetch can succeed: false for a
   file found gone from Telegram within the last hour (a fetch would be
-  answered 410 at once), true otherwise. Every row keeps its
-  `tg_file_id`, so any other file may be fetched.
+  answered 410 at once) and for a still generated from a stored video
+  (`tg_file_id` `generated:<sha256>`, answered 410 `generated`), true
+  otherwise. Every other row keeps its `tg_file_id`, so any other file
+  may be fetched.
 - `accessed_at`: the file's last recorded use.
 
 Errors: 400 bad id, 404 unknown file.
@@ -271,6 +273,12 @@ How it works, and its limits:
   the chat no longer accessible) is answered 410 for an hour without
   asking Telegram again, and `GET /v1/files/{id}` says
   `"fetchable": false` meanwhile.
+- A still the daemon generated from a stored video
+  (docs/design/message-types.md section 4.3) is not on Telegram: when
+  its blob is in the store it is answered `stored` like any other
+  file, else 410 `generated` without asking Telegram (its message's
+  sources would carry the message's own Telegram thumbnail, if any,
+  never these bytes). The stills pass generates an evicted one again.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -280,7 +288,8 @@ How it works, and its limits:
 | `TG_FETCH_IDLE_SECS` | 900 | A partial file not asked for this long is deleted from TDLib's cache. |
 
 Errors: 400 bad id or body, 404 unknown file, 410 gone from Telegram
-or not accessible, 416 `offset` past the end of a big file, 503 too
+or not accessible (`gone`) or a generated still not in the store
+(`generated`), 416 `offset` past the end of a big file, 503 too
 many fetches, TDLib not authorized or Telegram asking to wait (with
 `Retry-After`), 504 timed out, 500 the downloaded file could not be
 stored.

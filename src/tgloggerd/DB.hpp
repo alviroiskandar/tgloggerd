@@ -107,7 +107,22 @@ struct FileStatus {
 	std::optional<uint64_t>	alias_of;	/* row holding the same bytes */
 	bool			has_unique_id = false;	/* tg_unique_id known */
 	int64_t			accessed_at = 0;	/* Unix seconds */
+	bool			generated = false;	/* see isGeneratedFileId */
 };
+
+/*
+ * The tg_file_id of a still the daemon took from a stored video
+ * ("generated:<sha256>"; telegram_files.generated_from_file_id names the
+ * video). Nothing on Telegram holds such a file, so it is never fetched:
+ * the stills pass takes it again from its video.
+ */
+constexpr const char kGeneratedFilePrefix[] = "generated:";
+
+inline bool isGeneratedFileId(const std::string &tg_file_id)
+{
+	return tg_file_id.compare(0, sizeof(kGeneratedFilePrefix) - 1,
+				  kGeneratedFilePrefix) == 0;
+}
 
 /* What the store holds: telegram_files rows with on_disk = 1. */
 struct StoreTotals {
@@ -123,6 +138,27 @@ struct EvictCandidate {
 	uint64_t	file_size = 0;
 	/* As the database printed it; the eviction guard compares it back. */
 	std::string	accessed_at;
+};
+
+/*
+ * A stored video that should get a generated still (DB::listStillCandidates):
+ * the main file of a live video, animation, video note or video sticker
+ * message that has no cover or thumbnail.
+ */
+struct StillCandidate {
+	uint64_t	video_file_id = 0;
+	std::string	kind;		/* the message's content_type */
+	double		duration = 0;	/* seconds, 0 if unknown */
+	std::string	sha256_hex;	/* the video's blob */
+	std::string	ext;		/* may be empty */
+};
+
+/* The dry run of the stills pass, per table and content_type. */
+struct StillCount {
+	std::string	table;		/* "group" or "private" */
+	std::string	kind;
+	uint64_t	messages = 0;
+	uint64_t	videos = 0;	/* distinct main files */
 };
 
 /* A file row as the on-demand fetch service needs it (FileFetcher). */
@@ -252,6 +288,47 @@ public:
 	 * and content_type, for the dry run: ("group", "video") -> n, ... */
 	std::vector<std::tuple<std::string, std::string, uint64_t>>
 	countMessagesWithoutThumbnail(void);
+
+	/*
+	 * Generated stills (models/Stills.cpp, docs/design/message-types.md
+	 * section 4.3). The videos whose messages need a still: one entry
+	 * per video file, newest first.
+	 */
+	std::vector<StillCandidate> listStillCandidates(void);
+	/* The statement listStillCandidates runs, for its plan. */
+	static std::string stillCandidatesSql(void);
+	/* What listStillCandidates covers, for the dry run. */
+	std::vector<StillCount> countStillCandidates(void);
+	/* Video @video_file_id if some message of it still needs a still. */
+	std::optional<StillCandidate> stillCandidate(uint64_t video_file_id);
+	/* Its statement, with the video's id as both parameters. */
+	static std::string stillCandidateSql(void);
+	/* The message's video if the message needs a still. */
+	std::optional<StillCandidate>
+	stillCandidateForMessage(bool is_group, int64_t chat_id,
+				 int64_t message_id);
+	/* Its statement, with chat_id and message_id as the parameters. */
+	static std::string stillMessageSql(bool is_group);
+	/* A generated still of the video that is in the store, if any. */
+	std::optional<uint64_t> findGeneratedStill(uint64_t video_file_id);
+	/*
+	 * Record a still taken from video @video_file_id, put in the store
+	 * as @sha256_hex.@ext (@on_disk: its bytes were copied): file_type
+	 * thumbnail, tg_file_id "generated:<sha256>", no unique id. Returns
+	 * the row's id.
+	 */
+	uint64_t upsertGeneratedStill(const std::string &sha256_hex,
+				      const std::string &ext, uint64_t size,
+				      bool on_disk, uint64_t video_file_id);
+	/*
+	 * Link still @still_id as the thumbnail of every live message whose
+	 * main file is the video, keeping a thumbnail from Telegram. Returns
+	 * the affected row count (an insert 1, a replacement 2).
+	 */
+	uint64_t linkGeneratedStill(uint64_t video_file_id, uint64_t still_id);
+	/* The messages (chat_id, message_id) whose thumbnail is @still_id. */
+	std::vector<std::pair<int64_t, int64_t>>
+	listStillMessages(uint64_t still_id);
 
 	/*
 	 * What a chat recheck needs of the stored messages of @chat_id

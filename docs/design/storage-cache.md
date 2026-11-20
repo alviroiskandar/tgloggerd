@@ -79,6 +79,10 @@ data:
   not stored (evicted, never fetched, or over the per-file cap) and
   can be fetched from Telegram.
 
+Migration 000052 adds `generated_from_file_id BIGINT UNSIGNED NULL`, a
+foreign key to `telegram_files(id)` ON DELETE SET NULL with a key of
+its own: the video a generated still was taken from (section 9.1).
+
 ## 4. Cross-thread TDLib requests
 
 Only the loop thread may call `send_query`; other threads have nothing
@@ -187,6 +191,11 @@ Resolving a row to a TDLib file:
 
 The row-to-TDLib-file mapping is cached in memory.
 
+A generated still (section 9.1) is never resolved: Telegram never had
+it, and its message's sources would hand over the message's own
+Telegram thumbnail instead. When its blob is not in the store the
+fetch is answered 410 `generated` at once (docs/internal-api.md).
+
 Small files (under `TG_MAX_STORE_FILE_SIZE`) are downloaded whole at
 priority 32 and handed to the existing `storeDownloadedFile` path,
 which hashes and copies them and marks the row stored with
@@ -263,6 +272,30 @@ references the file (a file still being posted is alive) and Discord
 media forwards. Retention then evicts only files that are old and
 were never seen again.
 
+### 9.1 Generated stills
+
+The videos, animations, video notes and video (.webm) stickers that
+have neither a cover nor a Telegram thumbnail get a still taken from
+their stored bytes (docs/design/message-types.md section 4.3,
+"Generated stills"). A still is a small file of the store like any
+other: put in it through the same path as a download (hashed, named by
+its digest, under the per-file cap), counted against the total cap,
+touched and evicted like the rest. Its row says what it is:
+`tg_file_id` `generated:<sha256>`, no `tg_unique_id`, file_type
+`thumbnail`, `generated_from_file_id` the video's row.
+
+Since Telegram has no copy, an evicted still is not fetched (section
+8): the message shows its minithumb or type icon meanwhile, and the
+stills pass takes it again from the video the next time it runs over
+the archive (at start, with `TG_GENERATE_STILLS` on): a message whose
+thumbnail is an evicted generated still is a candidate again. The
+same frame of the same video, taken by the same ffmpeg, gives the same
+bytes, so the still usually comes
+back as the same row (a still with other bytes, from another ffmpeg,
+is a new row that takes the evicted one's place on the messages). A
+video whose own bytes are evicted gets no
+still until they are stored again.
+
 ## 10. Access tracking
 
 `accessed_at` is written by the daemon only; the web stays read-only
@@ -323,6 +356,8 @@ how `/files/<token>` behaves.
 | `TG_FETCH_CHUNK` | 16 MiB | default |
 | `TG_FETCH_TIMEOUT_SECS` | 30 | default |
 | `TG_FETCH_IDLE_SECS` | 900 | default |
+| `TG_GENERATE_STILLS` | 0 (off; `dry` counts) | on once the stills service runs |
+| `TG_STILLS_SOCKET` | `/run/tgloggerd-stills/stills.sock` | default |
 | `WEB_TGLOGGERD_API` (web) | empty (fetching off) | `http://10.0.88.5:8091` |
 
 Every variable is documented in `env/settings.env.example`

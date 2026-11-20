@@ -36,6 +36,14 @@ in the files grid and preview. Left:
   of its own, never in the web service's request path) for videos
   with neither a cover nor a Telegram thumbnail, as decided in
   [2026-11-20-video-generated-stills.md](../design/decisions/2026-11-20-video-generated-stills.md).
+  Done: the stills service (docker-compose.yml, `docker/stills/`) and
+  the daemon's opt-in pass `TG_GENERATE_STILLS` (`dry` counts), which
+  stores each still as the video's messages' `thumbnail`
+  (message-types.md section 4.3, "Generated stills"; format in
+  [2026-11-21-video-stills-format.md](../design/decisions/2026-11-21-video-stills-format.md));
+  what is left is to start the service and turn the pass on, and for
+  the Go service not to offer a fetch of an evicted generated still
+  (`tg_file_id` `generated:`, answered 410 `generated`).
 - Search and list results that show media: not looked at yet.
 - Not in scope: animated (.tgs) stickers, which the chat already plays
   with Lottie; a thumbnail for them is a separate question.

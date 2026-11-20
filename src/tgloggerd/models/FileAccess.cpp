@@ -14,7 +14,8 @@ std::optional<FileStatus> DB::getFileStatus(uint64_t files_id)
 {
 	auto rows = db_.query(
 		"SELECT id, file_type, file_ext, file_size, on_disk, alias_of,"
-		" tg_unique_id IS NOT NULL, UNIX_TIMESTAMP(accessed_at)"
+		" tg_unique_id IS NOT NULL, UNIX_TIMESTAMP(accessed_at),"
+		" tg_file_id"
 		" FROM telegram_files WHERE id = ?",
 		{ files_id });
 	if (rows.empty())
@@ -34,6 +35,7 @@ std::optional<FileStatus> DB::getFileStatus(uint64_t files_id)
 		st.alias_of = num(r[5]);
 	st.has_unique_id = r[6].has_value() && *r[6] == "1";
 	st.accessed_at   = (int64_t)num(r[7]);
+	st.generated     = isGeneratedFileId(r[8].value_or(""));
 	return st;
 }
 

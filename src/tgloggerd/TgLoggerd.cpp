@@ -8,6 +8,7 @@
 #include <tgloggerd/FileApi.hpp>
 #include <tgloggerd/StoragePath.hpp>
 #include <tgloggerd/StorageJanitor.hpp>
+#include <tgloggerd/StillsWorker.hpp>
 #include <tgloggerd/StorageApi.hpp>
 #include <tgloggerd/StatusApi.hpp>
 #include <tgloggerd/FileFetcher.hpp>
@@ -193,12 +194,17 @@ int TgLoggerd::start(void)
 	if (api_threads < 1)
 		api_threads = 1;
 	size_t api_conns = api_listen.empty() ? 0 : api_threads;
+	/* The stills worker, when on, is one more thread on the pool. */
+	const std::string gen_stills = env("TG_GENERATE_STILLS", "0");
+	const bool stills_on = gen_stills != "0" && gen_stills != "dry";
+	const size_t stills_conns = stills_on ? 1 : 0;
 	/* +1 over file_threads for serial_, +1 for the Discord refresh thread,
 	 * +1 for the storage janitor. */
-	std::string db_pool_def = std::to_string(file_threads + 4 + api_conns);
+	std::string db_pool_def = std::to_string(file_threads + 4 + api_conns +
+						 stills_conns);
 	size_t db_pool = (size_t)atoi(env("TG_DB_POOL", db_pool_def.c_str()).c_str());
-	if (db_pool < file_threads + 3 + api_conns)
-		db_pool = file_threads + 3 + api_conns;
+	if (db_pool < file_threads + 3 + api_conns + stills_conns)
+		db_pool = file_threads + 3 + api_conns + stills_conns;
 	db_cfg.pool_size = db_pool;
 
 	size_t queue_max = (size_t)strtoull(
@@ -1100,6 +1106,57 @@ int TgLoggerd::start(void)
 	janitor_->start();
 
 	/*
+	 * Stills taken from the stored bytes of the videos Telegram sent no
+	 * thumbnail for (docs/design/message-types.md section 4.3), by the
+	 * stills service. Off by default; "dry" only counts the videos.
+	 */
+	if (gen_stills == "dry") {
+		try {
+			uint64_t msgs = 0;
+			for (const auto &c : db_->countStillCandidates()) {
+				pr_info(l_, "stills (dry run): %llu %s %s"
+					" message(s), %llu video(s), without a"
+					" still", (unsigned long long)c.messages,
+					c.table.c_str(), c.kind.c_str(),
+					(unsigned long long)c.videos);
+				msgs += c.messages;
+			}
+			pr_info(l_, "stills (dry run): %llu message(s) in all"
+				" would get a still", (unsigned long long)msgs);
+		} catch (const std::exception &e) {
+			pr_error(l_, "stills: could not count the videos: %s",
+				 e.what());
+		}
+	} else if (stills_on) {
+		StillsWorker::Config st_cfg;
+		st_cfg.socket_path = env("TG_STILLS_SOCKET",
+					 "/run/tgloggerd-stills/stills.sock");
+		st_cfg.storage_dir = storage_dir_;
+		st_cfg.tmp_dir = std::string(data_dir_) + "/stills-tmp";
+		stills_ = std::make_unique<StillsWorker>(*db_, l_, st_cfg,
+			[this](const std::string &path)
+				-> std::optional<StillsWorker::Stored> {
+				auto b = putInStore(path, -1, "generated still");
+				if (!b)
+					return std::nullopt;
+				return StillsWorker::Stored{ b->sha256_hex,
+							     b->ext,
+							     b->on_disk };
+			},
+			[this](uint64_t still,
+			       const std::vector<std::pair<int64_t, int64_t>> &m) {
+				serial_->post([this, still, m] {
+					for (const auto &x : m)
+						events_->fileStored(still, x.first,
+								    x.second);
+				});
+			});
+		stills_->start();
+		pr_info(l_, "stills: generating stills over %s",
+			st_cfg.socket_path.c_str());
+	}
+
+	/*
 	 * Before anything else touches the contacts: a contact that an
 	 * interrupted "Look up real name" left removed is added back as soon
 	 * as TDLib is ready (ContactLookup.hpp). The looked-up name is stored
@@ -1213,6 +1270,8 @@ int TgLoggerd::start(void)
 	if (fetcher_)
 		fetcher_->stop();
 	janitor_->stop();
+	if (stills_)
+		stills_->stop();
 	files_->shutdown();
 	serial_->shutdown();
 	bot_watch_->stop();
@@ -1316,8 +1375,19 @@ void TgLoggerd::onMessageFile(const MessageFile &m)
 	const bool is_preview = m.is_link_preview;
 	const std::string role = m.role;
 	const int position = m.position;
+	/*
+	 * A video stored as a message's main file may need a generated still;
+	 * the worker looks again once the message's own thumbnail has had
+	 * time to arrive. A sticker only when it is a video (.webm).
+	 */
+	std::string ext = fs::path(m.local_path).extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(),
+		       [](unsigned char c) { return (char)std::tolower(c); });
+	const bool still = stills_ && !is_preview && role.empty() &&
+		!StillsWorker::kindOf(m.content_type).empty() &&
+		(m.content_type != "sticker" || ext == ".webm");
 	serial_->post([this, chat_id, message_id, is_group, fid, is_preview,
-		       role, position] {
+		       role, position, still] {
 		try {
 			/*
 			 * A preview image belongs to the card, not to the
@@ -1340,6 +1410,9 @@ void TgLoggerd::onMessageFile(const MessageFile &m)
 				db_->setPrivateMessageFile(chat_id, message_id,
 							   fid);
 			events_->fileStored(fid, chat_id, message_id);
+			if (still)
+				stills_->messageFileStored(is_group, chat_id,
+							   message_id);
 			pr_info(l_, "Stored %s%s | %s chat_id=%lld"
 				" msg_id=%lld file_id=%llu",
 				is_preview ? "link preview image"
@@ -1393,6 +1466,14 @@ void TgLoggerd::onMessageFileLink(const MessageFileLink &lk)
 	else
 		db_->setPrivateMessageFile(lk.chat_id, lk.message_id, lk.file_id);
 	events_->fileStored(lk.file_id, lk.chat_id, lk.message_id);
+	/*
+	 * The file's kind is not known here; the worker's check of the
+	 * message says whether it is a video that needs a still (one made
+	 * for an earlier message of the video is linked, not made again).
+	 */
+	if (stills_)
+		stills_->messageFileStored(lk.is_group, lk.chat_id,
+					   lk.message_id);
 	pr_info(l_, "Linked message file (already recorded) | %s chat_id=%lld"
 		" msg_id=%lld file_id=%llu", lk.is_group ? "group" : "private",
 		(long long)lk.chat_id, (long long)lk.message_id,
@@ -1501,12 +1582,17 @@ void TgLoggerd::onCommunityFullInfo(const models::CommunityFullInfo &fi)
 		(unsigned long long)photo);
 }
 
-std::optional<uint64_t>
-TgLoggerd::storeDownloadedFile(const std::string &local_path,
-			       const std::string &tg_file_id,
-			       const std::string &tg_unique_id,
-			       int64_t file_size, const char *file_type,
-			       const std::string &orig_file_name)
+/*
+ * The store half of storeDownloadedFile, without the row: hash the file
+ * at @local_path, name it by its digest and the extension of its path,
+ * and copy it into the store unless it is over the per-file cap
+ * (TG_MAX_STORE_FILE_SIZE). @file_size is the size to judge by when the
+ * file's own size cannot be read. nullopt when it could not be hashed or
+ * copied.
+ */
+std::optional<TgLoggerd::Blob>
+TgLoggerd::putInStore(const std::string &local_path, int64_t file_size,
+		      const std::string &what)
 {
 	auto hex = sha256_file_hex(local_path);
 	if (!hex.has_value()) {
@@ -1523,9 +1609,9 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 
 	/*
 	 * Storage is limited. Files at or above max_store_file_size_ are not
-	 * copied into the store -- only their metadata is recorded below, so
-	 * they stay identifiable and re-downloadable by tg_file_id. Decide on
-	 * the actual on-disk size, falling back to TDLib's reported size.
+	 * copied into the store -- only their metadata is recorded, so they
+	 * stay identifiable and re-downloadable by tg_file_id. Decide on the
+	 * actual on-disk size, falling back to TDLib's reported size.
 	 */
 	std::error_code szec;
 	uintmax_t on_disk_size = fs::file_size(local_path, szec);
@@ -1562,22 +1648,36 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 		}
 	} else {
 		pr_info(l_, "File too large to store (%llu bytes >= %llu limit);"
-			" recording metadata only | tg_file_id=%s sha256=%s",
+			" recording metadata only | %s sha256=%s",
 			(unsigned long long)size_for_policy,
 			(unsigned long long)max_store_file_size_,
-			tg_file_id.c_str(), hex->c_str());
+			what.c_str(), hex->c_str());
 	}
+	return Blob{ std::move(*hex), std::move(ext), store_bytes };
+}
+
+std::optional<uint64_t>
+TgLoggerd::storeDownloadedFile(const std::string &local_path,
+			       const std::string &tg_file_id,
+			       const std::string &tg_unique_id,
+			       int64_t file_size, const char *file_type,
+			       const std::string &orig_file_name)
+{
+	auto blob = putInStore(local_path, file_size,
+			       "tg_file_id=" + tg_file_id);
+	if (!blob.has_value())
+		return std::nullopt;
 
 	models::File f;
 	f.tg_file_id = tg_file_id;
 	f.tg_unique_id = tg_unique_id;
 	f.file_type = file_type;
 	f.file_size = (uint64_t)(file_size < 0 ? 0 : file_size);
-	f.sha256_hex = *hex;
-	if (!ext.empty())
-		f.file_ext = ext;
+	f.sha256_hex = blob->sha256_hex;
+	if (!blob->ext.empty())
+		f.file_ext = blob->ext;
 	f.orig_file_name = orig_file_name;
-	f.on_disk = store_bytes;
+	f.on_disk = blob->on_disk;
 
 	uint64_t id = db_->upsertFile(f);
 	/* Remember it so later references link instead of re-downloading. */

@@ -72,6 +72,7 @@ add_executable(tgloggerd
 	src/tgloggerd/models/Emoji.cpp
 	src/tgloggerd/models/Community.hpp
 	src/tgloggerd/models/Community.cpp
+	src/tgloggerd/models/Stills.cpp
 	src/tgloggerd/models/Backfill.cpp
 	src/tgloggerd/helpers/common.c
 	src/tgloggerd/helpers/common.h
@@ -133,6 +134,10 @@ add_executable(tgloggerd
 	src/tgloggerd/StorageJanitor.hpp
 	src/tgloggerd/StorageApi.cpp
 	src/tgloggerd/StorageApi.hpp
+	src/tgloggerd/StillsClient.cpp
+	src/tgloggerd/StillsClient.hpp
+	src/tgloggerd/StillsWorker.cpp
+	src/tgloggerd/StillsWorker.hpp
 	src/tgloggerd/StatusApi.cpp
 	src/tgloggerd/StatusApi.hpp
 	src/tgloggerd/StoreHolds.hpp
@@ -388,6 +393,51 @@ target_include_directories(thumbnails_db_test PRIVATE src)
 target_compile_options(thumbnails_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(thumbnails_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
+
+# The daemon's side of the stills service's protocol, against a stand-in
+# service on a Unix socket; not part of the default build:
+#   cmake --build build --target stills_client_test && build/stills_client_test
+add_executable(stills_client_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/stills_client_test.cpp
+	src/tgloggerd/StillsClient.cpp)
+target_include_directories(stills_client_test PRIVATE src)
+target_compile_options(stills_client_test PRIVATE -Wall -Wextra)
+target_link_libraries(stills_client_test PRIVATE
+	nlohmann_json::nlohmann_json Threads::Threads)
+
+# Which videos the generated-still pass takes a still of, how a still is
+# recorded and linked, and the plan of the pass's read, against a
+# throwaway MySQL with every migration applied (TGL_TEST_MYSQL_* as
+# community_db_test); not part of the default build:
+#   cmake --build build --target stills_db_test && build/stills_db_test
+add_executable(stills_db_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/stills_db_test.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp)
+target_include_directories(stills_db_test PRIVATE src)
+target_compile_options(stills_db_test PRIVATE -Wall -Wextra)
+target_link_libraries(stills_db_test PRIVATE connector-jdbc
+	nlohmann_json::nlohmann_json Threads::Threads)
+
+# The generated-still pass end to end: StillsWorker against a throwaway
+# MySQL with every migration applied and a running stills service
+# (TGL_TEST_STILLS_* in the test's header); not part of the default build:
+#   cmake --build build --target stills_worker_test && build/stills_worker_test
+add_executable(stills_worker_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/stills_worker_test.cpp
+	src/tgloggerd/StillsWorker.cpp
+	src/tgloggerd/StillsClient.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp
+	src/tgloggerd/helpers/log.c)
+target_include_directories(stills_worker_test PRIVATE src)
+target_compile_options(stills_worker_test PRIVATE -Wall -Wextra)
+target_link_libraries(stills_worker_test PRIVATE connector-jdbc
+	OpenSSL::Crypto nlohmann_json::nlohmann_json Threads::Threads)
 
 # discordd -- the Discord daemon (logs Discord messages, forwards them to
 # Telegram). Added last: it links Td::TdStatic and connector-jdbc from the

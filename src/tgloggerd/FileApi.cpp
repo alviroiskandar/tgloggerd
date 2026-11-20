@@ -64,8 +64,10 @@ void registerFileApi(InternalApi &api, DB &db, FileFetcher *fetcher)
 						   : nlohmann::json(nullptr) },
 			{ "has_unique_id", st->has_unique_id },
 			/* Every row keeps its tg_file_id; only a file found
-			 * gone from Telegram within the hour is not. */
-			{ "fetchable", !(fetcher && fetcher->isGone(id)) },
+			 * gone from Telegram within the hour is not, nor a
+			 * still the daemon generated. */
+			{ "fetchable", !st->generated &&
+				       !(fetcher && fetcher->isGone(id)) },
 			{ "accessed_at", st->accessed_at },
 		};
 		return r;

@@ -73,6 +73,9 @@ services:
     # files downloaded under data/storage.
     volumes:
       - .:/workspace
+      # The stills service's socket (TG_STILLS_SOCKET), for the stills
+      # generated from stored videos when TG_GENERATE_STILLS is on.
+      - stills-socket:/run/tgloggerd-stills
     # Keep stdin/tty so the first-time `docker compose run --rm tgloggerd`
     # login can prompt for the phone number, code and 2FA password.
     stdin_open: true
@@ -222,6 +225,43 @@ services:
       start_period: 10s
       start_interval: 1s
 
+  # The stills service (docker/stills): takes a still frame from a stored
+  # video that Telegram sent no thumbnail for, for the daemon, over a Unix
+  # socket in the stills-socket volume, its only shared one
+  # (docs/design/message-types.md section 4.3, "Generated stills"). It
+  # runs ffmpeg on what other people sent, so it gets as little as it can
+  # work with: no network, no secrets (no env_file), the file store
+  # read-only (the daemon's TG_STORAGE_DIR, data/storage/files; change
+  # both together), a read-only file system with a tmpfs /tmp, no
+  # capabilities, and small limits. One job runs at a time.
+  stills:
+    build: docker/stills
+    image: tgloggerd-stills:latest
+    container_name: tgloggerd-stills
+    restart: unless-stopped
+    user: "${TG_UID:-1000}:${TG_GID:-1000}"
+    init: true
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      STILLS_SOCKET: /run/tgloggerd-stills/stills.sock
+      STILLS_STORE: /store
+    volumes:
+      - ./data/storage/files:/store:ro
+      - stills-socket:/run/tgloggerd-stills
+    healthcheck:
+      test: [CMD, test, -S, /run/tgloggerd-stills/stills.sock]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      start_interval: 1s
+
   # One-off build of web/app, for the render service and the webapi
   # service alike: npm ci from the lock file, then npm run build, which
   # writes the render entry (dist/server), the client bundle the webapi
@@ -252,6 +292,13 @@ services:
 # its socket there, and no stale socket outlives a restart of the host.
 volumes:
   render-socket:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=${TG_UID:-1000},gid=${TG_GID:-1000},mode=0770"
+  # The stills socket's directory, shared by stills and tgloggerd and
+  # nothing else, the same way.
+  stills-socket:
     driver_opts:
       type: tmpfs
       device: tmpfs

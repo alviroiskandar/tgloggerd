@@ -581,7 +581,7 @@ A video note's round video is now the main file, like any other media.
 | `game` | a game's photo (position 0) and animation (position 1) |
 | `invoice` | an invoice's product photo |
 | `chat_photo` | the new photo of a chat photo change or a suggested profile photo: the still photo (largest size) at position 0 and, when the photo is animated, its MPEG-4 video at position 1 (file_type `animation`; the big animation, up to 1280x1280, else the small one, 160x160, when TDLib gives only that) |
-| `thumbnail` | the still thumbnail TDLib offers with a video, an animation, a video note or a video (.webm) sticker, when it is an image (JPEG, PNG or WebP; MPEG-4, GIF, TGS and WebM thumbnails are not stored), file_type `thumbnail`: the picture the web shows before the video plays; in a rich message, the still thumbnail of each video and animation of its blocks, at the `position` of its `rich` medium (since msg-rich-video-thumbnails); messages logged before the daemon stored thumbnails get theirs from the opt-in thumbnail pass (section 4.9) |
+| `thumbnail` | the still thumbnail TDLib offers with a video, an animation, a video note or a video (.webm) sticker, when it is an image (JPEG, PNG or WebP; MPEG-4, GIF, TGS and WebM thumbnails are not stored), file_type `thumbnail`: the picture the web shows before the video plays; in a rich message, the still thumbnail of each video and animation of its blocks, at the `position` of its `rich` medium (since msg-rich-video-thumbnails); messages logged before the daemon stored thumbnails get theirs from the opt-in thumbnail pass (section 4.9); a video with no Telegram thumbnail and no cover gets a still generated from its stored bytes (below, "Generated stills") |
 | `poll`, `preview` | reserved: poll media (msg-polls); other thumbnails (a document's, a photo's sizes) and a video's other qualities are not stored, since they repeat the media |
 | `rich` | the media inside a rich message's page blocks, `position` their order of appearance, depth first through collages, slideshows, quotes, lists, collapsible blocks, covers and embedded posts: each photo (largest size), video, animation, audio file, document and voice note, an embedded page's poster, an embedded post's author photo, the photos of related articles; not a chat link's photo (the chat's own) nor the icons inside rich text |
 | `gift` | file_type `sticker`: at position 0 the gift's sticker (gift, refunded_upgraded_gift), an upgraded gift's model sticker (upgraded_gift and the two purchase offer types), the animation sticker of gifted_premium, gifted_stars, gifted_grams and giveaway_prize_stars, or a giveaway's prize sticker; at position 1 an upgraded gift's symbol sticker. Each keeps its position when the other is missing. Not a premium_gift_code's sticker |
@@ -609,6 +609,51 @@ without a unique id keeps the positional source. An edit
 that replaces a file overwrites its (role, position); one that drops a
 file leaves the old row in place. See decision
 [2026-11-18-msg-message-files](decisions/2026-11-18-msg-message-files.md).
+
+#### Generated stills
+
+A video, an animation, a video note or a video (.webm) sticker whose
+bytes are stored but which has neither a cover nor a Telegram thumbnail
+gets a still taken from those bytes (decisions
+[2026-11-20-video-generated-stills](decisions/2026-11-20-video-generated-stills.md)
+and [2026-11-21-video-stills-format](decisions/2026-11-21-video-stills-format.md)):
+the frame at 1 s, or halfway into a shorter clip, fitting 320 px on its
+long side, as a JPEG (PNG for a sticker, which keeps its transparency),
+at most 200 KB.
+
+- Who: the stills service (docker-compose.yml, `docker/stills/`), ffmpeg
+  in a container of its own with no network, no secrets and the store
+  read-only, over a Unix socket shared with the daemon only. It refuses
+  paths outside the store and files with no video stream, and kills
+  ffprobe and ffmpeg after 20 s. The protocol is in
+  `docker/stills/server.py`.
+- When: the daemon's StillsWorker, behind `TG_GENERATE_STILLS` (off by
+  default; `dry` only logs how many messages and videos there are per
+  table and kind). At start it lists the stored videos whose live
+  messages need a still, newest first; a new message is looked at half
+  a minute after its main file is stored or linked, so that a Telegram
+  thumbnail stored just after the video comes first. One video at a
+  time, about one a second, on a thread of its own: storing messages
+  never waits for it. A video the service refuses is not asked for
+  again until the next start.
+- Which: a live message of those kinds whose main file is in the store
+  (`on_disk`, with a digest) and that has no `cover` and no
+  `thumbnail`, except a thumbnail that is a generated still evicted
+  from the store (taken again) or a link whose file row is gone. The
+  pass reads the `(content_type, date)` index and the message files'
+  unique key; a new message is read by its unique key.
+- Stored: through the store's normal path, as a telegram_files row with
+  file_type `thumbnail`, `tg_file_id` `generated:<sha256>`, no
+  `tg_unique_id` and `generated_from_file_id` the video's row
+  (migration 000052). It is linked as `thumbnail`, position 0, to every
+  live message whose main file is the video, once per video: another
+  message of the same video gets the existing still linked. It replaces
+  only a generated still or a lost link, never a thumbnail from
+  Telegram, and a Telegram thumbnail stored later replaces it (the
+  normal upsert of the role).
+- Fetching: a generated still is never asked of Telegram (the fetch
+  answers 410 `generated`, docs/internal-api.md); when evicted, the
+  pass takes it again (docs/design/storage-cache.md section 9.1).
 
 ### 4.4 Polls
 
@@ -901,7 +946,7 @@ waits for chat rechecks the same way. A message that got its still is
 not listed again; one whose video has no Telegram thumbnail stays a
 candidate and is re-read on every start while the flag is on, so the
 flag goes back off after a pass. The stills generated from the stored
-bytes (item video-thumbnails, "Frames") cover those.
+bytes (section 4.3, "Generated stills") cover those.
 
 ### 4.10 Forwarding to Discord
 

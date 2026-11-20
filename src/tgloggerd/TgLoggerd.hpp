@@ -27,6 +27,7 @@ class EventBus;
 class StorageJanitor;
 class FileFetcher;
 class Contacts;
+class StillsWorker;
 
 class TgLoggerd {
 public:
@@ -40,6 +41,16 @@ public:
 private:
 	inline int initDataDir(void);
 	inline int initDataDirC(const char *dir);
+	/* A file put in the store: its digest, extension, and whether its
+	 * bytes were copied (not over the per-file cap). */
+	struct Blob {
+		std::string	sha256_hex;
+		std::string	ext;
+		bool		on_disk;
+	};
+	std::optional<Blob> putInStore(const std::string &local_path,
+				       int64_t file_size,
+				       const std::string &what);
 	std::optional<uint64_t> storeDownloadedFile(const std::string &local_path,
 						    const std::string &tg_file_id,
 						    const std::string &tg_unique_id,
@@ -139,6 +150,14 @@ private:
 	 * db_ and before api_, whose storage routes call it.
 	 */
 	std::unique_ptr<StorageJanitor> janitor_;
+
+	/*
+	 * Generates stills for stored videos without a thumbnail
+	 * (TG_GENERATE_STILLS). Uses db_ and the store, and posts its events
+	 * to serial_; start() stops it with the janitor, before the pools
+	 * drain. Null while off.
+	 */
+	std::unique_ptr<StillsWorker> stills_;
 
 	/*
 	 * Fetches files from Telegram for the API's fetch route; stopped
