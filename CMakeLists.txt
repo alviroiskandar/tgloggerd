@@ -390,6 +390,17 @@ target_compile_options(thumbnails_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(thumbnails_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
+# The daemon's side of the stills service's protocol, against a stand-in
+# service on a Unix socket; not part of the default build:
+#   cmake --build build --target stills_client_test && build/stills_client_test
+add_executable(stills_client_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/stills_client_test.cpp
+	src/tgloggerd/StillsClient.cpp)
+target_include_directories(stills_client_test PRIVATE src)
+target_compile_options(stills_client_test PRIVATE -Wall -Wextra)
+target_link_libraries(stills_client_test PRIVATE
+	nlohmann_json::nlohmann_json Threads::Threads)
+
 # Which videos the generated-still pass takes a still of, how a still is
 # recorded and linked, and the plan of the pass's read, against a
 # throwaway MySQL with every migration applied (TGL_TEST_MYSQL_* as
