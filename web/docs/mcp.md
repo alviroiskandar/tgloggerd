@@ -41,8 +41,9 @@ Consequences, all verified against the running server:
 - An `or` that names a private group beside an allowed one still yields only the allowed
   one's messages.
 - `telegram_private_messages` — direct messages — is not referenced by any file under
-  `web/src/mcp/` or `webapi/internal/mcp/`. That is a grep-checkable invariant, not a
-  convention (the Go package's tests check it).
+  `web/src/mcp/`, and in `webapi/internal/mcp/` only by `private.go`, which is read only
+  for a private chat in a superadmin's token scope (below). That is a grep-checkable
+  invariant, not a convention (the Go package's tests check it).
 
 Publicness is **curated, not derived**. A group having an active public username is shown
 in the admin UI as a hint and is never acted on; see `migrations/000022` for why.
@@ -50,6 +51,43 @@ in the admin UI as a hint and is never acted on; see `migrations/000022` for why
 `telegram_get_users` is deliberately *not* gated: it describes accounts, not
 conversations, and returns the same profile data the web UI already shows — including
 phone numbers where the archive has them.
+
+### Token scopes (Go service)
+
+A token may be narrowed to a **scope**
+([decision](../../docs/design/decisions/2026-11-20-mcp-token-scope.md),
+`web_mcp_token_scopes`, web migration 000019): a set of federations, groups and, on a
+superadmin's token only, private chats. The exposure list still decides; the scope only
+narrows it, except for private chats.
+
+- No entries: every exposed group, as before. Every token minted before scopes is such
+  a token, and its answers are unchanged, byte for byte.
+- Entries: the exposed groups named by a `group` entry or in a `federation` entry
+  (Default, id 0, is the groups in no other federation), plus the `private` chats. A
+  group that is not exposed is never reached, whatever names it.
+- Read on every request: a group added to or taken out of a federation, a group
+  withdrawn from MCP or exposed again, and a token changing owner count from the next
+  request on.
+- An entry that reaches nothing stays (a deleted federation, a withdrawn group, a
+  private chat on a token now owned by an admin or a member). A token whose every entry
+  is inactive reads **nothing**; it never falls back to every exposed group.
+- The one place in the code: `telegram.readable` (`webapi/internal/mcp/gate.go`). The
+  transport resolves the token's entries into a `Reach` (`scope.go`) per request and puts
+  it in the request's context; every tool asks `readable`, which applies it to the
+  exposure list. A scope that cannot be read fails the request with 500 rather than read
+  unnarrowed.
+
+A private chat is read by **naming it**: pass its chat id (the peer user's id, positive)
+as `group_id` to `telegram_search_messages`, `telegram_list_recent_messages`,
+`telegram_get_messages`, `telegram_get_message_history`, `telegram_popular_words`,
+`telegram_list_group_senders` or `telegram_count_user_messages`. The answers have the
+groups' shape: `group_id` is the chat id, `group_title` the peer's name, a message the
+logged-in account sent has `sender_user_id` 0, and there are no channel posts. Searching
+or listing recent messages without a `group_id` covers groups only, and the group tools
+(`telegram_get_group`, `telegram_get_group_history`, `telegram_list_group_admins`)
+answer a private chat's id as any unreadable id. `telegram_list_groups` adds
+`private_chats` (`chat_id`, `name`, `username`) and a `private_chats_note` saying how to
+read them, only for a token that has any, so every other answer stays as it was.
 
 ## Authentication
 

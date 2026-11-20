@@ -179,6 +179,17 @@ func (s *Server) postMCP(w http.ResponseWriter, r *http.Request) {
 	if err := mcp.TouchToken(r.Context(), s.app, owner.TokenID); err != nil {
 		s.log.Warn("mcp token last use", "token", owner.TokenID, "err", err)
 	}
+	// The token's scope, read on every request, so a change to it, to
+	// a federation in it or to the token's owner counts at once. A
+	// scope that cannot be read fails the request rather than read
+	// unnarrowed.
+	reach, err := mcp.ResolveScope(r.Context(), s.app, owner.TokenID, owner.PrivateOK)
+	if err != nil {
+		s.log.Error("mcp token scope", "token", owner.TokenID, "err", err)
+		writeMCPError(w, http.StatusInternalServerError, mcp.InternalError,
+			"auth backend error: "+err.Error())
+		return
+	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcpMaxBody))
 	if err != nil {
@@ -205,7 +216,7 @@ func (s *Server) postMCP(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	}
-	reply, ok := s.mcp.HandleRaw(r.Context(), body)
+	reply, ok := s.mcp.HandleRaw(mcp.WithReach(r.Context(), reach), body)
 	<-s.mcpSlots
 
 	s.log.Debug("mcp call", "token", owner.TokenID, "account", owner.Username)
