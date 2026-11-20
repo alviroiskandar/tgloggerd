@@ -72,6 +72,7 @@ add_executable(tgloggerd
 	src/tgloggerd/models/Emoji.cpp
 	src/tgloggerd/models/Community.hpp
 	src/tgloggerd/models/Community.cpp
+	src/tgloggerd/models/Stills.cpp
 	src/tgloggerd/models/Backfill.cpp
 	src/tgloggerd/helpers/common.c
 	src/tgloggerd/helpers/common.h
@@ -387,6 +388,22 @@ add_executable(thumbnails_db_test EXCLUDE_FROM_ALL
 target_include_directories(thumbnails_db_test PRIVATE src)
 target_compile_options(thumbnails_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(thumbnails_db_test PRIVATE connector-jdbc
+	nlohmann_json::nlohmann_json Threads::Threads)
+
+# Which videos the generated-still pass takes a still of, how a still is
+# recorded and linked, and the plan of the pass's read, against a
+# throwaway MySQL with every migration applied (TGL_TEST_MYSQL_* as
+# community_db_test); not part of the default build:
+#   cmake --build build --target stills_db_test && build/stills_db_test
+add_executable(stills_db_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/stills_db_test.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp)
+target_include_directories(stills_db_test PRIVATE src)
+target_compile_options(stills_db_test PRIVATE -Wall -Wextra)
+target_link_libraries(stills_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
 # discordd -- the Discord daemon (logs Discord messages, forwards them to
