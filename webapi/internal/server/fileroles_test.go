@@ -150,8 +150,11 @@ func TestFileRoles(t *testing.T) {
 	}
 
 	// A member granted Role Lab sees the files that are the own file of
-	// its messages (filesFilter), and the role filter counts only the
-	// messages it sees: 891010's paid role is in Role Vault.
+	// its messages (filesFilter). Filtered by role, it sees the files
+	// playing the role in its messages, which are seldom any message's
+	// own file (891001, 891003, 891004), and never one of a message it
+	// does not see: 891007's cover and 891010's paid role are in Role
+	// Vault, 891005's game and 891009's preview in a private chat.
 	if _, err := e.app.Exec("INSERT INTO web_member_grant_groups (web_user_id, federation_id, group_id) "+
 		"VALUES (?, 0, ?)", e.uids["member"], int64(roleLab)); err != nil {
 		t.Fatal(err)
@@ -166,9 +169,20 @@ func TestFileRoles(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ cond, ids string }{
-		{`{"field":"role","op":"=","value":"link_preview"}`, "891006"},
+		{`{"field":"role","op":"=","value":"link_preview"}`, "891006,891001"},
+		{`{"field":"role","op":"=","value":"cover"}`, "891003"},
+		{`{"field":"role","op":"=","value":"thumbnail"}`, "891004"},
 		{`{"field":"role","op":"=","value":"paid"}`, ""},
+		{`{"field":"role","op":"in","value":["cover","paid","game","link_preview"]}`,
+			"891006,891003,891001"},
 		{`{"field":"role","op":"!=","value":"paid"}`, "891010,891006,891002"},
+		// Beside an OR the role does not hold for every row, so the
+		// scope's own condition stays: the other branch reaches no
+		// file of Role Vault, nor does the role's.
+		{`{"field":"role","op":"=","value":"cover","n":"OR"},{"field":"id","op":"=","value":"891007"}`,
+			""},
+		{`{"field":"id","op":"=","value":"891008","n":"OR"},{"field":"role","op":"=","value":"paid"}`,
+			""},
 	} {
 		if got := roleIDs(roleRows(t, e, "member", c.cond)); got != c.ids {
 			t.Errorf("member %s: %s, want %s", c.cond, got, c.ids)

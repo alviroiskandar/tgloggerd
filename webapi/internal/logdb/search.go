@@ -140,6 +140,25 @@ type Field struct {
 	// checked against Enum, with its values. = and in use it as it
 	// is, != negates it.
 	Pred func(sc scope.Scope, vals []string) (string, []any)
+	// Scoped Pred fields check the request scope themselves: a row
+	// that meets an = or in condition of one is within the scope. A
+	// search whose rows must all meet such a condition (one in a
+	// chain of ANDs) leaves out the entity's own scope condition,
+	// which can be narrower: Files' role checks the message the file
+	// plays its role in, the scope condition only the messages whose
+	// own file it is.
+	Scoped bool
+	// Count is the ids that meet an = or in condition of a Pred field
+	// (vals as Pred takes them), one row each, read without the
+	// entity's table: the count of a search with that condition alone
+	// and no scope condition, which would otherwise test every row
+	// of the table. nil counts through the WHERE.
+	Count func(sc scope.Scope, vals []string) (string, []any)
+	// Ordered fields have an index that reads the rows in the field's
+	// descending order, the id breaking ties (its index holds the
+	// primary key), so a page sorted by one can stop at its last row
+	// (drivenHint).
+	Ordered bool
 	// NeedsChat fields have no index of their own on a big table: a
 	// search may use one only beside a chat_id = condition that every
 	// row must meet (chatBound), so it reads one chat's rows through
@@ -192,7 +211,23 @@ const (
 	// statementMS is every search statement's time limit
 	// (MAX_EXECUTION_TIME), as in Drogon.
 	statementMS = 3000
+	// drivenRows is the deepest row (offset plus limit) a page keeps
+	// drivenHint for. Read in index order, such a page tests about
+	// rows/share rows for a condition a share of the rows meet: under
+	// a thousand stays well below reading every match of a condition
+	// a few percent of a million rows meet, past it the semijoin wins.
+	drivenRows = 1000
 )
+
+// drivenHint is the hint a Pred puts in an EXISTS whose matches are
+// many but a small share of the rows (Files' link previews), so it is
+// tested row by row as the page's ORDER BY index is read and the
+// LIMIT ends the scan. Without it the optimizer turns the EXISTS into
+// a semijoin that reads every match, looks each row up and sorts them
+// all, which is right for a count, an order no index gives or a deep
+// page: build keeps the hint only in the page statement of a shallow
+// page in an indexed order (Field.Ordered, or the id).
+const drivenHint = "/*+ NO_SEMIJOIN() */"
 
 // Cond is one condition of a search: field key, operator, value and
 // the connector to the next condition.
@@ -469,6 +504,7 @@ func parseJSONArray(raw string) ([]any, error) {
 type built struct {
 	countSQL, pageSQL string
 	where             []any // the WHERE's values, the count's values
+	count             []any // the count's values instead, when not nil
 	orderBind         any   // the relevance sort's value, or nil
 	sort, order       string
 	limit, offset     int
@@ -681,6 +717,62 @@ func (e *Entity) chatBound(req SearchRequest) error {
 	return nil
 }
 
+// scopedBy is whether every row of a search with chains meets an = or
+// in condition of a Scoped field, so the scope holds for each row
+// without the entity's scope condition. The chains are ANDed together,
+// so a condition of a chain whose connectors are all AND holds for
+// every row; one beside an OR does not. A condition chain later
+// refuses (a bad value, a field the scope does not see) fails the
+// search anyway.
+func (e *Entity) scopedBy(chains [][]Cond, internal bool) bool {
+	for _, ch := range chains {
+		allAnd := true
+		for i := range ch[:max(len(ch)-1, 0)] {
+			if ch[i].N != "AND" {
+				allAnd = false
+			}
+		}
+		if !allAnd {
+			continue
+		}
+		for _, c := range ch {
+			if f := e.field(c.C, internal); f != nil && f.Scoped && f.Pred != nil &&
+				(c.O == "=" || c.O == "in") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// alone is the Count query of a search whose only condition is an = or
+// in condition of a field with Count, under no scope condition (a scope
+// that sees every row, or one a Scoped field confines), and its values.
+// The condition was checked by chain.
+func (e *Entity) alone(sc scope.Scope, req SearchRequest, scopeCond string) (string, []any, bool) {
+	var conds []Cond
+	for _, ch := range append([][]Cond{req.Conds}, req.And...) {
+		conds = append(conds, ch...)
+	}
+	if scopeCond != "" || len(conds) != 1 {
+		return "", nil, false
+	}
+	c := conds[0]
+	f := e.field(c.C, req.Internal)
+	if f == nil || f.Count == nil || !c.HasV {
+		return "", nil, false
+	}
+	switch {
+	case c.O == "=" && !c.IsList:
+		q, a := f.Count(sc, []string{c.V})
+		return q, a, true
+	case c.O == "in" && c.IsList:
+		q, a := f.Count(sc, c.L)
+		return q, a, true
+	}
+	return "", nil, false
+}
+
 func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	n := len(req.Conds)
 	for _, ch := range req.And {
@@ -701,6 +793,9 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 		chains         = append([][]Cond{req.Conds}, req.And...)
 		scopeCond, sca = e.filter(sc)
 	)
+	if scopeCond != "" && e.scopedBy(chains, req.Internal) {
+		scopeCond, sca = "", nil
+	}
 	if scopeCond != "" {
 		parts = append(parts, scopeCond)
 		binds = append(binds, sca...)
@@ -725,11 +820,11 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	}
 
 	b := &built{where: binds, filtered: where != "", fulltext: ftExpr != ""}
-	sortExpr := e.defSort
+	sortExpr, ordered := e.defSort, false
 	if req.Sort != "" {
 		if f := e.field(req.Sort, req.Internal); f != nil && f.Sortable &&
 			e.fieldVisible(sc, f) {
-			sortExpr, b.sort = f.Expr, f.Key
+			sortExpr, b.sort, ordered = f.Expr, f.Key, f.Ordered
 		}
 	}
 	switch strings.ToLower(req.Order) {
@@ -757,13 +852,25 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	if sortExpr != e.idCol && b.orderBind == nil {
 		tiebreak = ", " + e.idCol + " DESC"
 	}
-	whereClause := ""
+	// The id's own order needs no tiebreak and an index gives it either
+	// way; another field's index gives it descending only, as the
+	// tiebreak is.
+	driven := sortExpr == e.idCol || (ordered && b.order == "DESC")
+	driven = driven && b.orderBind == nil && b.offset+b.limit <= drivenRows
+	pageWhere, countWhere := where, strings.ReplaceAll(where, drivenHint+" ", "")
+	if !driven {
+		pageWhere = countWhere
+	}
+	whereClause, countClause := "", ""
 	if where != "" {
-		whereClause = " WHERE " + where
+		whereClause, countClause = " WHERE "+pageWhere, " WHERE "+countWhere
 	}
 	countFrom := e.countFromFor(where)
 	hint := "SELECT /*+ MAX_EXECUTION_TIME(" + strconv.Itoa(statementMS) + ") */ "
-	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + whereClause
+	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + countClause
+	if q, a, ok := e.alone(sc, req, scopeCond); ok {
+		b.countSQL, b.count = hint+"COUNT(*) AS n FROM ("+q+") ids", append([]any{}, a...)
+	}
 	sel := e.sel
 	if req.Internal && e.pageSel != "" {
 		sel += ", " + e.pageSel
@@ -791,10 +898,17 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	if b.orderBind != nil {
 		want++
 	}
-	if strings.Count(b.pageSQL, "?") != want {
+	if strings.Count(b.pageSQL, "?") != want || strings.Count(b.countSQL, "?") != len(b.countArgs()) {
 		return nil, errors.New("search: placeholders and values differ")
 	}
 	return b, nil
+}
+
+func (b *built) countArgs() []any {
+	if b.count != nil {
+		return b.count
+	}
+	return b.where
 }
 
 func (b *built) pageArgs() []any {
@@ -882,7 +996,7 @@ func searchSQL(ctx context.Context, db *sql.DB, sc scope.Scope, e *Entity, req S
 	// The count only feeds the pager, so it never fails the request:
 	// when it fails or runs out of time, the total is estimated below.
 	if b.filtered || !e.estimateBrowse {
-		if n, err := countInt(ctx, db, b.countSQL, b.where...); err == nil {
+		if n, err := countInt(ctx, db, b.countSQL, b.countArgs()...); err == nil {
 			res.Total, res.TotalExact = n, true
 		} else if ctx.Err() != nil {
 			return nil, ctx.Err()
