@@ -178,7 +178,9 @@ find_package(Threads REQUIRED)
 # The internal API (src/tgloggerd/InternalApi.cpp) serves HTTP with
 # Boost.Beast/Asio, which are header-only: nothing links a Boost binary.
 # Only InternalApi.cpp includes them. Its JSON is nlohmann-json.
-find_package(Boost QUIET)
+# CONFIG: Boost's own BoostConfig.cmake. CMake 3.30 and later deprecate the
+# FindBoost module (policy CMP0167) and warn on every configure that uses it.
+find_package(Boost CONFIG QUIET)
 if(NOT Boost_FOUND)
 	# Ubuntu's libboost-dev does not always ship a CMake config; the
 	# headers are all that is needed, so locate them directly.
