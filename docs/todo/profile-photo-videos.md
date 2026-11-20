@@ -22,12 +22,12 @@ video is lost once the photo changes.
   Done: migration 000051; the video is recorded metadata-only like the
   still and fetched on first view (docs/internal-api.md, the photos
   endpoints).
-- Go (webapi): the items of GET /api/users/{id}/photos and GET
-  /api/groups/{id}/photos gain `video_url` (the /files/<token> URL of
-  the video, or null when there is none or it cannot be served) and
-  `video_file_id` (int or null). OpenAPI and web/docs follow.
 - React: the carousels play the video muted and looped when the item
   has one, with the still as its poster.
+
+The Go side is done: the photo list items carry `video_url` and
+`video_file_id` (webapi/openapi.yaml, UserPhoto), read from the
+history's `video_file_id`.
 
 ## Depends on
 
@@ -38,5 +38,4 @@ Nothing.
 - A user or group that sets an animated photo has it stored with its
   video, and the carousel plays it; items without a video are
   unchanged.
-- Go tests cover video_url present, absent and unservable; React tests
-  cover the carousel with and without a video.
+- React tests cover the carousel with and without a video.

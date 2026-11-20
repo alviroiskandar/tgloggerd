@@ -3,7 +3,8 @@
 // photo first, then the others newest first; opened at the photo asked
 // for or else the current one. The arrow keys,
 // Home and End, the buttons and a swipe move through them; Esc, the close
-// button or a click beside the photo closes it.
+// button or a click beside the photo closes it. An animated photo plays
+// its video, muted and looped, over its still.
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { track } from './busy.ts';
 import { useScrollLock } from './scrollLock.ts';
@@ -29,6 +30,31 @@ function StageImg({ src, alt }: { src: string; alt: string }) {
 			<img ref={ref} className={`a-carousel-img${state === 'loading' ? ' loading' : ''}`} src={src} alt={alt} draggable={false} onLoad={onLoad} onError={onError} />
 			{state === 'loading' && <div className="a-carousel-note a-carousel-wait" role="status" aria-label="Loading the photo"><LoaderCircle size={22} className="a-spin" /></div>}
 		</>
+	);
+}
+
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// An animated photo on the stage: its video, muted and looped, in the
+// still's place with the still as poster. For reduced motion it waits on
+// the poster with the player's controls; it stops when the stage moves
+// on (the element goes with its item); if it cannot play, the still.
+function StageVideo({ src, poster, alt }: { src: string; poster: string | null; alt: string }) {
+	const ref = useRef<HTMLVideoElement>(null);
+	const [still] = useState(reducedMotion);
+	const [failed, setFailed] = useState(false);
+	useEffect(() => {
+		const v = ref.current;
+		if (!v) return;
+		// React sets muted as a property only; autoplay needs it set first.
+		v.muted = true;
+		if (!still) v.play()?.catch(() => {});
+		return () => v.pause();
+	}, [src, still]);
+	if (failed) return poster ? <StageImg src={poster} alt={alt} /> : <div className="a-carousel-note" title={NOT_AVAILABLE}><ImageOff size={28} aria-hidden="true" /><span>{NOT_AVAILABLE}</span></div>;
+	return (
+		<video ref={ref} className="a-carousel-img a-carousel-video" src={src} poster={poster ?? undefined} aria-label={alt}
+			muted loop playsInline autoPlay={!still} controls={still} preload="metadata" onError={() => setFailed(true)} />
 	);
 }
 
@@ -94,8 +120,9 @@ export function PhotoCarousel({ kind, id, start, title, viewer, onClose }: { kin
 				{err ? <div className="a-carousel-note" role="alert">{err}</div>
 					: !photos ? <div className="a-carousel-note"><LoaderCircle size={22} className="a-spin" /></div>
 						: !p ? <div className="a-carousel-note">No photo is recorded.</div>
-							: p.url ? <StageImg key={p.id} src={p.url} alt={`Photo of ${title}, set ${dateTime(p.at, viewer)}`} />
-								: <div className="a-carousel-note"><CloudOff size={28} /><span>This photo's file is not stored.</span></div>}
+							: p.video_url ? <StageVideo key={p.id} src={p.video_url} poster={p.url} alt={`Photo of ${title}, set ${dateTime(p.at, viewer)}`} />
+								: p.url ? <StageImg key={p.id} src={p.url} alt={`Photo of ${title}, set ${dateTime(p.at, viewer)}`} />
+									: <div className="a-carousel-note"><CloudOff size={28} /><span>This photo's file is not stored.</span></div>}
 				{n > 1 && <button type="button" className="a-carousel-nav prev" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Newer photo"><ChevronLeft size={26} /></button>}
 				{n > 1 && <button type="button" className="a-carousel-nav next" onClick={() => go(at + 1)} disabled={at === n - 1} aria-label="Older photo"><ChevronRight size={26} /></button>}
 			</div>

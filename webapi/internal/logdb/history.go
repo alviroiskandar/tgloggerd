@@ -255,6 +255,9 @@ type Photo struct {
 	ID   uint64
 	At   int64
 	File FileRef
+	// Video is an animated photo's video (the history row's
+	// video_file_id); zero when none is recorded.
+	Video FileRef
 }
 
 // PhotoList is a user's or group's photos: the current one first, then
@@ -324,8 +327,9 @@ func photoItems(ctx context.Context, db *sql.DB, t photoTable, id int64, es []Hi
 }
 
 // photos is the owner's photo list (PhotoList), in two queries: the
-// current photo, and the history table's photos, at most MaxPhotos
-// rows newest first, the removals (rows without a file) left out.
+// current photo, and the history table's photos with their videos, at
+// most MaxPhotos rows newest first, the removals (rows without a file)
+// left out.
 //
 // The history records only the changes the logger saw, so the current
 // photo may be missing from it, or not be its newest entry; the list
@@ -347,8 +351,10 @@ func photos(ctx context.Context, db *sql.DB, t photoTable, id int64) (PhotoList,
 	}
 
 	rows, err := db.QueryContext(ctx, "SELECT p.id, UNIX_TIMESTAMP(p.created_at), p.file_id, "+
-		fileColumnsOf("f")+" FROM "+t.table+" p "+
+		fileColumnsOf("f")+", COALESCE(p.video_file_id, 0), "+fileColumnsOf("v")+
+		" FROM "+t.table+" p "+
 		"LEFT JOIN telegram_files f ON f.id = p.file_id "+
+		"LEFT JOIN telegram_files v ON v.id = p.video_file_id "+
 		"WHERE p."+t.owner+" = ? AND p.file_id IS NOT NULL "+
 		"ORDER BY p.created_at DESC, p.id DESC LIMIT ?", id, MaxPhotos)
 	if err != nil {
@@ -358,20 +364,33 @@ func photos(ctx context.Context, db *sql.DB, t photoTable, id int64) (PhotoList,
 	var recorded []Photo
 	for rows.Next() {
 		var (
-			p    Photo
-			file uint64
-			f    nullFile
+			p           Photo
+			file, video uint64
+			f, v        nullFile
 		)
-		if err := rows.Scan(append([]any{&p.ID, &p.At, &file}, f.dest()...)...); err != nil {
+		dest := append([]any{&p.ID, &p.At, &file}, f.dest()...)
+		dest = append(append(dest, &video), v.dest()...)
+		if err := rows.Scan(dest...); err != nil {
 			return PhotoList{}, err
 		}
 		p.File = f.ref(file)
+		p.Video = v.ref(video)
 		recorded = append(recorded, p)
 	}
 	if err := rows.Err(); err != nil {
 		return PhotoList{}, err
 	}
 
+	// The video of each file: the newest row of the file that has one,
+	// as an older row of the same photo may have been recorded with
+	// its video when a newer one was not (a row the daemon took from
+	// Telegram's photo list, or one from before videos were kept).
+	videos := map[uint64]FileRef{}
+	for _, p := range recorded {
+		if _, ok := videos[p.File.ID]; !ok && p.Video.ID != 0 {
+			videos[p.File.ID] = p.Video
+		}
+	}
 	l := PhotoList{Photos: []Photo{}}
 	seen := map[uint64]bool{}
 	if current != 0 {
@@ -384,11 +403,13 @@ func photos(ctx context.Context, db *sql.DB, t photoTable, id int64) (PhotoList,
 				break
 			}
 		}
+		first.Video = videos[current]
 		l.Photos = append(l.Photos, first)
 	}
 	for _, p := range recorded {
 		if !seen[p.File.ID] {
 			seen[p.File.ID] = true
+			p.Video = videos[p.File.ID]
 			l.Photos = append(l.Photos, p)
 		}
 	}

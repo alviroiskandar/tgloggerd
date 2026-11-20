@@ -2,7 +2,7 @@
 // The photo carousel: from a user's or a group's photo, at the current
 // one; from a photo change in the history, at that photo; and moving
 // through the photos by key, button, thumbnail and swipe.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { callsTo, fakeApi, fixture, json, renderPage, setup } from '../test/page.tsx';
 import { groupPhotos, sampleContacts, userPhotos } from '../../standin/fixtures.ts';
@@ -10,7 +10,7 @@ import type { UserProps } from '../routes/user.tsx';
 import type { GroupsProps } from '../routes/groups.tsx';
 
 beforeEach(setup);
-type Photos = { items: { id: number; at: string; url: string | null }[]; current_id: number | null };
+type Photos = { items: { id: number; at: string; url: string | null; video_url: string | null }[]; current_id: number | null };
 const serve = {
 	'GET /api/users/:id/photos': (c: { path: string }) => { const [st, b] = userPhotos(c.path.split('/')[3]!, 'superadmin'); return json(st, b); },
 	'GET /api/groups/:id/photos': (c: { path: string }) => { const [st, b] = groupPhotos(c.path.split('/')[3]!, 'superadmin'); return json(st, b); },
@@ -22,11 +22,12 @@ const count = () => box().querySelector('.a-carousel-count')!.textContent;
 // it current and gives it the row 99.
 const missing = (p: Photos) => p.current_id !== null && p.items[0]!.id === p.current_id && p.items[0]!.id % 100 === 99;
 
-// A user with a photo and more than one recorded.
-function userWithPhotos() {
+// A user with a photo and more than one recorded; with stills, one
+// whose first two photos have no video.
+function userWithPhotos(stills = false) {
 	for (const id of [...sampleContacts(), ...fixture<{ rows: { id: number }[] }>('/users').props.rows.map((r) => r.id)]) {
 		const [st, p] = userPhotos(String(id), 'superadmin') as [number, Photos];
-		if (st === 200 && p.items.length > 2) return { id, p };
+		if (st === 200 && p.items.length > 2 && (!stills || p.items.slice(0, 2).every((x) => !x.video_url))) return { id, p };
 	}
 	throw new Error('no user with photos in the sample');
 }
@@ -129,7 +130,7 @@ describe('photo carousel', () => {
 
 	it('says when a photo\'s file is not stored', async () => {
 		const { id } = userWithPhotos();
-		fakeApi('superadmin', { 'GET /api/users/:id/photos': () => ({ items: [{ id: 1, at: '2026-11-01T10:00:00Z', url: null, file_id: null }], current_id: null }) });
+		fakeApi('superadmin', { 'GET /api/users/:id/photos': () => ({ items: [{ id: 1, at: '2026-11-01T10:00:00Z', url: null, file_id: null, video_url: null, video_file_id: null }], current_id: null }) });
 		const page = fixture<Extract<UserProps, { limited?: false }>>(`/users/${id}`).props;
 		renderPage(`/users/${id}`, 'superadmin', { props: { ...page, user: { ...page.user, photo: '/files/now' } } });
 		fireEvent.click(screen.getByRole('button', { name: /^Show the photos of / }));
@@ -158,7 +159,7 @@ describe('photo carousel', () => {
 	});
 
 	it('shows a neutral box while a photo loads, and a placeholder when it fails, in the viewer and its strip', async () => {
-		const { id, p } = userWithPhotos();
+		const { id, p } = userWithPhotos(true);
 		fakeApi('superadmin', serve);
 		const page = fixture<Extract<UserProps, { limited?: false }>>(`/users/${id}`).props;
 		renderPage(`/users/${id}`, 'superadmin', { props: { ...page, user: { ...page.user, photo: '/files/now' } } });
@@ -217,3 +218,84 @@ describe('photo carousel', () => {
 	});
 });
 
+// Animated photos: the video plays muted and looped over its still, not
+// for reduced motion, and stops when the carousel moves on.
+describe('photo carousel with a video', () => {
+	const items = [
+		{ id: 3, at: '2026-11-03T10:00:00Z', url: '/files/still-3', file_id: 3, video_url: '/files/video-3', video_file_id: 30 },
+		{ id: 2, at: '2026-11-02T10:00:00Z', url: '/files/still-2', file_id: 2, video_url: null, video_file_id: 20 },
+		{ id: 1, at: '2026-11-01T10:00:00Z', url: '/files/still-1', file_id: 1, video_url: '/files/video-1', video_file_id: 10 },
+	];
+	let play: ReturnType<typeof vi.fn>;
+	let pause: ReturnType<typeof vi.fn<(this: HTMLMediaElement) => void>>;
+	beforeEach(() => {
+		play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+		pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+	});
+	afterEach(() => vi.restoreAllMocks());
+	const reduced = (on: boolean) => vi.stubGlobal('matchMedia', (q: string) => ({ matches: on && q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} }));
+	async function open() {
+		const { id } = userWithPhotos();
+		fakeApi('superadmin', { 'GET /api/users/:id/photos': () => ({ items, current_id: 3 }) });
+		const page = fixture<Extract<UserProps, { limited?: false }>>(`/users/${id}`).props;
+		renderPage(`/users/${id}`, 'superadmin', { props: { ...page, user: { ...page.user, photo: '/files/now' } } });
+		fireEvent.click(screen.getByRole('button', { name: /^Show the photos of / }));
+		await waitFor(() => expect(count()).toContain('1 of 3'));
+		return box().querySelector('.a-carousel-stage')!;
+	}
+
+	it('plays an animated photo muted and looped, with its still as poster, in the still\'s box', async () => {
+		reduced(false);
+		const stage = await open();
+		const v = stage.querySelector('video')!;
+		expect(v).toBeTruthy();
+		expect(v.getAttribute('src')).toBe('/files/video-3');
+		expect(v.getAttribute('poster')).toBe('/files/still-3');
+		expect(v.muted).toBe(true);
+		expect(v.loop).toBe(true);
+		expect(v.hasAttribute('playsinline')).toBe(true);
+		expect(v.autoplay).toBe(true);
+		expect(v.controls).toBe(false);
+		expect(v.getAttribute('preload')).toBe('metadata');
+		expect(v.classList.contains('a-carousel-img')).toBe(true);
+		expect(v.getAttribute('aria-label')).toMatch(/^Photo of .*, set /);
+		expect(stage.querySelector('img')).toBeNull();
+		expect(play).toHaveBeenCalled();
+	});
+
+	it('shows a photo without a video, or with one that cannot be served, as a still', async () => {
+		reduced(false);
+		const stage = await open();
+		fireEvent.keyDown(window, { key: 'ArrowRight' });
+		expect(stage.querySelector('video')).toBeNull();
+		expect(stage.querySelector('img.a-carousel-img')!.getAttribute('src')).toBe('/files/still-2');
+	});
+
+	it('stops the old video when moving to another photo', async () => {
+		reduced(false);
+		const stage = await open();
+		const v = stage.querySelector('video')!;
+		const stopped = pause.mock.contexts.filter((c: unknown) => c === v).length;
+		fireEvent.keyDown(window, { key: 'End' });
+		expect(pause.mock.contexts.filter((c: unknown) => c === v).length).toBeGreaterThan(stopped);
+		expect(stage.querySelector('video')!.getAttribute('src')).toBe('/files/video-1');
+	});
+
+	it('does not autoplay for reduced motion: the poster with a play control', async () => {
+		reduced(true);
+		const stage = await open();
+		const v = stage.querySelector('video')!;
+		expect(v.getAttribute('poster')).toBe('/files/still-3');
+		expect(v.autoplay).toBe(false);
+		expect(v.controls).toBe(true);
+		expect(play).not.toHaveBeenCalled();
+	});
+
+	it('falls back to the still when the video cannot play', async () => {
+		reduced(false);
+		const stage = await open();
+		fireEvent.error(stage.querySelector('video')!);
+		expect(stage.querySelector('video')).toBeNull();
+		expect(stage.querySelector('img.a-carousel-img')!.getAttribute('src')).toBe('/files/still-3');
+	});
+});
