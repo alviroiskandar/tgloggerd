@@ -8,9 +8,21 @@
 # docker-compose.yml) and compiled by run.sh on container start, so editing
 # the source never requires rebuilding this image. Both the daemon and the
 # web app run from this same image.
-FROM ubuntu:24.04
+#
+# Ubuntu 26.04 is the base for its OpenSSL 3.5, the current long-term-support
+# series; 3.0, which Ubuntu 24.04 ships, is out of upstream support.
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# CMake 4.x refuses to configure a project that declares a minimum version
+# below 3.5. MySQL Connector/C++ configures its bundled protobuf as an
+# external build whose CMakeLists.txt declares cmake_minimum_required(3.1),
+# so the daemon's tree would not configure at all. CMake reads this variable
+# from the environment, which also reaches that nested configure; it applies
+# the 3.5 policies to such projects instead of stopping. Projects that
+# declare 3.5 or later are unaffected.
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # Toolchain + dependencies for BOTH components:
 #
