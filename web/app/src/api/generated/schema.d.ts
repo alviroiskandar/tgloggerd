@@ -1326,7 +1326,7 @@ export interface paths {
         };
         /**
          * A user's profile photos, the current one first
-         * @description The user's profile photos for the user page's photo carousel, at most 500: the current photo (telegram_users.profile_photo_file_id) first, then the ones the history records (telegram_user_hist_profile_photo) newest first, each file once (its newest entry); the photo removals are left out. Opening the user page has the daemon add the photos Telegram lists and the history lacks, in the background, so a later answer may hold more. Each item's id is the photo_id of its photo change in the user's history (HistoryEntry), so the timeline can open the carousel at that photo; the current photo is item 0 when the history has no entry for its file. current_id is the current photo's item, the first, or null when the user has no photo. A photo whose bytes are not stored has a URL all the same when the viewer may have files fetched from Telegram (see url). The same access as the history: only for a viewer who sees users in full; to a member, as for a user the viewer may not see or the logger never saw, it is 404.
+         * @description The user's profile photos for the user page's photo carousel, at most 500: the current photo (telegram_users.profile_photo_file_id) first, then the ones the history records (telegram_user_hist_profile_photo) newest first, each file once (its newest entry); the photo removals are left out. Opening the user page has the daemon add the photos Telegram lists and the history lacks, in the background, so a later answer may hold more. Each item's id is the photo_id of its photo change in the user's history (HistoryEntry), so the timeline can open the carousel at that photo; the current photo is item 0 when the history has no entry for its file. current_id is the current photo's item, the first, or null when the user has no photo. A photo whose bytes are not stored has a URL all the same when the viewer may have files fetched from Telegram (see url). An animated photo also has its video (video_url), for the carousel to play with the still as its poster. The same access as the history: only for a viewer who sees users in full; to a member, as for a user the viewer may not see or the logger never saw, it is 404.
          */
         get: operations["getUserPhotos"];
         put?: never;
@@ -1406,7 +1406,7 @@ export interface paths {
         };
         /**
          * A group's photos, the current one first
-         * @description The group's photos for the group page's photo carousel, as getUserPhotos answers for a user: the current photo (telegram_groups.photo_file_id) first, then the ones the history records (telegram_group_hist_photo) newest first, each file once, at most 500, the removals left out; opening the group page has the daemon add the photos Telegram has that the history lacks. Each item's id is the photo_id of its photo change in the group's history (GroupHistoryEntry), 0 for a current photo the history has no entry for. current_id is the first item's, or null when the group has no photo. For a group the viewer sees, as the group page and its history; any other, a group hidden from an admin included, is 404. Not public, not even for an exposed group.
+         * @description The group's photos for the group page's photo carousel, as getUserPhotos answers for a user: the current photo (telegram_groups.photo_file_id) first, then the ones the history records (telegram_group_hist_photo) newest first, each file once, at most 500, the removals left out; opening the group page has the daemon add the photos Telegram has that the history lacks. Each item's id is the photo_id of its photo change in the group's history (GroupHistoryEntry), 0 for a current photo the history has no entry for. current_id is the first item's, or null when the group has no photo. An animated photo also has its video (video_url), as for a user. For a group the viewer sees, as the group page and its history; any other, a group hidden from an admin included, is 404. Not public, not even for an exposed group.
          */
         get: operations["getGroupPhotos"];
         put?: never;
@@ -2017,6 +2017,13 @@ export interface components {
              * @description The picture's file id (telegram_files).
              */
             file_id: number | null;
+            /** @description The photo's video, for an animated photo: a /files/<token> URL of its MPEG-4 file, served as url is (opening it fetches a video the store does not hold from Telegram, when the viewer may have it fetched). url stays the still, the video's poster. null when the photo has no video recorded (a still photo, or one recorded before the archive kept videos) or when the video cannot be served. */
+            video_url: string | null;
+            /**
+             * Format: int64
+             * @description The video's file id (telegram_files), or null when the photo has no video recorded.
+             */
+            video_file_id: number | null;
         };
         UserHistoryPage: {
             entries: components["schemas"]["HistoryEntry"][];
