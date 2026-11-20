@@ -2,7 +2,7 @@
 // The MCP tokens page per role: who owns each token and who minted it,
 // minting for another owner, renaming, and (superadmins) transferring.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { callsTo, fakeApi, fixture, json, renderPage, setup } from '../test/page.tsx';
 import type { McpIndexProps, McpTokensProps } from './mcp.tsx';
 import type { AccountsProps } from './accounts.tsx';
@@ -12,6 +12,8 @@ beforeEach(setup);
 // The table row of a token, by its name.
 const rowOf = (name: string) => screen.getByText(name).closest('tr') as HTMLElement;
 const dialog = () => screen.getByRole('dialog');
+// A second page in one test: drop the first.
+const cleanupDialog = () => cleanup();
 const names = () => [...document.querySelectorAll('.a-table tbody tr td:first-child')].map((x) => x.textContent);
 
 describe('mcp token owners', () => {
@@ -222,5 +224,214 @@ describe('a member holding mcp_tokens', () => {
 		expect((within(dialog()).getByRole('checkbox', { name: /MCP tokens/ }) as HTMLInputElement).checked).toBe(true);
 		expect(adminApi('PATCH', 'accounts/5', { abilities: ['mcp_tokens', 'forward', 'fetch_files'] }, 'superadmin')[0]).toBe(200);
 		expect(adminApi('PATCH', 'accounts/5', { abilities: ['mcp'] }, 'superadmin')[0]).toBe(400);
+	});
+});
+
+describe('mcp token scopes in the stand-in', () => {
+	const tokens = (persona: 'superadmin' | 'admin' = 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', persona).props.tokens;
+	const tok = (name: string) => tokens().find((t) => t.name === name)!;
+	const refs = (name: string) => tok(name).scope.map(({ kind, id }) => ({ kind, id }));
+	const opts = (persona: 'superadmin' | 'admin' | 'member') => fixture<McpTokensProps>('/mcp-admin/tokens', persona).props.scope_options;
+
+	it('sends each token\'s scope in order, with its inactive entries', () => {
+		expect(tok('old ci job').scope).toEqual([]);
+		const s = tok('research-agent').scope;
+		expect(s.map((e) => e.kind)).toEqual(['federation', 'group', 'group']);
+		expect(s[1]!.id).toBeLessThan(s[2]!.id);
+		// One of its groups is not exposed.
+		expect(s.filter((e) => e.kind === 'group').map((e) => e.active).sort()).toEqual([false, true]);
+		expect(tok('laptop').scope.map((e) => [e.kind, e.active])).toEqual([['private', true]]);
+		// A deleted federation, and a private chat on an admin's token.
+		expect(tok('').scope.map((e) => [e.kind, e.name === '', e.active])).toEqual([['federation', true, false], ['private', false, false]]);
+	});
+
+	it('offers the exposed groups the viewer sees, and private chats to a superadmin only', () => {
+		expect(opts('superadmin').private).toBe(true);
+		expect(opts('admin').private).toBe(false);
+		expect(opts('member').private).toBe(false);
+		expect(opts('superadmin').federations.map((f) => f.name)).toContain('Default');
+		const exposed = fixture<{ groups: { group: { id: number } }[] }>('/mcp-admin/groups').props.groups.map((g) => g.group.id);
+		expect(opts('superadmin').groups.map((g) => g.id).sort()).toEqual([...exposed].sort());
+		expect(opts('member').groups.length).toBeLessThan(exposed.length);
+	});
+
+	it('writes a private chat for a superadmin on a superadmin\'s token only, with the reason', () => {
+		const user = tok('laptop').scope[0]!.id;
+		const agent = tok('research-agent');
+		const before = refs('research-agent');
+		const [st, body] = adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'private', id: user }] }, 'admin');
+		expect([st, (body as { error: string }).error]).toEqual([403, 'forbidden']);
+		expect((body as { message: string }).message).toMatch(/superadmin/);
+		// The research team owns it: not even a superadmin may.
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'private', id: user }] }, 'superadmin')[0]).toBe(403);
+		expect(adminApi('POST', 'mcp/tokens', { name: 'x', scope: [{ kind: 'private', id: user }] }, 'admin')[0]).toBe(403);
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'nope', id: 1 }] }, 'superadmin')[0]).toBe(400);
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: Array.from({ length: 201 }, () => ({ kind: 'federation', id: 1 })) }, 'superadmin')[0]).toBe(400);
+		expect(refs('research-agent')).toEqual(before);
+		const laptop = tok('laptop');
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [{ kind: 'private', id: user }, { kind: 'federation', id: 0 }, { kind: 'private', id: user }] }, 'superadmin')).toEqual([204, null]);
+		expect(refs('laptop')).toEqual([{ kind: 'federation', id: 0 }, { kind: 'private', id: user }]);
+		expect(tok('laptop').name).toBe('laptop');
+		// [] reads every exposed group again; then back as it was.
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [] }, 'superadmin')).toEqual([204, null]);
+		expect(tok('laptop').scope).toEqual([]);
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [{ kind: 'private', id: user }] }, 'superadmin')).toEqual([204, null]);
+	});
+});
+
+describe('mcp token scopes in the list', () => {
+	const scopeCell = (name: string) => rowOf(name).querySelectorAll('td')[2] as HTMLElement;
+	const unnamed = () => screen.getByText('(unnamed)').closest('tr')!.querySelectorAll('td')[2] as HTMLElement;
+
+	it('says All exposed groups for a token without a scope', () => {
+		renderPage('/mcp-admin/tokens');
+		expect(scopeCell('old ci job').textContent).toBe('All exposed groups');
+		expect(screen.getByRole('columnheader', { name: 'Reads' })).toBeTruthy();
+	});
+
+	it('lists federations, groups and private chats, marking the inactive ones and why', () => {
+		const p = fixture<McpTokensProps>('/mcp-admin/tokens').props;
+		const s = p.tokens.find((t) => t.name === 'research-agent')!.scope;
+		renderPage('/mcp-admin/tokens');
+		const cell = scopeCell('research-agent');
+		const pills = [...cell.querySelectorAll('.a-tokscope-e')];
+		expect(pills.map((x) => x.textContent!.replace('inactive', ''))).toEqual(s.map((e) => e.name));
+		const off = cell.querySelector('.a-tokscope-e.off')!;
+		expect(off.textContent).toMatch(/inactive$/);
+		expect(off.getAttribute('title')).toMatch(/not exposed to MCP/);
+		expect(within(cell).getByLabelText('Federation')).toBeTruthy();
+		expect(within(scopeCell('laptop')).getByLabelText('Private chat')).toBeTruthy();
+		expect(cell.textContent).not.toMatch(/reads nothing/);
+	});
+
+	it('warns on a token whose scope is all inactive, and says why each entry is', () => {
+		renderPage('/mcp-admin/tokens');
+		const cell = unnamed();
+		expect(within(cell).getByRole('note').textContent).toBe('This token reads nothing: none of its scope is active');
+		const [fed, chat] = [...cell.querySelectorAll('.a-tokscope-e')];
+		expect(fed!.textContent).toMatch(/^Deleted federation/);
+		expect(fed!.getAttribute('title')).toMatch(/deleted/);
+		expect(chat!.getAttribute('title')).toMatch(/superadmin owns/);
+	});
+
+	it('collapses a long scope behind a toggle', () => {
+		const page = fixture<McpTokensProps>('/mcp-admin/tokens');
+		const scope = [1, 2, 3, 4, 5].map((i) => ({ kind: 'group' as const, id: -i, name: `g${i}`, active: true }));
+		const props = { ...page.props, tokens: page.props.tokens.map((t) => (t.name === 'laptop' ? { ...t, scope } : t)) };
+		renderPage('/mcp-admin/tokens', 'superadmin', { props } as never);
+		const cell = scopeCell('laptop');
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(2);
+		const more = within(cell).getByRole('button', { name: '+3 more' });
+		fireEvent.click(more);
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(5);
+		fireEvent.click(within(cell).getByRole('button', { name: 'Show less' }));
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(2);
+	});
+});
+
+describe('the mcp token scope form', () => {
+	const opts = () => fixture<McpTokensProps>('/mcp-admin/tokens').props.scope_options;
+	const tokenOf = (name: string, persona: 'superadmin' | 'admin' = 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', persona).props.tokens.find((t) => t.name === name)!;
+	const addFrom = (label: RegExp, name: string) => {
+		const input = within(dialog()).getByLabelText(label);
+		fireEvent.focus(input);
+		fireEvent.click(within(dialog()).getByRole('button', { name: `Add ${name}` }));
+	};
+	const scopeList = () => within(dialog()).getByRole('group', { name: 'Scope' });
+	const openScope = (name: string, persona: 'superadmin' | 'admin' = 'superadmin', handlers = {}) => {
+		const calls = fakeApi(persona, handlers);
+		renderPage('/mcp-admin/tokens', persona);
+		const row = name ? rowOf(name) : screen.getByText('(unnamed)').closest('tr') as HTMLElement;
+		fireEvent.click(within(row).getByRole('button', { name: /Scope/ }));
+		return calls;
+	};
+	const save = () => fireEvent.click(within(dialog()).getByRole('button', { name: 'Save' }));
+
+	it('mints a token scoped to a federation, a group and a private chat', async () => {
+		const calls = fakeApi('superadmin', { 'POST /api/mcp/tokens': () => json(201, { id: 9, token: 'tgmcp_test_once' }) });
+		renderPage('/mcp-admin/tokens');
+		fireEvent.click(screen.getByRole('button', { name: /Mint a token/ }));
+		fireEvent.change(dialog().querySelector('input')!, { target: { value: 'agent' } });
+		expect(scopeList().textContent).toMatch(/All exposed groups/);
+		const o = opts();
+		const g = o.groups[0]!, f = o.federations.find((x) => x.id === 1)!;
+		addFrom(/Add a group/, g.name);
+		addFrom(/Add a federation/, f.name);
+		const uid = within(dialog()).getByPlaceholderText('User id');
+		fireEvent.change(uid, { target: { value: 'abc' } });
+		expect(within(dialog()).getByText('A user id is a positive number.')).toBeTruthy();
+		fireEvent.change(uid, { target: { value: '424242' } });
+		fireEvent.click(within(dialog()).getByRole('button', { name: 'Add the private chat' }));
+		expect(within(scopeList()).getByText('User 424242')).toBeTruthy();
+		// Federations first, then groups, then private chats.
+		fireEvent.click(within(dialog()).getByRole('button', { name: 'Mint' }));
+		await waitFor(() => expect(callsTo(calls, 'POST', '/api/mcp/tokens')).toHaveLength(1));
+		expect(callsTo(calls, 'POST', '/api/mcp/tokens')[0]!.body).toEqual({ name: 'agent', scope: [{ kind: 'federation', id: 1 }, { kind: 'group', id: g.id }, { kind: 'private', id: 424242 }] });
+	});
+
+	it('offers private chats to a superadmin only, and only for a superadmin\'s token', () => {
+		fakeApi('admin');
+		renderPage('/mcp-admin/tokens', 'admin');
+		fireEvent.click(screen.getByRole('button', { name: /Mint a token/ }));
+		expect(within(dialog()).queryByLabelText(/Add a private chat/)).toBeNull();
+		expect(within(dialog()).getByLabelText(/Add a group/)).toBeTruthy();
+		cleanupDialog();
+		fakeApi('superadmin');
+		renderPage('/mcp-admin/tokens');
+		fireEvent.click(screen.getByRole('button', { name: /Mint a token/ }));
+		expect(within(dialog()).getByPlaceholderText('User id')).toBeTruthy();
+		const lead = fixture<McpTokensProps>('/mcp-admin/tokens').props.owners.find((x) => x.name === 'Security lead')!;
+		fireEvent.change(within(dialog()).getByLabelText(/Owner/), { target: { value: String(lead.id) } });
+		expect(within(dialog()).queryByPlaceholderText('User id')).toBeNull();
+	});
+
+	it('removes an entry and sends the rest, or nothing when unchanged', async () => {
+		const t = tokenOf('research-agent');
+		const path = `/api/mcp/tokens/${t.id}`;
+		let calls = openScope('research-agent', 'superadmin', { 'PATCH /api/mcp/tokens/:id': () => undefined });
+		save();
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+		expect(callsTo(calls, 'PATCH', path)).toHaveLength(0);
+		cleanupDialog();
+		calls = openScope('research-agent', 'superadmin', { 'PATCH /api/mcp/tokens/:id': () => undefined });
+		// The inactive group is listed, marked, and removable.
+		const off = t.scope.find((e) => !e.active)!;
+		expect(within(scopeList()).getByText('inactive')).toBeTruthy();
+		fireEvent.click(within(scopeList()).getByRole('button', { name: `Remove ${off.name}` }));
+		save();
+		await waitFor(() => expect(callsTo(calls, 'PATCH', path)).toHaveLength(1));
+		expect(callsTo(calls, 'PATCH', path)[0]!.body).toEqual({ scope: t.scope.filter((e) => e !== off).map(({ kind, id }) => ({ kind, id })) });
+	});
+
+	it('sends an empty scope to read every exposed group again', async () => {
+		const t = tokenOf('laptop');
+		const calls = openScope('laptop', 'superadmin', { 'PATCH /api/mcp/tokens/:id': () => undefined });
+		fireEvent.click(within(scopeList()).getByRole('button', { name: /^Remove / }));
+		expect(scopeList().textContent).toMatch(/All exposed groups/);
+		save();
+		await waitFor(() => expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)).toHaveLength(1));
+		expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)[0]!.body).toEqual({ scope: [] });
+	});
+
+	it('tells an admin a private chat blocks the save, and offers to remove it', async () => {
+		const t = tokenOf('', 'admin');
+		const calls = openScope('', 'admin', { 'PATCH /api/mcp/tokens/:id': () => undefined });
+		expect(within(scopeList()).getByRole('note').textContent).toMatch(/reads nothing/);
+		expect(within(dialog()).getByText(/Only a superadmin can give a token a private chat/)).toBeTruthy();
+		const go = within(dialog()).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+		expect(go.disabled).toBe(true);
+		fireEvent.click(within(dialog()).getByRole('button', { name: 'Remove the private chat' }));
+		expect(go.disabled).toBe(false);
+		expect(within(dialog()).queryByText(/Only a superadmin/)).toBeNull();
+		save();
+		await waitFor(() => expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)).toHaveLength(1));
+		expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)[0]!.body).toEqual({ scope: [{ kind: 'federation', id: 9 }] });
+	});
+
+	it('shows the server\'s 403 reason in the dialog', async () => {
+		openScope('laptop', 'superadmin', { 'PATCH /api/mcp/tokens/:id': () => json(403, { error: 'forbidden', message: 'A private chat can be given only to a token a superadmin owns.' }) });
+		addFrom(/Add a federation/, 'Default');
+		save();
+		expect((await within(dialog()).findByRole('alert')).textContent).toBe('A private chat can be given only to a token a superadmin owns.');
 	});
 });

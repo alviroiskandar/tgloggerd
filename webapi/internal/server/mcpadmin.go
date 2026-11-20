@@ -334,8 +334,9 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name    *string `json:"name"`
-		OwnerID *uint64 `json:"owner_id"`
+		Name    *string      `json:"name"`
+		OwnerID *uint64      `json:"owner_id"`
+		Scope   []mcpScopeIn `json:"scope"`
 	}
 	if !decodeBody(w, r, &in) {
 		return
@@ -351,12 +352,16 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOwner(w, r, sc, v, owner) {
 		return
 	}
+	tscope, ok := s.tokenScope(w, r, sc, v, owner, in.Scope)
+	if !ok {
+		return
+	}
 	tok, sum, err := mintMCPToken()
 	if err != nil {
 		s.internalError(w, "mint token", err)
 		return
 	}
-	id, err := webdb.CreateMCPToken(r.Context(), s.app, v.ID, owner, name, sum, webdb.By(v.ID, clientIP(r)))
+	id, err := webdb.CreateMCPToken(r.Context(), s.app, v.ID, owner, name, sum, tscope, webdb.By(v.ID, clientIP(r)))
 	if err != nil {
 		s.internalError(w, "store token", err)
 		return
@@ -366,11 +371,20 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 		detail = "token " + strconv.FormatUint(id, 10) + " for " + strconv.FormatUint(owner, 10) + " " + name
 	}
 	s.auditAdmin(r, v.ID, "mcp_token_create", detail)
+	if len(tscope) > 0 {
+		s.auditAdmin(r, v.ID, "mcp_token_scope", scopeDetail(id, tscope))
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "token": tok})
 }
 
-// renameMcpToken answers PATCH /api/mcp/tokens/{id}. An unchanged name
-// answers 204 and audits nothing.
+// scopeDetail is the audit detail of a token's scope as written.
+func scopeDetail(id uint64, es []webdb.MCPScopeEntry) string {
+	return clip("token "+strconv.FormatUint(id, 10)+": "+webdb.MCPScopeText(es), webdb.MaxAuditDetail)
+}
+
+// renameMcpToken answers PATCH /api/mcp/tokens/{id}: a new name, a new
+// scope, or both, each checked before either is written. An unchanged
+// name or scope answers 204 and audits nothing.
 func (s *Server) renameMcpToken(w http.ResponseWriter, r *http.Request) {
 	sc, v, ok := s.adminWrite(w, r, scope.MCPTokens)
 	if !ok {
@@ -381,14 +395,41 @@ func (s *Server) renameMcpToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name *string `json:"name"`
+		Name  *string       `json:"name"`
+		Scope *[]mcpScopeIn `json:"scope"`
 	}
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	name, ok := s.tokenName(w, r, v, in.Name)
-	if !ok {
-		return
+	var tscope []webdb.MCPScopeEntry
+	if in.Scope != nil {
+		if tscope, ok = s.tokenScope(w, r, sc, v, t.OwnerID, *in.Scope); !ok {
+			return
+		}
+	}
+	var name string
+	if in.Name != nil || in.Scope == nil {
+		if name, ok = s.tokenName(w, r, v, in.Name); !ok {
+			return
+		}
+	}
+	if in.Scope != nil {
+		changed, err := webdb.SetMCPTokenScope(r.Context(), s.app, t.ID, tscope)
+		if errors.Is(err, webdb.ErrNoToken) {
+			notFound(w)
+			return
+		}
+		if err != nil {
+			s.internalError(w, "token scope", err)
+			return
+		}
+		if changed {
+			s.auditAdmin(r, v.ID, "mcp_token_scope", scopeDetail(t.ID, tscope))
+		}
+		if in.Name == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
 	old, err := webdb.RenameMCPToken(r.Context(), s.app, t.ID, name)
 	if errors.Is(err, webdb.ErrNoToken) {
@@ -579,12 +620,16 @@ type mcpTokenJSON struct {
 	Created  string    `json:"created"`
 	LastUsed *string   `json:"last_used"`
 	Revoked  *string   `json:"revoked"`
+	// Scope is what the token reads, empty for every exposed group
+	// (decisions/2026-11-20-mcp-token-scope.md).
+	Scope []mcpScopeJSON `json:"scope"`
 }
 
 type mcpTokensProps struct {
-	Tokens      []mcpTokenJSON `json:"tokens"`
-	Owners      []fwdPerson    `json:"owners"`
-	CanTransfer bool           `json:"can_transfer"`
+	Tokens       []mcpTokenJSON  `json:"tokens"`
+	Owners       []fwdPerson     `json:"owners"`
+	CanTransfer  bool            `json:"can_transfer"`
+	ScopeOptions mcpScopeOptions `json:"scope_options"`
 }
 
 // managedTokens is the tokens the viewer manages, newest first, and
@@ -630,10 +675,27 @@ func loadMcpTokens(ctx context.Context, pr *pageRequest) (any, error) {
 	}
 	p := mcpTokensProps{Tokens: []mcpTokenJSON{}, Owners: []fwdPerson{},
 		CanTransfer: pr.scope.TransfersMCPTokens()}
+	if p.ScopeOptions, err = s.scopeOptions(ctx, pr.scope, v); err != nil {
+		return nil, err
+	}
+	scopes, err := webdb.MCPTokenScopes(ctx, s.app)
+	if err != nil {
+		return nil, err
+	}
+	sv, err := s.newScopeView(ctx, pr.scope, scopes)
+	if err != nil {
+		return nil, err
+	}
 	for _, t := range ts {
+		// The superadmins' when it has no owner record.
+		privateOK := t.OwnerID == 0
+		if a, ok := accts[t.OwnerID]; ok {
+			privateOK = a.Role == string(scope.Superadmin)
+		}
 		p.Tokens = append(p.Tokens, mcpTokenJSON{ID: t.ID, Name: t.Name, Owner: person(t.OwnerID),
 			MintedBy: person(t.MinterID), Created: t.Created.Format(time.RFC3339),
-			LastUsed: timePtr(t.LastUsed), Revoked: timePtr(t.Revoked)})
+			LastUsed: timePtr(t.LastUsed), Revoked: timePtr(t.Revoked),
+			Scope: sv.entries(scopes[t.ID], privateOK)})
 	}
 	for _, a := range tokenOwners(pr.scope, accts) {
 		p.Owners = append(p.Owners, personOf(a))

@@ -314,9 +314,10 @@ func TestTokens(t *testing.T) {
 	}
 }
 
-// Direct messages are out of reach: no file of this package names
-// their table. The name is put together so this file does not name it
-// either.
+// Direct messages are out of reach but through a token's scope: no
+// file of this package but private.go, which only the gate's choice
+// reaches, names their table. The name is put together so this file
+// does not name it either.
 func TestNoPrivateMessages(t *testing.T) {
 	t.Parallel()
 	table := "telegram_" + "private_messages"
@@ -324,14 +325,43 @@ func TestNoPrivateMessages(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatal("no files")
 	}
+	named := false
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(b), table) {
+		has := strings.Contains(string(b), table)
+		if f == "private.go" {
+			named = has
+		} else if has {
 			t.Errorf("%s names %s", f, table)
 		}
+	}
+	if !named {
+		t.Errorf("private.go does not name %s: is the check still checking?", table)
+	}
+}
+
+// What a scope lets through, before the exposure list: everything when
+// not narrowed; when narrowed the groups named and, with Default, the
+// groups in no other federation.
+func TestReachAllowsGroup(t *testing.T) {
+	t.Parallel()
+	if !(Reach{}).allowsGroup(-1) {
+		t.Error("an unnarrowed reach refuses a group")
+	}
+	r := Reach{narrowed: true, groups: map[int64]bool{-1: true}}
+	if !r.allowsGroup(-1) || r.allowsGroup(-2) {
+		t.Error("a group entry")
+	}
+	r = Reach{narrowed: true, groups: map[int64]bool{}, defaultFed: true,
+		federated: map[int64]bool{-2: true}}
+	if !r.allowsGroup(-1) || r.allowsGroup(-2) {
+		t.Error("the Default federation")
+	}
+	if (Reach{narrowed: true}).allowsGroup(-1) {
+		t.Error("a narrowed reach with nothing active reaches a group")
 	}
 }
 

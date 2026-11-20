@@ -1200,6 +1200,8 @@ export interface paths {
         /**
          * Create an MCP bearer token
          * @description For viewers holding mcp_tokens: superadmins, admins, and members given it; anyone else gets 404. The token (tgmcp_ and 64 hex digits) is in this answer only; it is stored as its SHA-256 and in no log or audit row. The name, 1 to 64 characters after trimming, tells tokens apart. owner_id names the account that will own it, one of McpTokensProps.owners (the viewer when left out): a superadmin mints for any active account that may hold tokens, an admin for itself or an active member it manages that holds mcp_tokens, a member only for itself; any other owner_id is 400 bad_request. The token is always minted by the viewer, which stays the account its requests are attributed to (minted_by): disabling that account disables the token. Audited as mcp_token_create, with the name, and owner_set.
+         *
+         *     scope narrows what the token reads (McpScopeWrite; left out or empty, it reads every exposed group). It is checked as renameMcpToken checks it and, when not empty, audited as mcp_token_scope as well.
          */
         post: operations["createMcpToken"];
         delete?: never;
@@ -1222,8 +1224,10 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Rename an MCP bearer token
-         * @description For whoever manages the token (see revokeMcpToken); a token the viewer does not manage is 404 like an unknown one. The name is trimmed and cut to 64 characters and must not end up empty (400 bad_request). A revoked token can be renamed too. An unchanged name answers 204 and audits nothing; a change is audited as mcp_token_rename, with the old and the new name.
+         * Rename an MCP bearer token, or set its scope
+         * @description For whoever manages the token (see revokeMcpToken); a token the viewer does not manage is 404 like an unknown one. The body carries name, scope or both; with neither it is 400 bad_request. The name is trimmed and cut to 64 characters and must not end up empty (400 bad_request). A revoked token can be renamed too. An unchanged name answers 204 and audits nothing; a change is audited as mcp_token_rename, with the old and the new name.
+         *
+         *     scope replaces the token's scope as a whole (McpScopeWrite; an empty list makes it read every exposed group again). An entry of an unknown kind, with an id of the wrong sign, naming a federation that does not exist, a group the viewer cannot see or an unknown user, or more than 200 entries, is 400 bad_request, and nothing is changed. A private entry is written only by a superadmin, on a token owned by a superadmin or without an owner record; anyone else is 403 forbidden, so an admin editing a token that still holds an inactive private entry drops it to save. An unchanged scope audits nothing; a change is audited as mcp_token_scope, with the entries written. The scope is applied from the token's next request on.
          */
         patch: operations["renameMcpToken"];
         trace?: never;
@@ -1285,7 +1289,7 @@ export interface paths {
          * One MCP message (JSON-RPC 2.0)
          * @description The Model Context Protocol endpoint, read-only, for language model clients (web/docs/mcp.md). The body is one JSON-RPC 2.0 message: a request of initialize, ping, tools/list or tools/call, or a notification. The transport is Streamable HTTP in its minimal form: every answer is one application/json body, there is no SSE stream and no session (no Mcp-Session-Id). Protocol 2025-06-18; 2025-03-26 is accepted.
          *
-         *     The tools read only the groups an administrator put on the exposure list (telegram_public_groups); the user tools describe accounts and are not limited to it. A tool's failure the caller can fix (a bad filter, an unknown id) is a result with isError true; a malformed call is a JSON-RPC error. Both are answered with 200, and so is a body that is empty or not JSON (error -32700).
+         *     The tools read only the groups an administrator put on the exposure list (telegram_public_groups), narrowed by the token's scope when it has one (McpScopeEntry); a superadmin's token may also be given private chats, which the message tools then read when named by their id. The user tools describe accounts and are limited by neither. A tool's failure the caller can fix (a bad filter, an unknown id) is a result with isError true; a malformed call is a JSON-RPC error. Both are answered with 200, and so is a body that is empty or not JSON (error -32700).
          *
          *     Authenticated by an MCP bearer token (tgmcp_ and 64 hex digits, made in the MCP administration), in the Authorization header or, for clients that can only be given a URL, in the key query parameter; the header wins. No session cookie and no CSRF token. A refusal is a JSON-RPC error with a null id and no WWW-Authenticate header, on purpose (web/docs/mcp.md).
          */
@@ -4296,12 +4300,15 @@ export interface components {
          * @description The tokens the viewer manages, newest first: a superadmin's are every token, an admin's its own and those of the members it manages, a member's its own (createMcpToken). owners is who the viewer may mint for and, with can_transfer, transfer to: for a superadmin every active account that may hold tokens (a superadmin, an admin, or a member holding mcp_tokens), for an admin itself and the active members it manages that hold mcp_tokens, for a member itself. can_transfer is true for superadmins only (transferMcpToken).
          *
          *     A token's owner is the owning account, with its role and whether it is active; a token without an owner record counts as the superadmins' and is answered as shared (owner id 0, named "Shared", active). minted_by is the account that minted it, which its requests are attributed to: when that account is disabled the token stops working, whoever owns it.
+         *
+         *     A token's scope is what it reads (McpScopeEntry), empty for every exposed group. scope_options is what the token form may offer: the federations, the exposed groups the viewer can see, and private, true for a superadmin (who may give a private chat to a token a superadmin owns, or one without an owner record).
          */
         McpTokensProps: {
             tokens: {
                 /** Format: int64 */
                 id: number;
                 name: string;
+                scope: components["schemas"]["McpScopeEntry"][];
                 owner: components["schemas"]["FwdPerson"];
                 minted_by: components["schemas"]["FwdPerson"];
                 created: string;
@@ -4310,6 +4317,31 @@ export interface components {
             }[];
             owners: components["schemas"]["FwdPerson"][];
             can_transfer: boolean;
+            scope_options: {
+                federations: components["schemas"]["FedRef"][];
+                /** @description The exposed groups the viewer can see, by title. */
+                groups: components["schemas"]["FedRef"][];
+                private: boolean;
+            };
+        };
+        /**
+         * @description federation (a federation's id, 0 for Default), group (a group's negative chat id) or private (a one-to-one chat: the peer user's id).
+         * @enum {string}
+         */
+        McpScopeKind: "federation" | "group" | "private";
+        /** @description A token's scope as written: each entry once, at most 200 (decisions/2026-11-20-mcp-token-scope.md). */
+        McpScopeWrite: {
+            kind: components["schemas"]["McpScopeKind"];
+            /** Format: int64 */
+            id: number;
+        }[];
+        /** @description One entry of a token's scope, federations first, then groups, then private chats, each by id. name is the federation's name, the group's title or the user's name ("" when it no longer exists). active is whether the entry reaches anything now: a federation that exists, a group exposed to MCP, a private chat on a token whose owner is a superadmin (or that has no owner record). An inactive entry is kept and reaches nothing; a token whose entries are all inactive reads nothing, never every exposed group. */
+        McpScopeEntry: {
+            kind: components["schemas"]["McpScopeKind"];
+            /** Format: int64 */
+            id: number;
+            name: string;
+            active: boolean;
         };
         /** @description A JSON-RPC 2.0 request (with an id) or notification (without). The methods answered are initialize, ping, tools/list and tools/call ({name, arguments}); tools/list describes each tool's arguments. */
         McpMessage: {
@@ -6967,6 +6999,7 @@ export interface operations {
                     name: string;
                     /** Format: int64 */
                     owner_id?: number;
+                    scope?: components["schemas"]["McpScopeWrite"];
                 };
             };
         };
@@ -6986,7 +7019,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Csrf"];
+            /** @description The CSRF token is missing or wrong (error csrf), a gate is up, or the scope names a private chat the viewer may not give this token (error forbidden: the viewer is not a superadmin, or the token's owner is not one); message says which. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
         };
     };
@@ -7002,12 +7043,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    name: string;
+                    name?: string;
+                    scope?: components["schemas"]["McpScopeWrite"];
                 };
             };
         };
         responses: {
-            /** @description Renamed. */
+            /** @description Renamed, or its scope set. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -7016,7 +7058,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Csrf"];
+            /** @description The CSRF token is missing or wrong (error csrf), a gate is up, or the scope names a private chat the viewer may not give this token (error forbidden: the viewer is not a superadmin, or the token's owner is not one); message says which. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
         };
     };

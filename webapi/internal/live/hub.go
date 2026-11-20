@@ -22,7 +22,9 @@ type Options struct {
 	// subscriber that falls further behind gets a resync instead of
 	// more memory. Default 256.
 	Buffer int
-	// MaxSubscribers caps the open subscriptions. Default 256.
+	// MaxSubscribers caps the open subscriptions of clients (Subscribe).
+	// The service's own subscribers (SubscribeInternal) do not count
+	// against it. Default 256.
 	MaxSubscribers int
 	// Grace is how long subscribers stay connected while the source
 	// reconnects; if it is not back by then, their streams end and
@@ -65,7 +67,7 @@ func (o *Options) defaults() {
 var (
 	// ErrDown: the source is not connected, or the Hub has stopped.
 	ErrDown = errors.New("live updates are not available")
-	// ErrFull: MaxSubscribers are open.
+	// ErrFull: MaxSubscribers client subscriptions are open.
 	ErrFull = errors.New("too many live subscribers")
 )
 
@@ -91,6 +93,9 @@ type Hub struct {
 	known, hi uint64
 	ring      ring
 	subs      map[*Sub]struct{}
+	// clients counts the subscriptions in subs that are not internal:
+	// the ones MaxSubscribers caps.
+	clients int
 	// ups counts the source's connections, so a grace timer knows
 	// whether the source came back since it was armed.
 	ups     uint64
@@ -242,9 +247,17 @@ func (h *Hub) stop() {
 
 func (h *Hub) closeAll() {
 	for s := range h.subs {
-		delete(h.subs, s)
-		close(s.done)
+		h.drop(s)
 	}
+}
+
+// drop removes a subscription. Called with mu held, for one in subs.
+func (h *Hub) drop(s *Sub) {
+	delete(h.subs, s)
+	if !s.internal {
+		h.clients--
+	}
+	close(s.done)
 }
 
 // Up reports whether new subscribers are accepted.
@@ -273,12 +286,24 @@ type Start struct {
 // Subscribe opens a subscription for a client that last saw seq last
 // (0: none). Events are matched by match. Close it when done.
 func (h *Hub) Subscribe(last uint64, match Match) (*Sub, Start, error) {
+	return h.subscribe(last, match, false)
+}
+
+// SubscribeInternal is Subscribe for the service's own subscribers
+// (the search indexers): they do not count against MaxSubscribers, so
+// a burst of browser streams cannot lock them out and leave them
+// behind. Their number is fixed by the service, not by its clients.
+func (h *Hub) SubscribeInternal(last uint64, match Match) (*Sub, Start, error) {
+	return h.subscribe(last, match, true)
+}
+
+func (h *Hub) subscribe(last uint64, match Match, internal bool) (*Sub, Start, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.up || h.stopped {
 		return nil, Start{}, ErrDown
 	}
-	if len(h.subs) >= h.o.MaxSubscribers {
+	if !internal && h.clients >= h.o.MaxSubscribers {
 		return nil, Start{}, ErrFull
 	}
 	st := Start{Kind: KindHello, Seq: h.hi}
@@ -297,21 +322,26 @@ func (h *Hub) Subscribe(last uint64, match Match) (*Sub, Start, error) {
 		st.Kind = KindResync
 	}
 	s := &Sub{
-		h:     h,
-		match: match,
-		ch:    make(chan Event, h.o.Buffer),
-		lostc: make(chan struct{}, 1),
-		done:  make(chan struct{}),
+		h:        h,
+		match:    match,
+		internal: internal,
+		ch:       make(chan Event, h.o.Buffer),
+		lostc:    make(chan struct{}, 1),
+		done:     make(chan struct{}),
 	}
 	h.subs[s] = struct{}{}
+	if !internal {
+		h.clients++
+	}
 	return s, st, nil
 }
 
 // Sub is one subscription.
 type Sub struct {
-	h     *Hub
-	match Match
-	ch    chan Event
+	h        *Hub
+	match    Match
+	internal bool // opened by SubscribeInternal
+	ch       chan Event
 	// lost: an event did not fit in ch. Guarded by h.mu; lostc wakes
 	// the reader.
 	lost  bool
@@ -367,8 +397,7 @@ func (s *Sub) Close() {
 	s.h.mu.Lock()
 	defer s.h.mu.Unlock()
 	if _, ok := s.h.subs[s]; ok {
-		delete(s.h.subs, s)
-		close(s.done)
+		s.h.drop(s)
 	}
 }
 

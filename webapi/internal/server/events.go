@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -37,11 +38,16 @@ type LiveConfig struct {
 	// revoked or expired session, or a changed scope, ends the stream
 	// with a session event. Default 30 s (WEBAPI_LIVE_RECHECK).
 	Recheck time.Duration
+	// WriteTimeout bounds each write of a frame or heartbeat: a client
+	// that stops reading ends its stream then, instead of holding the
+	// handler until the connection gives up. Default 30 s.
+	WriteTimeout time.Duration
 }
 
 const (
 	defaultHeartbeat = 15 * time.Second
 	defaultRecheck   = 30 * time.Second
+	defaultWriteTime = 30 * time.Second
 	// liveRetry is the reconnection delay, in milliseconds, the stream
 	// asks the browser's EventSource for.
 	liveRetry = 3000
@@ -142,11 +148,16 @@ func (t *topics) wants(e live.Event) bool {
 // subscriber under the hub's lock, so they answer from memory: users
 // is the set of users the stream may hear of when the viewer does not
 // see users in full (a member: liveUsers), nil for one that does.
+// exposed is the stream's chat:<id> topics of exposed groups its scope
+// does not see (liveExposed): their public chat is open to anyone, so
+// their message and file events pass too. Nothing else is widened:
+// `messages`, `stats`, `group:` and user topics stay as the scope has
+// them.
 func eventInScope(sc scope.Scope, e live.Event) (live.Event, bool) {
-	return eventFor(sc, nil, e)
+	return eventFor(sc, nil, nil, e)
 }
 
-func eventFor(sc scope.Scope, users map[int64]bool, e live.Event) (live.Event, bool) {
+func eventFor(sc scope.Scope, users, exposed map[int64]bool, e live.Event) (live.Event, bool) {
 	if e.Kind == live.KindBotUpdated {
 		// A bot is the forwarding pages' and, with its owner, the
 		// admins' and superadmins' (bots.go). A member with forward
@@ -156,6 +167,13 @@ func eventFor(sc scope.Scope, users map[int64]bool, e live.Event) (live.Event, b
 		return e, e.BotID != 0 && sc.Can(scope.Forward) && sc.SeesAllBots()
 	}
 	userOK := func(id int64) bool { return sc.SeesAllUsers() || users[id] }
+	switch e.Kind {
+	case live.KindMessageNew, live.KindMessageEdited, live.KindMessageDeleted,
+		live.KindFileStored:
+		if exposed[e.ChatID] {
+			return e, true
+		}
+	}
 	return filterEvent(e, sc.SeesChat, userOK)
 }
 
@@ -265,14 +283,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	sc := s.requestScope(r, &sess)
 	filter := s.liveFilter
+	var exposed map[int64]bool
 	if filter == nil {
 		users, err := s.liveUsers(r, sc, t)
 		if err != nil {
 			s.internalError(w, "live users", err)
 			return
 		}
+		if exposed, err = s.liveExposed(r.Context(), sc, t); err != nil {
+			s.internalError(w, "live exposure", err)
+			return
+		}
 		filter = func(sc scope.Scope, e live.Event) (live.Event, bool) {
-			return eventFor(sc, users, e)
+			return eventFor(sc, users, exposed, e)
 		}
 	}
 	sub, st, err := s.live.Subscribe(last, func(e live.Event) (live.Event, bool) {
@@ -299,7 +322,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	rc := http.NewResponseController(w)
+	// The server sets no write timeout, as streams are long; each write
+	// gets its own deadline instead, so a client that stopped reading
+	// is let go even when no proxy in front of the service bounds it.
+	writeTimeout := s.liveCfg.WriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = defaultWriteTime
+	}
+	deadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(writeTimeout)) }
 
+	deadline()
 	if _, err := fmt.Fprintf(w, "retry: %d\n\n", liveRetry); err != nil {
 		return
 	}
@@ -338,13 +370,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			// the stream, so the client polls or reconnects elsewhere.
 			return
 		case e := <-sub.Events():
+			deadline()
 			err = writeFrame(w, e)
 		case <-sub.Lost():
+			deadline()
 			err = writeFrame(w, sub.Resync())
 		case <-hb.C:
+			deadline()
 			_, err = w.Write([]byte(": keepalive\n\n"))
 		case <-rk.C:
-			if reason := s.liveRecheck(r, sc); reason != "" {
+			if reason := s.liveRecheck(r, sc, t, exposed); reason != "" {
+				deadline()
 				_ = writeFrame(w, live.Event{Kind: live.KindSession, Reason: reason})
 				_ = rc.Flush()
 				return
@@ -375,12 +411,33 @@ func (s *Server) liveUsers(r *http.Request, sc scope.Scope, t topics) (map[int64
 	return logdb.VisibleUserIDs(r.Context(), s.ro, sc, ids)
 }
 
+// liveExposed is the stream's chat:<id> topics of groups the scope
+// does not see but that are exposed, checked once when the stream
+// opens, as the hub's filter cannot query (eventFor). A signed-in
+// viewer may read such a group's public chat (logdb.OpenChat), and the
+// chat view subscribes to it, so its events reach the viewer as the
+// page would show them; only an explicit chat topic widens, never
+// `messages`. Rechecked with the session (liveRecheck).
+func (s *Server) liveExposed(ctx context.Context, sc scope.Scope, t topics) (map[int64]bool, error) {
+	var ids []int64
+	for id := range t.chats {
+		if id < 0 && !sc.SeesChat(id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return logdb.ExposedGroupsAmong(ctx, s.ro, ids)
+}
+
 // liveRecheck checks an open stream's session again: "revoked" when it
 // was ended (signed out everywhere, password changed, account gone) or
 // expired, "scope_changed" when the request scope is no longer the one
-// the stream was opened with, "" otherwise. A session that cannot be
-// checked (a database error) keeps the stream.
-func (s *Server) liveRecheck(r *http.Request, sc scope.Scope) string {
+// the stream was opened with, or when the exposed groups it follows
+// outside that scope (liveExposed) changed, "" otherwise. A session or
+// exposure that cannot be checked (a database error) keeps the stream.
+func (s *Server) liveRecheck(r *http.Request, sc scope.Scope, t topics, exposed map[int64]bool) string {
 	ctx, cancel := context.WithTimeout(r.Context(), recheckTimeout)
 	defer cancel()
 	sess, c := s.verifier.Verify(ctx, r)
@@ -393,6 +450,12 @@ func (s *Server) liveRecheck(r *http.Request, sc scope.Scope) string {
 	}
 	if !reflect.DeepEqual(s.requestScope(r, &sess), sc) {
 		return live.ReasonScopeChanged
+	}
+	if s.liveFilter == nil {
+		now, err := s.liveExposed(ctx, sc, t)
+		if err == nil && !maps.Equal(now, exposed) {
+			return live.ReasonScopeChanged
+		}
 	}
 	return ""
 }

@@ -525,40 +525,6 @@ func (t *telegram) messageRow(r row, o *rowOpts) map[string]any {
 	return j
 }
 
-// msgSelect decorates an already-chosen set of messages. The statement
-// timeout is here, on the outermost SELECT: MySQL ignores the hint
-// inside a derived table, so it has to be on the statement that wraps
-// the id selection.
-const msgSelect = "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
-	"m.message_id, m.chat_id, m.sender_user_id, m.date, " +
-	"FROM_UNIXTIME(m.date) AS sent_at, m.content_type, m.text, " +
-	"m.is_forwarded, m.is_channel_post, m.reply_to_msg_id, m.deleted_at, " +
-	"m.edit_date, " +
-	"g.title AS group_title, " +
-	"TRIM(CONCAT(COALESCE(su.first_name,''), ' ', " +
-	"            COALESCE(su.last_name,''))) AS sender_name, " +
-	"(SELECT x.username FROM telegram_user_usernames x " +
-	"  WHERE x.user_id = m.sender_user_id AND x.kind = 'active' " +
-	"  ORDER BY x.position LIMIT 1) AS sender_username, " +
-	"f.id AS file_id, f.file_type, f.file_size, f.file_ext, " +
-	"f.orig_file_name, f.on_disk, m.id AS id_internal, " +
-	"(SELECT COUNT(1) FROM telegram_group_message_edits pe " +
-	"  WHERE pe.group_message_id = m.id) AS prev_versions, " +
-	"lp.url AS lp_url, lp.display_url AS lp_display_url, " +
-	"lp.site_name AS lp_site_name, lp.title AS lp_title, " +
-	"LEFT(lp.description, 1000) AS lp_description, lp.author AS lp_author, " +
-	"lp.type AS lp_type, lp.instant_view_version AS lp_iv, " +
-	"lp.photo_file_id AS lp_photo_id, lpf.file_type AS lp_photo_type, " +
-	"lpf.file_size AS lp_photo_size, lpf.on_disk AS lp_photo_on_disk "
-
-// msgJoins are the display joins; they only ever run over the rows
-// already chosen, never over the table searched.
-const msgJoins = "JOIN `telegram_groups` g ON g.id = m.chat_id " +
-	"LEFT JOIN telegram_users su ON su.id = m.sender_user_id " +
-	"LEFT JOIN telegram_files f ON f.id = m.file_id " +
-	"LEFT JOIN telegram_link_previews lp ON lp.group_message_id = m.id " +
-	"LEFT JOIN telegram_files lpf ON lpf.id = lp.photo_file_id "
-
 // orderSpec is how a scan is ordered. Only date, edit_date and
 // deleted_at have a (chat_id, <column>) index; relevance, the default
 // with a text match, has no cursor, a score not being a position.
@@ -654,16 +620,17 @@ func (t *telegram) runMessageQuery(ctx context.Context, q *queryReq) (map[string
 		pageBinds = append(pageBinds, q.cursor.value, q.cursor.value, strconv.FormatInt(q.cursor.id, 10))
 	}
 
+	src := q.gate.src
 	if q.limit > 0 && !q.gate.nothing {
 		inner := "SELECT m.id, " + q.order.keyExpr + " AS ckey " +
-			"FROM telegram_group_messages m WHERE 1=1" + pageWhere +
+			"FROM " + src.table + " m WHERE 1=1" + pageWhere +
 			" ORDER BY " + q.order.sql +
 			" LIMIT " + strconv.Itoa(q.limit) +
 			" OFFSET " + strconv.Itoa(q.offset)
-		stmt := msgSelect + ", sel.ckey " +
+		stmt := src.selectCols + ", sel.ckey " +
 			"FROM (" + inner + ") sel " +
-			"JOIN telegram_group_messages m ON m.id = sel.id " +
-			msgJoins + "ORDER BY " + q.order.sql
+			"JOIN " + src.table + " m ON m.id = sel.id " +
+			src.joins + "ORDER BY " + q.order.sql
 		all := append([]any{}, pageBinds...)
 		if q.orderBind != "" {
 			all = append(all, q.orderBind, q.orderBind)
@@ -713,7 +680,7 @@ func (t *telegram) runMessageQuery(ctx context.Context, q *queryReq) (map[string
 			// No ORDER BY and no cursor: the total is of the whole
 			// match. A count that times out keeps the page.
 			csql := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
-				"COUNT(1) AS n FROM telegram_group_messages m " +
+				"COUNT(1) AS n FROM " + src.table + " m " +
 				"WHERE 1=1" + where
 			cr, err := execTool(ctx, t.db, csql, binds, "count failed")
 			switch {
@@ -737,7 +704,8 @@ func (t *telegram) runMessageQuery(ctx context.Context, q *queryReq) (map[string
 
 // decorateIds joins the display columns onto an explicit, already
 // authorised set of row ids, newest first.
-func (t *telegram) decorateIDs(ctx context.Context, ids []int64, o *rowOpts, envelope map[string]any) ([]any, error) {
+func (t *telegram) decorateIDs(ctx context.Context, src *msgSource, ids []int64, o *rowOpts,
+	envelope map[string]any) ([]any, error) {
 	arr := []any{}
 	if len(ids) == 0 {
 		return arr, nil
@@ -746,7 +714,7 @@ func (t *telegram) decorateIDs(ctx context.Context, ids []int64, o *rowOpts, env
 	for i, id := range ids {
 		binds[i] = strconv.FormatInt(id, 10)
 	}
-	stmt := msgSelect + "FROM telegram_group_messages m " + msgJoins +
+	stmt := src.selectCols + "FROM " + src.table + " m " + src.joins +
 		"WHERE m.id IN (" + placeholders(len(ids), ",") + ") ORDER BY m.date DESC"
 	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
@@ -767,13 +735,14 @@ func (t *telegram) decorateIDs(ctx context.Context, ids []int64, o *rowOpts, env
 // covered by uq_group_messages_chat_msg, so a reverse walk stops at
 // the limit. No single statement does that across groups, so the
 // fan-out is the plan, affordable because the list is curated.
-func (t *telegram) listRecent(ctx context.Context, groups []int64, limit, offset int, o *rowOpts) (map[string]any, error) {
+func (t *telegram) listRecent(ctx context.Context, src *msgSource, groups []int64, limit, offset int,
+	o *rowOpts) (map[string]any, error) {
 	type hit struct{ id, date int64 }
 	var hits []hit
 	per := limit + offset
 	for _, g := range groups {
 		stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ m.id, m.date " +
-			"FROM telegram_group_messages m WHERE m.chat_id = ? " +
+			"FROM " + src.table + " m WHERE m.chat_id = ? " +
 			"ORDER BY m.message_id DESC LIMIT " + strconv.Itoa(per)
 		rows, err := execTool(ctx, t.db, stmt, []any{strconv.FormatInt(g, 10)}, queryFailed)
 		if err != nil {
@@ -789,7 +758,7 @@ func (t *telegram) listRecent(ctx context.Context, groups []int64, limit, offset
 		ids = append(ids, hits[i].id)
 	}
 	out := map[string]any{}
-	msgs, err := t.decorateIDs(ctx, ids, o, out)
+	msgs, err := t.decorateIDs(ctx, src, ids, o, out)
 	if err != nil {
 		return nil, err
 	}

@@ -66,11 +66,11 @@ func TestMcpPages(t *testing.T) {
 		{"id": 2, "name": "old laptop", "owner": `+shared+`,
 		 "minted_by": {"id": 2, "name": "ops", "role": "superadmin", "active": true},
 		 "created": "2026-03-01T08:00:00Z",
-		 "last_used": "2026-04-01T08:00:00Z", "revoked": "2026-05-01T08:00:00Z"},
+		 "last_used": "2026-04-01T08:00:00Z", "revoked": "2026-05-01T08:00:00Z", "scope": []},
 		{"id": 1, "name": "claude-desktop", "owner": `+shared+`,
 		 "minted_by": {"id": 1, "name": "admin", "role": "superadmin", "active": true},
 		 "created": "2026-10-01T08:00:00Z",
-		 "last_used": "2026-11-17T15:00:00Z", "revoked": null}]`) {
+		 "last_used": "2026-11-17T15:00:00Z", "revoked": null, "scope": []}]`) {
 		t.Errorf("tokens %s", js(b["props"]))
 	}
 	_, b = e.page("admin", "/mcp-admin/tokens")

@@ -855,8 +855,9 @@ export function load(url: string, persona: Persona): Loaded {
 		if (path === '/mcp-admin/tokens') {
 			const tokens = mcpMine(s).sort((a, b) => b.id - a.id);
 			return { route: 'mcp_tokens', status: 200, props: {
-				tokens: tokens.map((t) => ({ id: t.id, name: t.name, owner: mcpPerson(t.owner), minted_by: mcpPerson(t.minted_by), created: iso(t.created), last_used: t.last_used ? iso(t.last_used) : null, revoked: t.revoked ? iso(t.revoked) : null })),
+				tokens: tokens.map((t) => ({ id: t.id, name: t.name, owner: mcpPerson(t.owner), minted_by: mcpPerson(t.minted_by), created: iso(t.created), last_used: t.last_used ? iso(t.last_used) : null, revoked: t.revoked ? iso(t.revoked) : null, scope: mcpScopeOf(t) })),
 				owners: mcpOwners(s).map((a) => mcpPerson(a.id)),
+				scope_options: mcpScopeOptions(s),
 				can_transfer: s.role === 'superadmin',
 			} };
 		}
@@ -1218,6 +1219,57 @@ function managesMcp(s, owner: number) {
 const mcpOwners = (s) => accounts.filter((a) => a.active && (a.role !== 'member' || a.abilities.includes('mcp_tokens')) && managesMcp(s, a.id)).sort((a, b) => a.username.localeCompare(b.username));
 const mcpMine = (s) => mcpToks.filter((t) => managesMcp(s, t.owner));
 
+// Each token's scope (McpScopeEntry): federations, groups and, given by
+// a superadmin, private chats. None reads every exposed group. An entry
+// is kept when it stops reaching anything, inactive: a deleted
+// federation (named ""), a group not exposed, a private chat on a token
+// whose owner is not a superadmin. The unnamed token is all inactive: a
+// federation since deleted and a private chat from an earlier owner.
+type McpScopeRef = { kind: 'federation' | 'group' | 'private'; id: number };
+const MCP_SCOPES: Record<number, McpScopeRef[]> = {
+	1: [{ kind: 'private', id: users[0].id }],
+	2: [{ kind: 'federation', id: 1 }, { kind: 'group', id: groups[0].id }, { kind: 'group', id: groups[1].id }],
+	4: [{ kind: 'federation', id: 9 }, { kind: 'private', id: users[1].id }],
+};
+// A private chat works only on a token a superadmin owns, or one with
+// no owner record (the superadmins').
+const superOwned = (owner: number) => owner === 0 || accounts.some((a) => a.id === owner && a.role === 'superadmin' && a.active);
+const MCP_KINDS = ['federation', 'group', 'private'];
+const mcpScopeOf = (t) => [...(MCP_SCOPES[t.id] ?? [])].sort((x, y) => MCP_KINDS.indexOf(x.kind) - MCP_KINDS.indexOf(y.kind) || x.id - y.id).map((e) => {
+	if (e.kind === 'federation') { const f = fedById(e.id); return { ...e, name: f?.name ?? '', active: !!f }; }
+	if (e.kind === 'group') { const g = getGroup(e.id); return { ...e, name: g?.title ?? '', active: !!g && mcpExposed.some((x) => x.group.id === e.id) }; }
+	const u = getUser(e.id); return { ...e, name: u?.name ?? '', active: !!u && superOwned(t.owner) };
+});
+// What the token form may offer: every federation, the exposed groups
+// the viewer sees, and private chats to a superadmin.
+const mcpScopeOptions = (s) => ({
+	federations: allFeds().map((f) => ({ id: f.id, name: f.name })),
+	groups: mcpExposed.filter((e) => s.group(e.group)).map((e) => ({ id: e.group.id, name: e.group.title })),
+	private: s.role === 'superadmin',
+});
+// A scope as written for a token of `owner`: [200, refs], else the
+// refusal. A private chat is a superadmin's alone, and only on a token a
+// superadmin owns (403 with the reason); a bad entry or more than 200 is
+// 400. Duplicates are kept once.
+function checkMcpScope(s, raw, owner: number): [number, McpScopeRef[] | { error: string; message: string }] {
+	const bad = (message: string): [number, { error: string; message: string }] => [400, { error: 'bad_request', message }];
+	if (!Array.isArray(raw)) return bad('A scope is a list of federations, groups and private chats.');
+	if (raw.length > 200) return bad('A scope holds at most 200 entries.');
+	const out: McpScopeRef[] = [];
+	for (const e of raw) {
+		if (!e || !MCP_KINDS.includes(e.kind) || !Number.isInteger(e.id)) return bad('A scope entry is a federation, a group or a private chat.');
+		if (e.kind === 'federation' && !fedById(e.id)) return bad('No such federation.');
+		if (e.kind === 'group') { const g = e.id < 0 && getGroup(e.id); if (!g || !s.group(g)) return bad('No such group.'); }
+		if (e.kind === 'private') {
+			if (e.id <= 0 || !getUser(e.id)) return bad('No such private chat.');
+			if (s.role !== 'superadmin') return [403, { error: 'forbidden', message: 'Only a superadmin can give a token a private chat.' }];
+			if (!superOwned(owner)) return [403, { error: 'forbidden', message: 'A private chat can be given only to a token a superadmin owns.' }];
+		}
+		if (!out.some((x) => x.kind === e.kind && x.id === e.id)) out.push({ kind: e.kind, id: e.id });
+	}
+	return [200, out];
+}
+
 // A federation's details page (FederationDetailProps), for a superadmin
 // (every federation) or an admin of it; null for anyone else. Its groups
 // come a page at a time, busiest first, searchable by title or username.
@@ -1578,8 +1630,11 @@ export function adminApi(method: string, p: string, body, persona: Persona): [nu
 			// The viewer when left out, else one of the owners it may mint for.
 			const owner = body.owner_id ?? s.acct.id;
 			if (!mcpOwners(s).some((a) => a.id === owner)) return [400, { error: 'bad_request', message: 'This account cannot own a token you mint.', field: 'owner_id' }];
+			const [st, scope] = checkMcpScope(s, body.scope ?? [], owner);
+			if (st !== 200) return [st, scope];
 			const id = Math.max(...mcpToks.map((t) => t.id)) + 1;
 			mcpToks.push({ id, name, owner, minted_by: s.acct.id, created: '2026-11-17 16:00:00', last_used: '', revoked: null });
+			if ((scope as McpScopeRef[]).length) MCP_SCOPES[id] = scope as McpScopeRef[];
 			return [201, { id, token: 'tgmcp_standin_' + id + '_shown_once' }];
 		}
 		// Moving a token to another owner is a superadmin's alone.
@@ -1591,11 +1646,21 @@ export function adminApi(method: string, p: string, body, persona: Persona): [nu
 			// It keeps working, and keeps who minted it.
 			t.owner = body.owner_id; return [204, null];
 		}
-		// A revoked token can be renamed too; the name is cut to 64.
+		// A revoked token can be renamed too; the name is cut to 64. The
+		// name, the scope or both change; the scope is replaced whole.
 		if (!m[2]) {
-			const name = String(body.name ?? '').trim().slice(0, 64);
+			if (body.name === undefined && body.scope === undefined) return [400, { error: 'bad_request', message: 'A name or a scope is required.', field: 'name' }];
+			const name = body.name === undefined ? t.name : String(body.name).trim().slice(0, 64);
 			if (!name) return [400, { error: 'bad_request', message: 'A name is required.', field: 'name' }];
-			t.name = name; return [204, null];
+			let scope: McpScopeRef[] | undefined;
+			if (body.scope !== undefined) {
+				const [st, out] = checkMcpScope(s, body.scope, t.owner);
+				if (st !== 200) return [st, out];
+				scope = out as McpScopeRef[];
+			}
+			t.name = name;
+			if (scope) MCP_SCOPES[t.id] = scope;
+			return [204, null];
 		}
 		t.revoked = '2026-11-17 16:00:00'; return [204, null];
 	}

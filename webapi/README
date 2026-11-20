@@ -309,19 +309,35 @@ live.Source, leaving the fan-out as it is.
     the events of its granted groups, and of the people of its user
     topics that appear in them (checked when the stream opens, as the
     hub's filter cannot query).
+  - An exposed group's public chat is open to every signed-in viewer,
+    also one whose scope does not see the group, and its chat view
+    subscribes to chat:<id>. So an explicit chat:<id> topic of an
+    exposed group passes that chat's message.* and file.stored events
+    whatever the scope (checked when the stream opens). Nothing else
+    widens: messages, stats, group: and user topics stay as the scope
+    has them.
   - Every WEBAPI_LIVE_RECHECK seconds an open stream checks its session
     again. Revoked, expired or the account gone: a "session" event with
     reason "revoked", then the stream closes. A different request
-    scope: reason "scope_changed". The session event has no id, so the
-    browser's Last-Event-ID stays the last real seq.
+    scope, or an exposed group the stream follows outside its scope
+    withdrawn (or one of its other chat topics newly exposed): reason
+    "scope_changed". The session event has no id, so the browser's
+    Last-Event-ID stays the last real seq.
   - A stream gets a buffer of WEBAPI_LIVE_BUFFER events. A browser that
     reads slower than events arrive loses what is queued and gets a
     resync instead, so one slow reader costs bounded memory and slows
     nobody else.
+  - Each write to a stream has a deadline of 30 seconds (the server
+    sets no write timeout, as streams are long). A browser that stops
+    reading altogether ends its stream then and frees its slot, also
+    where no proxy's send timeout would end it.
   - Refusals, never an empty stream: 503 live_off when live updates
     are off (WEBAPI_LIVE=0 or no WEB_TGLOGGERD_API) or the daemon's
     stream is not connected; 503 unavailable with
     WEBAPI_LIVE_MAX_SUBSCRIBERS streams open. Both carry Retry-After.
+    The cap counts browser streams only: the search indexers subscribe
+    to the hub outside it (Hub.SubscribeInternal), so a burst of
+    browsers cannot lock them out.
     When the daemon's stream drops, open streams stay for 5 seconds in
     case it comes straight back, then close; their clients reconnect,
     are refused and poll until it is back.
@@ -627,11 +643,14 @@ open pages. The answer never waits for the ask, and its outcome (a
 refusal, a daemon away) is only logged at debug.
 
 A stretch is a chat and a message id: 0 for the newest messages, which
-a window without an anchor shows (its forum topic aside); otherwise the
-anchor's message id (before, after or around, the chat page's ?at= or
-the message its date found, the message page's own message, and for
-the oldest messages, after=0, the window's first), so the same page
-always names the same stretch, as the daemon's own limits key it. Each
+a window without an anchor shows (its forum topic aside), as does a
+window after an anchor that reaches the newest message (a live chat's
+tail refetch, which would otherwise name a new stretch on every new
+message); otherwise the anchor's message id (before, after or around,
+the chat page's ?at= or the message its date found, the message page's
+own message, and for the oldest messages, after=0, the window's
+first), so the same page always names the same stretch, as the
+daemon's own limits key it. Each
 stretch is asked at most once per WEBAPI_RECHECK_NEWEST_SECS (newest)
 or WEBAPI_RECHECK_OLDER_SECS (any other), whoever asks. Signed-out
 visitors, who may be anyone in any number (an exposed group's public
@@ -748,7 +767,8 @@ text of a media message), keyed by scope and row id, so every write is
 idempotent:
 
   - Events: the daemon's message.new, .edited and .deleted, from the
-    live hub (one more subscriber of the service's one subscription),
+    live hub (one more subscriber of the service's one subscription,
+    outside the cap on browser streams),
     or, while live updates are off, from a hub of the indexers' own
     over the daemon's stream, so the three indices hold one of the
     daemon's subscriber slots. The

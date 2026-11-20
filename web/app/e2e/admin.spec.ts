@@ -1,5 +1,6 @@
 // Administration flows that need the real stand-in behind them.
 import { test, expect } from './fixtures.ts';
+import { featuredUser } from '../../mockup/src/data/users.js';
 
 test('an admin creates a member, granted a federation', async ({ page, as }) => {
 	await as('admin');
@@ -105,6 +106,30 @@ test('an MCP token is minted for a member, renamed and transferred', async ({ pa
 	await expect(d).toHaveCount(0);
 	await expect(renamed).toContainText('Security lead');
 	await expect(renamed).toContainText('minted by Administrator');
+});
+
+test('an MCP token is minted with a scope, and its scope edited back to all groups', async ({ page }) => {
+	await page.goto('/mcp-admin/tokens');
+	await page.getByRole('button', { name: /Mint a token/ }).click();
+	let d = page.getByRole('dialog');
+	await d.getByRole('textbox', { name: /^Name/ }).fill('e2e scoped');
+	await d.getByLabel('Add a federation...').click();
+	await d.getByRole('button', { name: 'Add GNU/Weeb network' }).click();
+	// A private chat is named by the other person's user id.
+	await d.getByPlaceholder('User id').fill(String(featuredUser!.id));
+	await d.getByRole('button', { name: 'Add the private chat' }).click();
+	await d.getByRole('button', { name: 'Mint' }).click();
+	await expect(page.getByText('Copy this token now')).toBeVisible();
+	const row = page.locator('tbody tr', { hasText: 'e2e scoped' });
+	await expect(row).toContainText('GNU/Weeb network');
+	await expect(row).toContainText('Dewi Kusuma');
+	await row.getByRole('button', { name: 'Scope' }).click();
+	d = page.getByRole('dialog');
+	await d.getByRole('button', { name: 'Remove GNU/Weeb network' }).click();
+	await d.getByRole('button', { name: 'Remove Dewi Kusuma' }).click();
+	await d.getByRole('button', { name: 'Save' }).click();
+	await expect(d).toHaveCount(0);
+	await expect(row).toContainText('All exposed groups');
 });
 
 test('a join that waits for approval holds its filing until it is cancelled', async ({ page, as }) => {

@@ -336,6 +336,17 @@ func TestHubSubscriberCap(t *testing.T) {
 		t.Fatalf("%d subscribers", n)
 	}
 	subscribe(t, e.hub, 0, all)
+
+	// The service's own subscribers are not capped, and closing one
+	// frees no client slot.
+	in, _, err := e.hub.SubscribeInternal(0, all)
+	if err != nil {
+		t.Fatalf("internal with the cap reached: %v", err)
+	}
+	in.Close()
+	if _, _, err := e.hub.Subscribe(0, all); !errors.Is(err, live.ErrFull) {
+		t.Fatalf("after an internal one closed: %v, want ErrFull", err)
+	}
 }
 
 func TestHubStopEndsSubscribers(t *testing.T) {

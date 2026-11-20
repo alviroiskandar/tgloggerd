@@ -82,6 +82,10 @@ type TokenOwner struct {
 	WebUserID uint64
 	Username  string
 	Role      string
+	// PrivateOK is whether the token's private chat entries work: its
+	// current owner is a superadmin, or it has no owner record (it
+	// counts as the superadmins').
+	PrivateOK bool
 }
 
 // ErrNoToken is an unknown digest, a revoked token, or a token whose
@@ -99,7 +103,8 @@ var ErrNoToken = errors.New("mcp: invalid or revoked token")
 func ResolveToken(ctx context.Context, app *sql.DB, digest [32]byte) (TokenOwner, error) {
 	var o TokenOwner
 	err := app.QueryRowContext(ctx,
-		"SELECT t.id, t.web_user_id, m.username, m.role "+
+		"SELECT t.id, t.web_user_id, m.username, m.role, "+
+			"(r.user_id IS NULL OR u.role = 'superadmin') "+
 			"FROM web_mcp_tokens t "+
 			"JOIN web_users m ON m.id = t.web_user_id "+
 			"LEFT JOIN web_resource_relations r ON r.resource_type = ? "+
@@ -112,7 +117,7 @@ func ResolveToken(ctx context.Context, app *sql.DB, digest [32]byte) (TokenOwner
 			"    FROM web_member_abilities ab WHERE ab.web_user_id = u.id "+
 			"    AND ab.ability = ?)))) LIMIT 1",
 		string(webdb.ResMCPToken), string(webdb.Owner), digest[:], webdb.AbilityMCPTokens).
-		Scan(&o.TokenID, &o.WebUserID, &o.Username, &o.Role)
+		Scan(&o.TokenID, &o.WebUserID, &o.Username, &o.Role, &o.PrivateOK)
 	if errors.Is(err, sql.ErrNoRows) {
 		return o, ErrNoToken
 	}

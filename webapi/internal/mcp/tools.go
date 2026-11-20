@@ -253,6 +253,11 @@ func (t *telegram) histList(ctx context.Context, out map[string]any, key, stmt, 
 
 func (t *telegram) listGroups(ctx context.Context, args map[string]any) (any, error) {
 	limit := clampLimit(args)
+	rd, err := t.readable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cond, binds := rd.groupCond("g.id")
 	stmt := "SELECT g.id, g.title, g.type, g.msg_count, " +
 		"g.description, " +
 		"gf.id AS photo_file_id, gf.on_disk AS photo_on_disk, " +
@@ -262,9 +267,9 @@ func (t *telegram) listGroups(ctx context.Context, args map[string]any) (any, er
 		"FROM `telegram_groups` g " +
 		"LEFT JOIN telegram_files gf " +
 		"  ON gf.id = g.photo_file_id WHERE 1=1" +
-		groupGate +
+		cond +
 		" ORDER BY g.msg_count DESC LIMIT " + strconv.Itoa(limit)
-	rows, err := execTool(ctx, t.db, stmt, nil, queryFailed)
+	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +296,22 @@ func (t *telegram) listGroups(ctx context.Context, args map[string]any) (any, er
 		}
 		groups = append(groups, j)
 	}
-	return map[string]any{"groups": groups, "count": len(groups)}, nil
+	out := map[string]any{"groups": groups, "count": len(groups)}
+	// Only a token whose scope holds private chats sees the key, so
+	// every other answer stays as it was.
+	if len(rd.private) > 0 {
+		pcs, err := t.privateChats(ctx, rd.private)
+		if err != nil {
+			return nil, err
+		}
+		out["private_chats"] = pcs
+		out["private_chats_note"] = "This token may also read these private " +
+			"chats: pass a chat_id as group_id to the message tools " +
+			"(search, recent, get messages, message history, popular " +
+			"words, senders, count user messages). Searching or listing " +
+			"recent messages without a group_id covers groups only."
+	}
+	return out, nil
 }
 
 func (t *telegram) listGroupsTool() Tool {
@@ -359,6 +379,11 @@ func (t *telegram) getGroup(ctx context.Context, args map[string]any) (any, erro
 
 func (t *telegram) getGroupOne(ctx context.Context, gid int64) (map[string]any, error) {
 	bind := strconv.FormatInt(gid, 10)
+	rd, err := t.readable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cond, cbinds := rd.groupCond("g.id")
 	rows, err := execTool(ctx, t.db,
 		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "+
 			"g.id, g.title, g.type, g.description, "+
@@ -368,10 +393,8 @@ func (t *telegram) getGroupOne(ctx context.Context, gid int64) (map[string]any, 
 			"FROM `telegram_groups` g "+
 			"LEFT JOIN telegram_files gf "+
 			"  ON gf.id = g.photo_file_id "+
-			"WHERE g.id = ? "+
-			"  AND g.id IN (SELECT group_id "+
-			"               FROM telegram_public_groups)",
-		[]any{bind}, queryFailed)
+			"WHERE g.id = ?"+cond,
+		append([]any{bind}, cbinds...), queryFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -515,14 +538,11 @@ func (t *telegram) getGroupHistory(ctx context.Context, args map[string]any) (an
 	}
 	out := map[string]any{"group_id": gid}
 	// The gate, once, before any history is read.
-	ok, err := execTool(ctx, t.db,
-		"SELECT 1 FROM telegram_public_groups "+
-			"WHERE group_id = ? LIMIT 1",
-		[]any{bind}, queryFailed)
+	rd, err := t.readable(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(ok) == 0 {
+	if !rd.hasGroup(gid) {
 		return nil, toolErr("no readable group with id " + bind +
 			"; see telegram_list_groups for what is available")
 	}
@@ -675,6 +695,11 @@ func (t *telegram) listGroupAdmins(ctx context.Context, args map[string]any) (an
 	}
 	// The gate as a WHERE condition: an unexposed group has no rows,
 	// exactly as if it had no admins.
+	rd, err := t.readable(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cond, cbinds := rd.groupCond("a.group_id")
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
 		"a.user_id, a.status, a.custom_title, " +
 		"a.joined_date, a.is_anonymous, " +
@@ -692,13 +717,11 @@ func (t *telegram) listGroupAdmins(ctx context.Context, args map[string]any) (an
 		usernameSubq("a.user_id") + " AS username " +
 		"FROM telegram_group_admins a " +
 		"LEFT JOIN telegram_users u ON u.id = a.user_id " +
-		"WHERE a.group_id = ? " +
-		"  AND a.group_id IN (SELECT group_id " +
-		"                     FROM telegram_public_groups) " +
+		"WHERE a.group_id = ?" + cond + " " +
 		"ORDER BY (a.status = 'creator') DESC, " +
 		"         a.joined_date ASC " +
 		"LIMIT " + strconv.Itoa(clampLimit(args))
-	rows, err := execTool(ctx, t.db, stmt, []any{strconv.FormatInt(gid, 10)}, queryFailed)
+	rows, err := execTool(ctx, t.db, stmt, append([]any{strconv.FormatInt(gid, 10)}, cbinds...), queryFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -760,19 +783,15 @@ func (t *telegram) listGroupAdminsTool() Tool {
 // ---- telegram_list_recent_messages ----
 
 func (t *telegram) listRecentMessages(ctx context.Context, args map[string]any) (any, error) {
-	exposed, err := t.exposedGroups(ctx)
+	g, err := t.msgGate(ctx, args)
 	if err != nil {
 		return nil, err
 	}
-	groups := exposed
-	if g, ok := intValue(args["group_id"]); ok {
-		// An unexposed group simply has no rows to offer.
-		groups = nil
-		for _, e := range exposed {
-			if e == g {
-				groups = append(groups, g)
-			}
-		}
+	// The gate's own list: an unreadable group simply has no rows to
+	// offer.
+	var groups []int64
+	for _, b := range g.binds {
+		groups = append(groups, b.(int64))
 	}
 	o, err := parseRowOpts(args)
 	if err != nil {
@@ -783,7 +802,7 @@ func (t *telegram) listRecentMessages(ctx context.Context, args map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	out, err := t.listRecent(ctx, groups, limit, offset, &o)
+	out, err := t.listRecent(ctx, g.src, groups, limit, offset, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -826,16 +845,21 @@ func (t *telegram) listGroupSenders(ctx context.Context, args map[string]any) (a
 	// Aggregate first, decorate second: the inner statement is covered
 	// by (chat_id, sender_user_id), or (chat_id, date, sender_user_id)
 	// with a date range; the joins run over at most limit rows. A NULL
-	// sender is the chat itself (a channel post, an anonymous admin).
-	// No hint inside: MySQL ignores it in a derived table.
-	inner := "SELECT m.sender_user_id AS uid, COUNT(1) AS n " +
-		"FROM telegram_group_messages m " +
+	// sender is the chat itself (a channel post, an anonymous admin),
+	// or in a private chat the logged-in account. No hint inside:
+	// MySQL ignores it in a derived table.
+	g, err := t.chatGate(ctx, gid, true)
+	if err != nil {
+		return nil, err
+	}
+	src := g.src
+	inner := "SELECT " + src.sender + " AS uid, COUNT(1) AS n " +
+		"FROM " + src.table + " m " +
 		"WHERE m.chat_id = ? " +
-		"  AND m.sender_user_id IS NOT NULL " +
-		"  AND m.chat_id IN (SELECT group_id " +
-		"                    FROM telegram_public_groups)" +
+		"  AND " + src.sender + " IS NOT NULL" +
+		g.sql +
 		dr.sql +
-		" GROUP BY m.sender_user_id " +
+		" GROUP BY " + src.sender + " " +
 		"ORDER BY n DESC LIMIT " + strconv.Itoa(limit) +
 		" OFFSET " + strconv.Itoa(offset)
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
@@ -846,7 +870,8 @@ func (t *telegram) listGroupSenders(ctx context.Context, args map[string]any) (a
 		"FROM (" + inner + ") s " +
 		"LEFT JOIN telegram_users u ON u.id = s.uid " +
 		"ORDER BY s.n DESC"
-	binds := append([]any{strconv.FormatInt(gid, 10)}, dr.binds...)
+	binds := append([]any{strconv.FormatInt(gid, 10)}, g.binds...)
+	binds = append(binds, dr.binds...)
 	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
 		return nil, err
@@ -875,12 +900,11 @@ func (t *telegram) listGroupSenders(ctx context.Context, args map[string]any) (a
 	dr.stamp(out)
 	if b, ok := boolArg(args, "include_total"); ok && b {
 		csql := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
-			"COUNT(DISTINCT m.sender_user_id) AS n " +
-			"FROM telegram_group_messages m " +
+			"COUNT(DISTINCT " + src.sender + ") AS n " +
+			"FROM " + src.table + " m " +
 			"WHERE m.chat_id = ? " +
-			"  AND m.sender_user_id IS NOT NULL " +
-			"  AND m.chat_id IN (SELECT group_id " +
-			"                    FROM telegram_public_groups)" +
+			"  AND " + src.sender + " IS NOT NULL" +
+			g.sql +
 			dr.sql
 		cr, err := execTool(ctx, t.db, csql, binds, "count failed")
 		if err != nil {
@@ -952,15 +976,19 @@ func (t *telegram) countUserMessages(ctx context.Context, args map[string]any) (
 	if err != nil {
 		return nil, err
 	}
+	g, err := t.chatGate(ctx, gid, true)
+	if err != nil {
+		return nil, err
+	}
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
 		"COUNT(1) AS n, MIN(m.date) AS first_date, " +
 		"MAX(m.date) AS last_date " +
-		"FROM telegram_group_messages m " +
-		"WHERE m.chat_id = ? AND m.sender_user_id = ? " +
-		"  AND m.chat_id IN (SELECT group_id " +
-		"                    FROM telegram_public_groups)" +
+		"FROM " + g.src.table + " m " +
+		"WHERE m.chat_id = ? AND " + g.src.sender + " = ?" +
+		g.sql +
 		dr.sql
-	binds := append([]any{strconv.FormatInt(gid, 10), strconv.FormatInt(uid, 10)}, dr.binds...)
+	binds := append([]any{strconv.FormatInt(gid, 10), strconv.FormatInt(uid, 10)}, g.binds...)
+	binds = append(binds, dr.binds...)
 	out := map[string]any{"group_id": gid, "user_id": uid}
 	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
@@ -977,17 +1005,19 @@ func (t *telegram) countUserMessages(ctx context.Context, args map[string]any) (
 	}
 	dr.stamp(out)
 
-	// A zero alone is ambiguous: say when the group is not exposed.
-	if n == 0 {
-		g, err := execTool(ctx, t.db,
-			"SELECT 1 AS x FROM "+
-				"telegram_public_groups WHERE "+
-				"group_id = ?",
-			[]any{strconv.FormatInt(gid, 10)}, queryFailed)
+	// A zero alone is ambiguous: say when the group is not readable.
+	if n == 0 && g.nothing {
+		rd, err := t.readable(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if len(g) == 0 {
+		if rd.exposed[gid] {
+			out["note"] = "That group is outside this " +
+				"token's scope, so the count is " +
+				"zero regardless of what the " +
+				"user posted. See " +
+				"telegram_list_groups."
+		} else {
 			out["note"] = "That group is not exposed to " +
 				"MCP, so the count is zero " +
 				"regardless of what the user " +
@@ -1107,7 +1137,7 @@ func (t *telegram) popularWords(ctx context.Context, args map[string]any) (any, 
 	// date, not message_id: the range is on date, so
 	// (chat_id, date, sender_user_id) supplies the order too.
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ m.text " +
-		"FROM telegram_group_messages m " +
+		"FROM " + g.src.table + " m " +
 		"WHERE m.chat_id = ? AND m.text IS NOT NULL " +
 		"  AND m.content_type <> 'service'" +
 		g.sql + dr.sql +
@@ -1238,20 +1268,20 @@ func (t *telegram) popularWordsTool() Tool {
 // ---- telegram_search_messages ----
 
 func (t *telegram) searchMessages(ctx context.Context, args map[string]any) (any, error) {
+	// group_id is folded into the gate, one constant list for the
+	// optimiser instead of two conditions; the gate also picks the
+	// table, whose columns the filter is written in.
+	g, err := t.msgGate(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	var c compiled
 	if v, ok := args["filter"]; ok {
-		var err error
-		if c, err = compile(msgSchema, v); err != nil {
+		if c, err = compile(g.src.schema, v); err != nil {
 			return nil, err
 		}
 	}
-	q := &queryReq{whereExtra: c.sql, binds: c.binds}
-	var err error
-	// group_id is folded into the gate, one constant list for the
-	// optimiser instead of two conditions.
-	if q.gate, err = t.msgGate(ctx, args); err != nil {
-		return nil, err
-	}
+	q := &queryReq{whereExtra: c.sql, binds: c.binds, gate: g}
 	if q.order, err = parseOrder(args, c.ftExpr); err != nil {
 		return nil, err
 	}
@@ -1343,7 +1373,7 @@ func (t *telegram) searchMessagesTool() Tool {
 
 // editsForRows is every edit snapshot of a set of already authorised
 // message rows, by row, in one statement for the whole batch.
-func (t *telegram) editsForRows(ctx context.Context, rowIDs []int64) (map[int64][]any, error) {
+func (t *telegram) editsForRows(ctx context.Context, src *msgSource, rowIDs []int64) (map[int64][]any, error) {
 	out := map[int64][]any{}
 	if len(rowIDs) == 0 {
 		return out, nil
@@ -1353,18 +1383,18 @@ func (t *telegram) editsForRows(ctx context.Context, rowIDs []int64) (map[int64]
 		binds[i] = strconv.FormatInt(id, 10)
 	}
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
-		"e.group_message_id, e.content_type, e.text, e.edit_date, " +
+		"e." + src.editKey + " AS owner_id, e.content_type, e.text, e.edit_date, " +
 		"e.created_at, " +
 		"f.id AS file_id, f.file_type, f.file_size, f.on_disk " +
-		"FROM telegram_group_message_edits e " +
+		"FROM " + src.edits + " e " +
 		"LEFT JOIN telegram_files f ON f.id = e.file_id " +
-		"WHERE e.group_message_id IN (" + placeholders(len(rowIDs), ",") + ") ORDER BY e.id ASC"
+		"WHERE e." + src.editKey + " IN (" + placeholders(len(rowIDs), ",") + ") ORDER BY e.id ASC"
 	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range rows {
-		owner := e.i64("group_message_id")
+		owner := e.i64("owner_id")
 		v := map[string]any{
 			"content_type": e.str("content_type"),
 			"text":         e.str("text"),
@@ -1427,8 +1457,8 @@ func (t *telegram) getMessages(ctx context.Context, args map[string]any) (any, e
 	var rowIDs []int64
 	seen := map[int64]bool{}
 	if !g.nothing {
-		stmt := msgSelect +
-			"FROM telegram_group_messages m " + msgJoins +
+		stmt := g.src.selectCols +
+			"FROM " + g.src.table + " m " + g.src.joins +
 			"WHERE m.chat_id = ? AND m.message_id IN (" + placeholders(len(want), ",") + ")" +
 			g.sql + " ORDER BY m.message_id ASC"
 		rows, err := execTool(ctx, t.db, stmt, append(binds, g.binds...), queryFailed)
@@ -1456,7 +1486,7 @@ func (t *telegram) getMessages(ctx context.Context, args map[string]any) (any, e
 		}
 	}
 	if withHistory {
-		byOwner, err := t.editsForRows(ctx, rowIDs)
+		byOwner, err := t.editsForRows(ctx, g.src, rowIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -1550,10 +1580,10 @@ func (t *telegram) getMessageHistory(ctx context.Context, args map[string]any) (
 	rows, err := execTool(ctx, t.db,
 		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "+
 			"m.id, m.content_type, m.text, m.date, "+
-			"m.edit_date, m.deleted_at, m.sender_user_id, "+
+			"m.edit_date, m.deleted_at, "+g.src.sender+" AS sender_user_id, "+
 			"FROM_UNIXTIME(m.date) AS sent_at, "+
 			"f.id AS file_id, f.file_type, f.file_size, f.on_disk "+
-			"FROM telegram_group_messages m "+
+			"FROM "+g.src.table+" m "+
 			"LEFT JOIN telegram_files f ON f.id = m.file_id "+
 			"WHERE m.chat_id = ? AND m.message_id = ?"+g.sql,
 		binds, queryFailed)
@@ -1599,7 +1629,7 @@ func (t *telegram) getMessageHistory(ctx context.Context, args map[string]any) (
 			return nil, toolErr(`"format" must be "full" or "diff"`)
 		}
 	}
-	n, err := t.msgHistVersions(ctx, out, r.i64("id"), format == "diff", r.str("text"))
+	n, err := t.msgHistVersions(ctx, g.src, out, r.i64("id"), format == "diff", r.str("text"))
 	if err != nil {
 		return nil, err
 	}
@@ -1621,14 +1651,15 @@ func (t *telegram) getMessageHistory(ctx context.Context, args map[string]any) (
 // msgHistVersions adds one message's earlier versions, oldest first, in
 // full or as diffs between consecutive versions ending at the current
 // text, and returns how many there are.
-func (t *telegram) msgHistVersions(ctx context.Context, out map[string]any, rowID int64, asDiff bool, current string) (int, error) {
+func (t *telegram) msgHistVersions(ctx context.Context, src *msgSource, out map[string]any, rowID int64,
+	asDiff bool, current string) (int, error) {
 	rows, err := execTool(ctx, t.db,
 		"SELECT e.content_type, e.text, e.edit_date, "+
 			"e.created_at, "+
 			"f.id AS file_id, f.file_type, f.file_size, f.on_disk "+
-			"FROM telegram_group_message_edits e "+
+			"FROM "+src.edits+" e "+
 			"LEFT JOIN telegram_files f ON f.id = e.file_id "+
-			"WHERE e.group_message_id = ? ORDER BY e.id ASC",
+			"WHERE e."+src.editKey+" = ? ORDER BY e.id ASC",
 		[]any{strconv.FormatInt(rowID, 10)}, queryFailed)
 	if err != nil {
 		return 0, err

@@ -90,12 +90,14 @@ func GetMCPToken(ctx context.Context, db *sql.DB, id uint64) (MCPToken, error) {
 }
 
 // CreateMCPToken stores a token by its digest, minted by account
-// minter and owned by account owner, with the owner record and its
-// owner_set audit row in the same transaction, so a token never lacks
-// an owner. The token itself is never passed here, so it cannot be
-// stored by accident.
+// minter and owned by account owner, with the owner record, its
+// owner_set audit row and its scope (checked by the caller; none for
+// every exposed group) in the same transaction, so a token never lacks
+// an owner and never works, even once, wider than it was made. The
+// token itself is never passed here, so it cannot be stored by
+// accident.
 func CreateMCPToken(ctx context.Context, db *sql.DB, minter, owner uint64, name string,
-	sha256 []byte, by Actor) (uint64, error) {
+	sha256 []byte, scope []MCPScopeEntry, by Actor) (uint64, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -111,6 +113,9 @@ func CreateMCPToken(ctx context.Context, db *sql.DB, minter, owner uint64, name 
 		return 0, err
 	}
 	if err := setOwner(ctx, tx, Resource{ResMCPToken, id}, owner, by, ""); err != nil {
+		return 0, err
+	}
+	if err := insertScope(ctx, tx, uint64(id), SortMCPScope(scope)); err != nil {
 		return 0, err
 	}
 	return uint64(id), tx.Commit()

@@ -1,7 +1,11 @@
 # mcp-token-scope
 
 Give each MCP token its own scope: the federations, groups and (for
-superadmins only) private chats it may read.
+superadmins only) private chats it may read. The decision
+([2026-11-20-mcp-token-scope.md](../design/decisions/2026-11-20-mcp-token-scope.md)),
+web migration 000019 and the Go part (the scope applied at `/mcp`, the
+token administration reading and writing it, OpenAPI and
+web/docs/mcp.md) are done; the React part is left.
 
 ## Why
 
@@ -11,19 +15,10 @@ tool or person needs.
 
 ## Scope
 
-- Design first, as a decision file: what a scope is made of
-  (federations, single groups, private chats), how it combines with
-  the exposed groups (a scope narrows what a token reads; it never
-  reaches a group that is not exposed, except private chats, which
-  only a superadmin's token can be given), what a token with no scope
-  reads (as today), and how a scope follows changes (a group leaving a
-  federation, a group withdrawn from MCP).
-- Web migration: the scope rows of a token.
-- Go (webapi): the MCP server applies the token's scope to every tool
-  and query; the token admin API reads and writes the scope, refusing
-  private chats unless the caller is a superadmin; OpenAPI and
-  web/docs/mcp.md follow.
-- React (frontend): the token form and list show and edit the scope.
+- React (frontend): the token form and list show and edit the scope
+  (McpTokensProps.tokens[].scope and scope_options; written as `scope`
+  on createMcpToken and renameMcpToken), inactive entries marked, and
+  the 403 and 400 refusals shown with their message.
 
 ## Depends on
 
@@ -31,9 +26,5 @@ Nothing.
 
 ## Done when
 
-- A token scoped to one federation reads only that federation's
-  exposed groups through every MCP tool; a superadmin's token scoped
-  to a private chat reads that chat; an admin cannot give a private
-  chat to a token.
-- Go tests cover the scope in every MCP tool and the refusals; React
-  tests cover the form.
+- The token form and list show and edit the scope; React tests cover
+  the form.
