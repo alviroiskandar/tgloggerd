@@ -102,7 +102,8 @@ unknown) are not asked for again until the next page load.
   using the server's `retry:` value). After three failures within 30 s,
   or when `/api/events` answers that live updates are off, it switches
   to polling and keeps retrying the stream with back-off (5 s doubling
-  to 60 s).
+  to 60 s), each wait jittered to between half its step and the whole
+  step, so tabs cut off together do not all retry together.
 - Polling: an open chat at its live edge asks for newer messages every
   second, as today's live mode does; other pages refetch their mounted
   queries every 30 s and on window focus. Hidden tabs do not poll.
