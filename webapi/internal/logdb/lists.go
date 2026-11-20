@@ -257,7 +257,10 @@ type FileStill struct {
 // the messages the scope sees, in one query per message table: the
 // same video sent again carries the same pictures, and a message
 // logged before the daemon stored thumbnails has none, so any visible
-// message that has one will do. A file with none is left out.
+// message that has one will do. A thumbnail from Telegram is taken
+// before a still the daemon generated (generated_from_file_id set),
+// which stands in only for a video no visible message has one of;
+// among equals the smallest id. A file with none is left out.
 func FileStills(ctx context.Context, db *sql.DB, sc scope.Scope, ids []uint64) (map[uint64]FileStill, error) {
 	gf, ga := sc.GroupFilter("m.chat_id")
 	return fileStills(ctx, db, ids, gf, ga, sc.SeesPrivate())
@@ -282,10 +285,16 @@ func fileStills(ctx context.Context, db *sql.DB, ids []uint64, gf string, ga []a
 	for i, id := range ids {
 		args[i] = id
 	}
+	// gen holds each file's generated still until both tables are
+	// read, so a Telegram thumbnail in either one wins over it.
+	gen := map[uint64]uint64{}
 	query := func(table, fk, filter string, fargs []any) error {
 		rs, err := db.QueryContext(ctx, "SELECT m.file_id, "+
 			"MIN(CASE WHEN mf.role = 'cover' THEN mf.file_id END) AS cover, "+
-			"MIN(CASE WHEN mf.role = 'thumbnail' THEN mf.file_id END) AS thumb, "+
+			"MIN(CASE WHEN mf.role = 'thumbnail' AND sf.generated_from_file_id IS NULL "+
+			"THEN mf.file_id END) AS thumb, "+
+			"MIN(CASE WHEN mf.role = 'thumbnail' AND sf.generated_from_file_id IS NOT NULL "+
+			"THEN mf.file_id END) AS gen_thumb, "+
 			"MAX(JSON_UNQUOTE(JSON_EXTRACT(m.content_extra, '$.minithumbnail.data'))) AS mini "+
 			"FROM "+table+" m LEFT JOIN (telegram_message_files mf "+
 			"JOIN telegram_files sf ON sf.id = mf.file_id AND sf.on_disk = 1) "+
@@ -305,8 +314,11 @@ func fileStills(ctx context.Context, db *sql.DB, ids []uint64, gf string, ga []a
 			if st.Cover == 0 {
 				st.Cover = r.Uint("cover")
 			}
-			if st.Thumbnail == 0 {
-				st.Thumbnail = r.Uint("thumb")
+			if t := r.Uint("thumb"); t != 0 && (st.Thumbnail == 0 || t < st.Thumbnail) {
+				st.Thumbnail = t
+			}
+			if g := r.Uint("gen_thumb"); g != 0 && (gen[id] == 0 || g < gen[id]) {
+				gen[id] = g
 			}
 			if st.Minithumb == "" {
 				st.Minithumb = r.Str("mini")
@@ -323,6 +335,12 @@ func fileStills(ctx context.Context, db *sql.DB, ids []uint64, gf string, ga []a
 	if private {
 		if err := query("telegram_private_messages", "private_message_id", "1", nil); err != nil {
 			return nil, err
+		}
+	}
+	for id, g := range gen {
+		if st := out[id]; st.Thumbnail == 0 {
+			st.Thumbnail = g
+			out[id] = st
 		}
 	}
 	return out, nil

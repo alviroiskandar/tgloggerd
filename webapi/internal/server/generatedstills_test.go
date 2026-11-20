@@ -7,6 +7,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"testing"
 )
@@ -61,5 +62,32 @@ func TestGeneratedStillNotFetchable(t *testing.T) {
 	expect(t, e.post(e.fetchPath(892011), ck), 410, "")
 	if f := e.fake.lastFetch(); f != "" {
 		t.Errorf("the daemon was asked for a generated still: %q", f)
+	}
+}
+
+// TestGeneratedStillLosesToTelegram: a video's thumb in the files list
+// is a Telegram thumbnail any message of it has, before a still
+// generated for another, whichever id is smaller and whichever message
+// table holds it.
+func TestGeneratedStillLosesToTelegram(t *testing.T) {
+	t.Parallel()
+	e := newMediaEnv(t, mediaOpts{cap: filesStoreCap,
+		fixtures: []string{"sample", "generated_stills"}})
+	ck, _ := e.signIn("lister")
+	rows := e.genRows(ck)
+	for _, c := range []struct {
+		video, thumb uint64
+	}{
+		{892002, 892013}, // a Telegram thumbnail in the same group
+		{892003, 892015}, // a Telegram thumbnail in a private chat
+	} {
+		if r := rows[fmt.Sprint(c.video)]; r["thumb"] != e.fileURL(c.thumb) {
+			t.Errorf("%d: thumb %v, want %s", c.video, r["thumb"], e.fileURL(c.thumb))
+		}
+	}
+	// A generated still still serves a video with nothing else, when
+	// stored: 892001's is evicted, so it has none.
+	if r := rows["892001"]; r["thumb"] != nil {
+		t.Errorf("892001: thumb %v, want null", r["thumb"])
 	}
 }
