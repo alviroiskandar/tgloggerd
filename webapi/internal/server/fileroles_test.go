@@ -16,7 +16,10 @@ import (
 // the message it names, and the role filter, for a viewer who sees
 // everything and for a member who sees one of the groups.
 
-const roleLab = -1001000000060
+const (
+	roleLab   = -1001000000060
+	roleVault = -1001000000061
+)
 
 // roleRows are the files page's rows of the fixture, newest first, as
 // role sees them with the extra filter conditions (JSON, "" for none).
@@ -32,8 +35,8 @@ func roleRows(t *testing.T, e *adminEnv, role, extra string) []map[string]any {
 		t.Fatalf("files page %s: %d %v", extra, st, b)
 	}
 	props := b["props"].(map[string]any)
-	if s, ok := props["error"].(string); ok && s != "" {
-		t.Fatalf("files page %s: %s", extra, s)
+	if err, ok := props["error"]; ok && err != nil {
+		t.Fatalf("files page %s: %s", extra, js(err))
 	}
 	var out []map[string]any
 	for _, r := range props["rows"].([]any) {
@@ -149,23 +152,29 @@ func TestFileRoles(t *testing.T) {
 		t.Errorf("bad role: %v", b)
 	}
 
-	// A member granted Role Lab sees the files that are the own file of
-	// its messages (filesFilter). Filtered by role, it sees the files
-	// playing the role in its messages, which are seldom any message's
-	// own file (891001, 891003, 891004), and never one of a message it
-	// does not see: 891007's cover and 891010's paid role are in Role
-	// Vault, 891005's game and 891009's preview in a private chat.
+	// A member granted Role Lab sees the files of its messages: their
+	// own files and the files playing a role in them, which are seldom
+	// any message's own file (891001, 891003, 891004), filtered by role
+	// or not, and never one of a message it does not see: 891007's
+	// cover, 891008 and 891010's paid role are in Role Vault, 891005's
+	// game and 891009's preview in a private chat.
 	if _, err := e.app.Exec("INSERT INTO web_member_grant_groups (web_user_id, federation_id, group_id) "+
 		"VALUES (?, 0, ?)", e.uids["member"], int64(roleLab)); err != nil {
 		t.Fatal(err)
 	}
 	mem := roleRows(t, e, "member", "")
-	if got := roleIDs(mem); got != "891010,891006,891002" {
-		t.Fatalf("member rows %s", got)
+	if got := roleIDs(mem); got != "891010,891006,891004,891003,891002,891001" {
+		t.Errorf("member rows %s", got)
+	}
+	memRoles := map[string]string{
+		"891010": `null`, "891006": `null`, "891002": `null`,
+		"891004": `{"message_kind":"video","role":"thumbnail"}`,
+		"891003": `{"message_kind":"video","role":"cover"}`,
+		"891001": `{"message_kind":"text","role":"link_preview"}`,
 	}
 	for _, r := range mem {
-		if r["role"] != nil {
-			t.Errorf("member: %s role %s", js(r["id"]), js(r["role"]))
+		if id := js(r["id"]); js(r["role"]) != memRoles[id] {
+			t.Errorf("member: %s role %s, want %s", id, js(r["role"]), memRoles[id])
 		}
 	}
 	for _, c := range []struct{ cond, ids string }{
@@ -175,17 +184,65 @@ func TestFileRoles(t *testing.T) {
 		{`{"field":"role","op":"=","value":"paid"}`, ""},
 		{`{"field":"role","op":"in","value":["cover","paid","game","link_preview"]}`,
 			"891006,891003,891001"},
-		{`{"field":"role","op":"!=","value":"paid"}`, "891010,891006,891002"},
-		// Beside an OR the role does not hold for every row, so the
-		// scope's own condition stays: the other branch reaches no
-		// file of Role Vault, nor does the role's.
-		{`{"field":"role","op":"=","value":"cover","n":"OR"},{"field":"id","op":"=","value":"891007"}`,
-			""},
-		{`{"field":"id","op":"=","value":"891008","n":"OR"},{"field":"role","op":"=","value":"paid"}`,
-			""},
+		{`{"field":"role","op":"!=","value":"paid"}`, "891010,891006,891004,891003,891002,891001"},
+		{`{"field":"role","op":"!=","value":"cover"}`, "891010,891006,891004,891002,891001"},
 	} {
 		if got := roleIDs(roleRows(t, e, "member", c.cond)); got != c.ids {
 			t.Errorf("member %s: %s, want %s", c.cond, got, c.ids)
 		}
+	}
+
+	// The preview of one file (an id = search) agrees with the list.
+	for id, want := range map[string]string{
+		"891003": `{"message_kind":"video","role":"cover"}`,
+		"891001": `{"message_kind":"text","role":"link_preview"}`,
+		"891007": "", "891005": "", "891009": "",
+	} {
+		q := url.Values{"file": {id}}
+		_, b := e.page("member", "/files?"+q.Encode())
+		p, _ := b["props"].(map[string]any)["preview"].(map[string]any)
+		switch {
+		case want == "" && p != nil:
+			t.Errorf("member preview %s: %v", id, p)
+		case want != "" && (p == nil || js(p["role"]) != want):
+			t.Errorf("member preview %s: %v, want role %s", id, p, want)
+		}
+	}
+
+	// The search API agrees, and takes OR (the files page joins its
+	// filters with AND): beside an OR the role does not hold for every
+	// row, so the scope's own condition stays, which takes the role
+	// files of the member's messages, and no branch reaches a file of
+	// Role Vault or of a private chat.
+	for _, c := range []struct{ search, ids string }{
+		{`[{"c":"id","o":">","v":"891000","n":"AND"},{"c":"id","o":"<","v":"891100"}]`,
+			"891010,891006,891004,891003,891002,891001"},
+		{`[{"c":"role","o":"=","v":"cover","n":"OR"},{"c":"id","o":"=","v":"891007"}]`, "891003"},
+		{`[{"c":"id","o":"=","v":"891008","n":"OR"},{"c":"role","o":"=","v":"paid"}]`, ""},
+		{`[{"c":"id","o":"=","v":"891004","n":"OR"},{"c":"id","o":"=","v":"891005","n":"OR"},` +
+			`{"c":"id","o":"=","v":"891009","n":"OR"},{"c":"id","o":"=","v":"891001"}]`, "891004,891001"},
+		{`[{"c":"id","o":"=","v":"891003","n":"OR"},{"c":"id","o":"=","v":"891007"}]`, "891003"},
+	} {
+		q := url.Values{"search": {c.search}}
+		b := e.want(200, "member", "GET", "/api/search/files?"+q.Encode(), nil)
+		var ids []string
+		for _, r := range b["rows"].([]any) {
+			ids = append(ids, js(r.([]any)[1]))
+		}
+		if got := strings.Join(ids, ","); got != c.ids || num(b["total"]) != int64(len(ids)) {
+			t.Errorf("member search %s: %s (total %v), want %s", c.search, got, b["total"], c.ids)
+		}
+	}
+
+	// An admin who hides Role Vault sees private chats: the role files
+	// of private messages (891005, 891009) too, and still none of Role
+	// Vault's (891007's cover, 891008).
+	if _, err := e.app.Exec("INSERT INTO web_admin_hidden_groups (web_user_id, group_id) "+
+		"VALUES (?, ?)", e.uids["admin"], int64(roleVault)); err != nil {
+		t.Fatal(err)
+	}
+	if got := roleIDs(roleRows(t, e, "admin", "")); got !=
+		"891010,891009,891006,891005,891004,891003,891002,891001" {
+		t.Errorf("admin hiding Role Vault: %s", got)
 	}
 }

@@ -144,9 +144,9 @@ type Field struct {
 	// that meets an = or in condition of one is within the scope. A
 	// search whose rows must all meet such a condition (one in a
 	// chain of ANDs) leaves out the entity's own scope condition,
-	// which can be narrower: Files' role checks the message the file
-	// plays its role in, the scope condition only the messages whose
-	// own file it is.
+	// which would only test each row again: Files' role checks the
+	// message the file plays its role in, which its scope condition
+	// accepts too.
 	Scoped bool
 	// Count is the ids that meet an = or in condition of a Pred field
 	// (vals as Pred takes them), one row each, read without the
