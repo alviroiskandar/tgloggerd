@@ -349,6 +349,36 @@ func TestHubSubscriberCap(t *testing.T) {
 	}
 }
 
+// A subscription with options of its own: an uncapped one opens with
+// the cap reached and takes no slot, and its own buffer bounds it
+// instead of the Hub's.
+func TestHubSubscribeWith(t *testing.T) {
+	t.Parallel()
+	e := start(t, live.Options{MaxSubscribers: 1, Buffer: 64})
+	c := e.connect("", 100)
+	subscribe(t, e.hub, 0, all)
+	small, _, err := e.hub.SubscribeWith(0, all, live.SubOptions{Buffer: 2, Uncapped: true})
+	if err != nil {
+		t.Fatalf("uncapped with the cap reached: %v", err)
+	}
+	full, _, err := e.hub.SubscribeWith(0, all, live.SubOptions{Buffer: 2})
+	if !errors.Is(err, live.ErrFull) {
+		t.Fatalf("capped with the cap reached: %v %v, want ErrFull", full, err)
+	}
+	for seq := uint64(101); seq <= 103; seq++ {
+		c.Send(msg(seq, -1))
+	}
+	select {
+	case <-small.Lost():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a buffer of 2 held 3 events")
+	}
+	small.Close()
+	if _, _, err := e.hub.Subscribe(0, all); !errors.Is(err, live.ErrFull) {
+		t.Fatalf("after the uncapped one closed: %v, want ErrFull", err)
+	}
+}
+
 func TestHubStopEndsSubscribers(t *testing.T) {
 	t.Parallel()
 	d := livetest.New(t, testKey)

@@ -23,8 +23,9 @@ type Options struct {
 	// more memory. Default 256.
 	Buffer int
 	// MaxSubscribers caps the open subscriptions of clients (Subscribe).
-	// The service's own subscribers (SubscribeInternal) do not count
-	// against it. Default 256.
+	// The service's own subscribers (SubscribeInternal) and the ones
+	// opened Uncapped (SubscribeWith) do not count against it. Default
+	// 256.
 	MaxSubscribers int
 	// Grace is how long subscribers stay connected while the source
 	// reconnects; if it is not back by then, their streams end and
@@ -93,7 +94,7 @@ type Hub struct {
 	known, hi uint64
 	ring      ring
 	subs      map[*Sub]struct{}
-	// clients counts the subscriptions in subs that are not internal:
+	// clients counts the subscriptions in subs that are not uncapped:
 	// the ones MaxSubscribers caps.
 	clients int
 	// ups counts the source's connections, so a grace timer knows
@@ -286,7 +287,7 @@ type Start struct {
 // Subscribe opens a subscription for a client that last saw seq last
 // (0: none). Events are matched by match. Close it when done.
 func (h *Hub) Subscribe(last uint64, match Match) (*Sub, Start, error) {
-	return h.subscribe(last, match, false)
+	return h.subscribe(last, match, SubOptions{})
 }
 
 // SubscribeInternal is Subscribe for the service's own subscribers
@@ -294,10 +295,33 @@ func (h *Hub) Subscribe(last uint64, match Match) (*Sub, Start, error) {
 // a burst of browser streams cannot lock them out and leave them
 // behind. Their number is fixed by the service, not by its clients.
 func (h *Hub) SubscribeInternal(last uint64, match Match) (*Sub, Start, error) {
-	return h.subscribe(last, match, true)
+	return h.SubscribeWith(last, match, SubOptions{Uncapped: true})
 }
 
-func (h *Hub) subscribe(last uint64, match Match, internal bool) (*Sub, Start, error) {
+// SubOptions are the limits of one subscription (SubscribeWith).
+type SubOptions struct {
+	// Buffer is how many events may wait for it, in place of the
+	// Hub's Buffer when positive: a subscriber that needs few events
+	// (one chat's) need not hold a full buffer.
+	Buffer int
+	// Uncapped leaves it out of MaxSubscribers: the service's own
+	// subscribers, and clients whose number the caller caps itself
+	// (the signed-out streams, which have their own caps so that
+	// they never take the slots of signed-in ones).
+	Uncapped bool
+}
+
+// SubscribeWith is Subscribe with limits of the subscription's own.
+func (h *Hub) SubscribeWith(last uint64, match Match, o SubOptions) (*Sub, Start, error) {
+	return h.subscribe(last, match, o)
+}
+
+func (h *Hub) subscribe(last uint64, match Match, o SubOptions) (*Sub, Start, error) {
+	internal := o.Uncapped
+	buffer := h.o.Buffer
+	if o.Buffer > 0 {
+		buffer = o.Buffer
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.up || h.stopped {
@@ -325,7 +349,7 @@ func (h *Hub) subscribe(last uint64, match Match, internal bool) (*Sub, Start, e
 		h:        h,
 		match:    match,
 		internal: internal,
-		ch:       make(chan Event, h.o.Buffer),
+		ch:       make(chan Event, buffer),
 		lostc:    make(chan struct{}, 1),
 		done:     make(chan struct{}),
 	}
@@ -340,7 +364,7 @@ func (h *Hub) subscribe(last uint64, match Match, internal bool) (*Sub, Start, e
 type Sub struct {
 	h        *Hub
 	match    Match
-	internal bool // opened by SubscribeInternal
+	internal bool // outside MaxSubscribers (SubOptions.Uncapped)
 	ch       chan Event
 	// lost: an event did not fit in ch. Guarded by h.mu; lostc wakes
 	// the reader.
