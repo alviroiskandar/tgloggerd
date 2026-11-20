@@ -409,6 +409,31 @@ int main()
 	      "a still with other bytes replaces the evicted one, not"
 	      " Telegram's");
 
+	printf("an evicted still's videos:\n");
+	db.linkGeneratedStill(vE, s2);	/* the same frame on another video */
+	{
+		auto v = db.listStillVideos(s2);
+		CHECK(std::set<uint64_t>(v.begin(), v.end()) ==
+			      std::set<uint64_t>({ vA, vE }) && v.size() == 2,
+		      "the video it was taken from and every video it is the"
+		      " thumbnail of, each once");
+		auto h = db.listStillVideos(genOff);
+		CHECK(h == std::vector<uint64_t>({ vH }), "vH for its still");
+		CHECK(db.listStillVideos(s1) == std::vector<uint64_t>({ vA }),
+		      "a still no message shows any more: its own video");
+	}
+	{
+		/* The janitor tells a generated still from the rest. */
+		std::map<uint64_t, bool> gen;
+		for (const auto &e : db.listEvictCandidates("", "", "", 0, 100000))
+			gen[e.id] = e.generated;
+		CHECK(gen.count(s2) && gen[s2] && gen.count(genOn) && gen[genOn] &&
+		      gen.count(tgThumb) && !gen[tgThumb] && gen.count(vA) &&
+		      !gen[vA] && !gen.count(s1),
+		      "an eviction candidate says whether it is a generated"
+		      " still");
+	}
+
 	printf("plan:\n");
 	{
 		/* Each table the list's statement reads, by alias, with the
@@ -473,6 +498,30 @@ int main()
 			      ? "a group message read by its unique key"
 			      : "a private message read by its unique key");
 		}
+	}
+
+	{
+		/* An evicted still's videos: the still by its primary key, its
+		 * links by their file_id, their messages by primary key. */
+		std::string q = DB::stillVideosSql();
+		for (size_t at; (at = q.find('?')) != std::string::npos;)
+			q.replace(at, 1, std::to_string(s2));
+		std::set<std::string> k;
+		for (const auto &r : raw.query("EXPLAIN FORMAT=TRADITIONAL " + q))
+			if (r.size() >= 7 && r[2].has_value())
+				k.insert(*r[2] + ":" + r[6].value_or("NULL") +
+					 "/" + r[4].value_or("NULL"));
+		for (const auto &x : k)
+			printf("  a still's videos: %s\n", x.c_str());
+		bool ok = k.count("telegram_files:PRIMARY/const") == 1 &&
+			  k.count("x:idx_message_files_file/ref") == 1 &&
+			  k.count("m:PRIMARY/eq_ref") == 1;
+		for (const auto &x : k)
+			ok = ok && (x.rfind("<union", 0) == 0 ||
+				    x == "telegram_files:PRIMARY/const" ||
+				    x == "x:idx_message_files_file/ref" ||
+				    x == "m:PRIMARY/eq_ref");
+		CHECK(ok, "an evicted still's videos read by keys only");
 	}
 
 	printf("the video's row deleted:\n");

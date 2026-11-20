@@ -61,7 +61,8 @@ DB::listEvictCandidates(const std::string &before, const std::string &from,
 			size_t limit)
 {
 	std::string sql =
-		"SELECT id, LOWER(HEX(sha256)), file_ext, file_size, accessed_at"
+		"SELECT id, LOWER(HEX(sha256)), file_ext, file_size, accessed_at,"
+		" tg_file_id LIKE 'generated:%'"
 		" FROM telegram_files WHERE on_disk = 1";
 	std::vector<mysql::Param> params;
 	if (!before.empty()) {
@@ -91,6 +92,7 @@ DB::listEvictCandidates(const std::string &before, const std::string &from,
 		c.ext         = r[2].value_or("");
 		c.file_size   = num(r[3]);
 		c.accessed_at = r[4].value_or("");
+		c.generated   = r[5].value_or("0") == "1";
 		out.push_back(std::move(c));
 	}
 	return out;
