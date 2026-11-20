@@ -71,7 +71,8 @@ func (d *photoDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			list = `{"outcome":"ok","message":"","total":0,"photos":[]}`
 		}
 		io.WriteString(w, list)
-	case r.URL.Path == "/v1/files/851002/fetch", r.URL.Path == "/v1/files/851004/fetch":
+	case r.URL.Path == "/v1/files/851002/fetch", r.URL.Path == "/v1/files/851004/fetch",
+		r.URL.Path == "/v1/files/851101/fetch":
 		// Fetched now; its bytes turn out to be 851001's.
 		io.WriteString(w, `{"state":"stored","id":851001}`)
 	case r.URL.Path == "/v1/files/access":

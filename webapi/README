@@ -429,8 +429,13 @@ paths that are no page and for things the scope hides, 404 either way.
     row with its file: a user's photo change in the timeline carries
     it as photo_id, so the page opens the carousel at that photo. A
     photo whose bytes the store no longer holds keeps its URL
-    (fileURL), and /files/ fetches it through the daemon. The same
-    access as the user's history. GET /api/groups/{id}/photos answers
+    (fileURL), and /files/ fetches it through the daemon. An animated
+    photo also has its video (video_url and video_file_id, from the
+    history's video_file_id, linked as the still is; null for a still
+    photo or one recorded before videos were kept). Each file takes
+    the video of its newest row that has one, so an older row
+    recorded with the video still gives it. The same access as the
+    user's history. GET /api/groups/{id}/photos answers
     the same for a group's photos (telegram_group_hist_photo, the
     current one from the group's photo file), whose photo changes
     carry photo_id too, for a group the request scope sees, as its

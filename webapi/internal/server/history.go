@@ -125,6 +125,10 @@ type photoJSON struct {
 	At     string  `json:"at"`
 	URL    *string `json:"url"`
 	FileID *uint64 `json:"file_id"`
+	// VideoURL and VideoFileID: an animated photo's video, linked as
+	// the still is; null when none is recorded.
+	VideoURL    *string `json:"video_url"`
+	VideoFileID *uint64 `json:"video_file_id"`
 }
 
 // photosAnswer is UserPhotos and GroupPhotos: the photos, and which is
@@ -135,13 +139,17 @@ type photosAnswer struct {
 }
 
 // photos turns a photo list into its answer: every photo with its
-// URL, given whenever the file may be served, from the store or
-// fetched from Telegram through /files/ (Server.fileLink).
+// URL, and an animated photo's video with its own, each given whenever
+// the file may be served, from the store or fetched from Telegram
+// through /files/ (Server.fileLink).
 func (v view) photos(l logdb.PhotoList) photosAnswer {
 	a := photosAnswer{Items: []photoJSON{}}
 	for _, p := range l.Photos {
 		a.Items = append(a.Items, photoJSON{ID: p.ID, At: iso(p.At), URL: v.photo(p.File),
-			FileID: ptrTo(p.File.ID)})
+			FileID: ptrTo(p.File.ID), VideoURL: v.photo(p.Video)})
+		if p.Video.ID != 0 {
+			a.Items[len(a.Items)-1].VideoFileID = ptrTo(p.Video.ID)
+		}
 	}
 	if l.Current && len(a.Items) > 0 {
 		a.CurrentID = ptrTo(a.Items[0].ID)
