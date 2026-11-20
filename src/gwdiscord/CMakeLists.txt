@@ -39,7 +39,10 @@ endif()
 # the resulting library has no Boost runtime dependency at all.
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+# OpenSSL 3.5 at least: 1.1.1 and earlier are under the OpenSSL/SSLeay
+# licence, which no version of the GPL can be combined with, and 3.0 to 3.4
+# are out of upstream support; 3.5 is the long-term-support series.
+find_package(OpenSSL 3.5 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
