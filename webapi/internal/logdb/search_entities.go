@@ -428,7 +428,8 @@ func HumanSize(n uint64) string {
 
 // Files are the file store's rows. A scope that does not see every
 // group and private chat sees the files sent in the messages it may
-// see.
+// see, and, searched by role, the files playing the role in them
+// (fileRolePred).
 var Files = &Entity{
 	Name: "files",
 	from: "telegram_files f",
@@ -456,7 +457,7 @@ var Files = &Entity{
 		col("updated_at", "f.updated_at", Datetime, "Updated", dtOps, true),
 		col("accessed_at", "f.accessed_at", Datetime, "Last access", dtOps, true),
 		{Key: "role", Label: "Role in a message", Type: Enum, Enum: FileRoles,
-			Ops: enumOps, Pred: fileRolePred},
+			Ops: enumOps, Pred: fileRolePred, Scoped: true},
 	},
 	cols: []Col{
 		{"thumb", "", "filethumb", ""},
@@ -516,7 +517,10 @@ const FileRoles = "cover,live_video,paid,preview,poll,game,invoice,chat_photo,th
 // a message the scope sees. Each table is read through its file index
 // (idx_message_files_file, idx_link_previews_photo), so the condition
 // costs one lookup per row it tests. A scope that does not see every
-// chat joins the message to check its chat, as filesFilter does.
+// chat joins the message to check its chat, as filesFilter does. The
+// role's own message is what makes the file visible: a cover or a link
+// preview's picture is seldom any message's own file, so a search that
+// every row meets this condition with drops filesFilter (Scoped).
 func fileRolePred(sc scope.Scope, roles []string) (string, []any) {
 	var (
 		mf    []string

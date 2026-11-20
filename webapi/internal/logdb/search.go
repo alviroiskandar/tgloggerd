@@ -140,6 +140,14 @@ type Field struct {
 	// checked against Enum, with its values. = and in use it as it
 	// is, != negates it.
 	Pred func(sc scope.Scope, vals []string) (string, []any)
+	// Scoped Pred fields check the request scope themselves: a row
+	// that meets an = or in condition of one is within the scope. A
+	// search whose rows must all meet such a condition (one in a
+	// chain of ANDs) leaves out the entity's own scope condition,
+	// which can be narrower: Files' role checks the message the file
+	// plays its role in, the scope condition only the messages whose
+	// own file it is.
+	Scoped bool
 	// NeedsChat fields have no index of their own on a big table: a
 	// search may use one only beside a chat_id = condition that every
 	// row must meet (chatBound), so it reads one chat's rows through
@@ -681,6 +689,34 @@ func (e *Entity) chatBound(req SearchRequest) error {
 	return nil
 }
 
+// scopedBy is whether every row of a search with chains meets an = or
+// in condition of a Scoped field, so the scope holds for each row
+// without the entity's scope condition. The chains are ANDed together,
+// so a condition of a chain whose connectors are all AND holds for
+// every row; one beside an OR does not. A condition chain later
+// refuses (a bad value, a field the scope does not see) fails the
+// search anyway.
+func (e *Entity) scopedBy(chains [][]Cond, internal bool) bool {
+	for _, ch := range chains {
+		allAnd := true
+		for i := range ch[:max(len(ch)-1, 0)] {
+			if ch[i].N != "AND" {
+				allAnd = false
+			}
+		}
+		if !allAnd {
+			continue
+		}
+		for _, c := range ch {
+			if f := e.field(c.C, internal); f != nil && f.Scoped && f.Pred != nil &&
+				(c.O == "=" || c.O == "in") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	n := len(req.Conds)
 	for _, ch := range req.And {
@@ -701,6 +737,9 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 		chains         = append([][]Cond{req.Conds}, req.And...)
 		scopeCond, sca = e.filter(sc)
 	)
+	if scopeCond != "" && e.scopedBy(chains, req.Internal) {
+		scopeCond, sca = "", nil
+	}
 	if scopeCond != "" {
 		parts = append(parts, scopeCond)
 		binds = append(binds, sca...)
