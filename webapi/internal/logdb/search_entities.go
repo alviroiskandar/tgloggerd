@@ -44,6 +44,11 @@ type Entity struct {
 	// filter is the scope's condition over the entity's rows, with
 	// its values; "" when the scope sees every row.
 	filter func(sc scope.Scope) (string, []any)
+	// filterCount is the ids filter accepts, one row each, read
+	// without the entity's table: the count of a search with no
+	// condition under a scope that has one, which would otherwise
+	// test filter on every row. nil counts through the WHERE.
+	filterCount func(sc scope.Scope) (string, []any)
 	// full is whether the scope sees the rows in full; nil is always.
 	// Otherwise only the fields and columns in limited are there.
 	full    func(sc scope.Scope) bool
@@ -479,7 +484,8 @@ var Files = &Entity{
 		{"tg_file_id", "Telegram file ID", "fileid", ""},
 		{"sha256", "SHA-256", "hash", ""},
 	},
-	filter: filesFilter,
+	filter:      filesFilter,
+	filterCount: filesFilterCount,
 	cells: func(_ scope.Scope, r Row) map[string]any {
 		return map[string]any{
 			"thumb":       photoID(r.Uint("id")),
@@ -519,6 +525,24 @@ func filesFilter(sc scope.Scope) (string, []any) {
 	}
 	rc, ra := fileRolePred(sc, nil)
 	return cond + " OR " + rc, append(a, ra...)
+}
+
+// filesFilterCount is the ids filesFilter accepts, read from the
+// message and role tables alone (Entity.filterCount): the UNION of the
+// visible messages' own files and of fileRoleCount with every role.
+// It reads the visible messages' file ids once instead of testing each
+// file with four EXISTS, and needs no telegram_files row: the tables'
+// file columns are foreign keys to it.
+func filesFilterCount(sc scope.Scope) (string, []any) {
+	gf, a := sc.GroupFilter("fm.chat_id")
+	q := "SELECT fm.file_id AS id FROM telegram_group_messages fm " +
+		"WHERE fm.file_id IS NOT NULL AND " + gf
+	if sc.SeesPrivate() {
+		q += " UNION SELECT fp.file_id FROM telegram_private_messages fp " +
+			"WHERE fp.file_id IS NOT NULL"
+	}
+	rc, ra := fileRoleCount(sc, nil)
+	return q + " UNION " + rc, append(a, ra...)
 }
 
 // FileRoles are the roles a file can play in a message beside being its

@@ -870,6 +870,9 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + countClause
 	if q, a, ok := e.alone(sc, req, scopeCond); ok {
 		b.countSQL, b.count = hint+"COUNT(*) AS n FROM ("+q+") ids", append([]any{}, a...)
+	} else if n == 0 && scopeCond != "" && e.filterCount != nil {
+		q, a := e.filterCount(sc)
+		b.countSQL, b.count = hint+"COUNT(*) AS n FROM ("+q+") ids", append([]any{}, a...)
 	}
 	sel := e.sel
 	if req.Internal && e.pageSel != "" {
