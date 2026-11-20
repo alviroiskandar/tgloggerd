@@ -32,8 +32,7 @@ in the files grid and preview. Left:
   of its own, never in the web service's request path) for videos
   with neither a cover nor a Telegram thumbnail, as decided in
   [2026-11-20-video-generated-stills.md](../design/decisions/2026-11-20-video-generated-stills.md).
-- Search and list results that show media: not looked at yet. Video
-  avatars are item `profile-photo-videos`.
+- Search and list results that show media: not looked at yet.
 - Not in scope: animated (.tgs) stickers, which the chat already plays
   with Lottie; a thumbnail for them is a separate question.
 

@@ -120,7 +120,6 @@ The web backend moves from Drogon to Go:
 Accounts, roles and federations:
 [design/web-accounts.md](design/web-accounts.md).
 
-- [`profile-photo-videos`](todo/profile-photo-videos.md): Store and show the video of an animated profile photo in the photo carousels.
 - [`chat-live-any-window`](todo/chat-live-any-window.md): Send live chat events to scrolled-back windows and public viewers of exposed groups.
 - [`video-thumbnails`](todo/video-thumbnails.md): Show a still thumbnail for every video before it is played, wherever the web shows one.
 - [`drogon-retire`](todo/drogon-retire.md): Remove the Drogon web once nothing routes to it.
