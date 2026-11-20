@@ -13,12 +13,14 @@ result only after a reload.
 
 ## Scope
 
-- First a review, written as a decision file: who may open the event
-  stream (anonymous viewers of exposed groups included or not), which
-  topics each may subscribe to, what an event reveals beyond the page
-  the viewer could load, connection and rate limits for anonymous
-  streams, and the load on the Go service.
-- Then Go (webapi) and React, as the review decides.
+- Done: the review
+  ([proposal](../design/proposals/chat-live-any-window.md)), its
+  decision
+  ([2026-11-21-chat-live-public.md](../design/decisions/2026-11-21-chat-live-public.md)),
+  signed-in windows not at the newest (React) and the faults the
+  review found (Go).
+- Left: signed-out viewers of exposed groups, Go (webapi) and React,
+  as the decision says.
 
 ## Depends on
 
