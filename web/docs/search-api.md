@@ -55,7 +55,8 @@ webapi/openapi.yaml. Where the two differ:
   and totals count only what the viewer may see: a member sees the
   users of its visible groups (senders and admins there) by id, name,
   username, type and photo only, and `fields` and `cols` list only
-  those; it sees the files sent in the messages it may see, and the
+  those; it sees the files of the messages it may see (their own files
+  and the files playing a role in them, see `role` below), and the
   messages of its visible groups. A sender chat the viewer may not see
   is shown as `{kind: "none", name: "(hidden)"}`. The table's row
   estimate (`total_exact` false on a browse without conditions) is
@@ -267,11 +268,13 @@ none; a file that is also another message's own file matches too. It is one
 or two EXISTS over the tables' file indexes (`idx_message_files_file`,
 `idx_link_previews_photo`), joined to the message for a viewer who does not see
 every chat, and counts as one EXISTS condition against the limit. Such a viewer
-otherwise sees only the files that are the own file of a message it sees; an
-`=` or `in` role condition that every row must meet (in a chain of ANDs) shows
-it the files playing the role in the messages it sees instead, since a cover or
-a link preview's picture is seldom any message's own file. Beside an OR the
-role condition does not decide what is visible, and the own file rule stays. On
+sees a file when it is the own file of a message it sees or plays a role in
+one, with or without a role condition, so a cover or a link preview's picture
+of a visible message is in the unfiltered list, its count, the files page's
+preview of one file (`?file=<id>`) and OR searches alike; a role file of a
+message it does not see is in none. An `=` or `in` role condition that every
+row must meet (in a chain of ANDs) already checks that, so the scope's own
+condition is left out beside it. On
 a page in an indexed order (id, `file_type`, size, hits, `created_at`,
 `updated_at`; descending, or id either way) within its first 1000 rows, the
 `link_preview` EXISTS is tested row by row as the files are read in that order
@@ -279,8 +282,11 @@ a page in an indexed order (id, `file_type`, size, hits, `created_at`,
 count and other pages let the optimizer read every preview. A search whose only
 condition is an `=` or `in` role is counted from the role tables alone (the
 UNION of their file ids, joined to the message for a viewer who does not see
-every chat), not by testing every file; with any other condition the count
-tests the files, and runs out of time into an estimate as other counts do. The
+every chat), not by testing every file; so is a search with no condition at
+all for a viewer who does not see every chat (the UNION of the visible
+messages' own file ids and of their role tables' file ids). With any other
+condition the count tests the files, and runs out of time into an estimate as
+other counts do. The
 files page's rows (FileRow in webapi/openapi.yaml) say the role in `role`: a
 file that is no message's own file names the first visible message that carries
 it in a role, with `role: {role, message_kind}`, where `message_kind` is that

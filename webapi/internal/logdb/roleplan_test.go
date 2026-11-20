@@ -108,15 +108,11 @@ func TestFileRolePlans(t *testing.T) {
 	}
 }
 
-// A count by role alone reads the role tables, not every file; beside
-// another condition it counts through the WHERE as before. Both give
-// the same numbers, for every scope.
-func TestFileRoleCount(t *testing.T) {
-	t.Parallel()
-	db := testdb.New(t, testdb.Logger, "sample").DB
-	roleArchive(t, db)
-	// Previews and thumbnails in a hidden group, a private chat's
-	// preview, and a preview without a picture yet.
+// roleExtras adds to roleArchive previews and thumbnails in a hidden
+// group, a private chat's preview, and a preview without a picture
+// yet.
+func roleExtras(t *testing.T, db *sql.DB) {
+	t.Helper()
 	for _, q := range []string{
 		"INSERT INTO telegram_group_messages (id, chat_id, message_id, date, content_type, text) " +
 			"VALUES (7000201, -1001000000002, 810001 << 20, 1794000000, 'text', 'x'), " +
@@ -136,6 +132,16 @@ func TestFileRoleCount(t *testing.T) {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
+}
+
+// A count by role alone reads the role tables, not every file; beside
+// another condition it counts through the WHERE as before. Both give
+// the same numbers, for every scope.
+func TestFileRoleCount(t *testing.T) {
+	t.Parallel()
+	db := testdb.New(t, testdb.Logger, "sample").DB
+	roleArchive(t, db)
+	roleExtras(t, db)
 	member := scope.For(scope.Viewer{ID: 5, Role: scope.Member,
 		GrantedGroups: []int64{-1001000000001}})
 	admin := scope.For(scope.Viewer{ID: 6, Role: scope.Admin,
@@ -215,5 +221,63 @@ func TestFileRoleCount(t *testing.T) {
 		if b.count != nil || !strings.Contains(b.countSQL, "FROM telegram_files f") {
 			t.Errorf("%v: count %s", req.Conds, b.countSQL)
 		}
+	}
+}
+
+// A search with no condition under a scope that does not see every
+// chat counts the files it accepts from the message and role tables
+// (filesFilterCount), not by testing every file, and gets the number
+// the WHERE gives; a scope that sees everything counts as before.
+func TestFileScopeCount(t *testing.T) {
+	t.Parallel()
+	db := testdb.New(t, testdb.Logger, "sample").DB
+	roleArchive(t, db)
+	roleExtras(t, db)
+	// Every file of the archive has an id above 0, so this condition
+	// changes no count, only the way it is counted.
+	other := Cond{C: "id", O: ">", V: "0", HasV: true}
+	count := func(name string, b *built) int64 {
+		t.Helper()
+		n, err := countInt(t.Context(), db, b.countSQL, b.countArgs()...)
+		if err != nil {
+			t.Fatalf("%s: %s: %v", name, b.countSQL, err)
+		}
+		return n
+	}
+	for _, s := range []struct {
+		name string
+		sc   scope.Scope
+	}{
+		{"admin", scope.For(scope.Viewer{ID: 6, Role: scope.Admin,
+			HideGroups: []int64{-1001000000002}})},
+		{"admin hiding GNU/Weeb", scope.For(scope.Viewer{ID: 6, Role: scope.Admin,
+			HideGroups: []int64{-1001000000001}})},
+		{"member", scope.For(scope.Viewer{ID: 5, Role: scope.Member,
+			GrantedGroups: []int64{-1001000000001}})},
+		{"member of none", scope.For(scope.Viewer{ID: 5, Role: scope.Member})},
+	} {
+		b, err := Files.build(s.sc, SearchRequest{Limit: 24})
+		if err != nil {
+			t.Fatalf("%s: %v", s.name, err)
+		}
+		if _, ok := keyOf(planOf(t, db, b.countSQL, b.countArgs()...), "f"); ok {
+			t.Errorf("%s: the count reads telegram_files: %s", s.name, b.countSQL)
+		}
+		with, err := Files.build(s.sc, SearchRequest{Conds: []Cond{other}, Limit: 24})
+		if err != nil {
+			t.Fatalf("%s: %v", s.name, err)
+		}
+		a, w := count(s.name, b), count(s.name, with)
+		if a != w || a == 0 && s.name != "member of none" {
+			t.Errorf("%s: %d without a condition, %d with one", s.name, a, w)
+		}
+		t.Logf("%s: %d files", s.name, a)
+	}
+	b, err := Files.build(scope.Everything(), SearchRequest{Limit: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.count != nil || b.countSQL != "SELECT /*+ MAX_EXECUTION_TIME(3000) */ COUNT(*) AS n FROM telegram_files f" {
+		t.Errorf("everything: count %s", b.countSQL)
 	}
 }

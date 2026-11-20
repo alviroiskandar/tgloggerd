@@ -44,6 +44,11 @@ type Entity struct {
 	// filter is the scope's condition over the entity's rows, with
 	// its values; "" when the scope sees every row.
 	filter func(sc scope.Scope) (string, []any)
+	// filterCount is the ids filter accepts, one row each, read
+	// without the entity's table: the count of a search with no
+	// condition under a scope that has one, which would otherwise
+	// test filter on every row. nil counts through the WHERE.
+	filterCount func(sc scope.Scope) (string, []any)
 	// full is whether the scope sees the rows in full; nil is always.
 	// Otherwise only the fields and columns in limited are there.
 	full    func(sc scope.Scope) bool
@@ -434,9 +439,8 @@ func HumanSize(n uint64) string {
 }
 
 // Files are the file store's rows. A scope that does not see every
-// group and private chat sees the files sent in the messages it may
-// see, and, searched by role, the files playing the role in them
-// (fileRolePred).
+// group and private chat sees the files of the messages it may see:
+// their own files and the files playing a role in them (filesFilter).
 var Files = &Entity{
 	Name: "files",
 	from: "telegram_files f",
@@ -480,7 +484,8 @@ var Files = &Entity{
 		{"tg_file_id", "Telegram file ID", "fileid", ""},
 		{"sha256", "SHA-256", "hash", ""},
 	},
-	filter: filesFilter,
+	filter:      filesFilter,
+	filterCount: filesFilterCount,
 	cells: func(_ scope.Scope, r Row) map[string]any {
 		return map[string]any{
 			"thumb":       photoID(r.Uint("id")),
@@ -499,6 +504,14 @@ var Files = &Entity{
 	},
 }
 
+// filesFilter is Files' scope condition: the file is the own file of a
+// message the scope sees, or plays a role in one (fileRolePred with
+// every role). A cover, a still thumbnail or a link preview's picture
+// is seldom any message's own file, and the chat views show it with
+// its message, so the list, its count, the preview of one file and an
+// OR search all take it as visible as the role filter does. Each
+// EXISTS reads its table through its file index, so a page in id
+// order tests a row in a few lookups.
 func filesFilter(sc scope.Scope) (string, []any) {
 	if sc.SeesAllGroups() && sc.SeesPrivate() {
 		return "", nil
@@ -510,7 +523,26 @@ func filesFilter(sc scope.Scope) (string, []any) {
 		cond += " OR EXISTS (SELECT 1 FROM telegram_private_messages fp " +
 			"WHERE fp.file_id = f.id)"
 	}
-	return cond, a
+	rc, ra := fileRolePred(sc, nil)
+	return cond + " OR " + rc, append(a, ra...)
+}
+
+// filesFilterCount is the ids filesFilter accepts, read from the
+// message and role tables alone (Entity.filterCount): the UNION of the
+// visible messages' own files and of fileRoleCount with every role.
+// It reads the visible messages' file ids once instead of testing each
+// file with four EXISTS, and needs no telegram_files row: the tables'
+// file columns are foreign keys to it.
+func filesFilterCount(sc scope.Scope) (string, []any) {
+	gf, a := sc.GroupFilter("fm.chat_id")
+	q := "SELECT fm.file_id AS id FROM telegram_group_messages fm " +
+		"WHERE fm.file_id IS NOT NULL AND " + gf
+	if sc.SeesPrivate() {
+		q += " UNION SELECT fp.file_id FROM telegram_private_messages fp " +
+			"WHERE fp.file_id IS NOT NULL"
+	}
+	rc, ra := fileRoleCount(sc, nil)
+	return q + " UNION " + rc, append(a, ra...)
 }
 
 // FileRoles are the roles a file can play in a message beside being its
@@ -521,13 +553,14 @@ const FileRoles = "cover,live_video,paid,preview,poll,game,invoice,chat_photo,th
 	"rich,gift,background,preview_media,link_preview"
 
 // fileRolePred is Files' role condition: the file plays one of roles in
-// a message the scope sees. Each table is read through its file index
-// (idx_message_files_file, idx_link_previews_photo), so the condition
-// costs one lookup per row it tests. A scope that does not see every
-// chat joins the message to check its chat, as filesFilter does. The
-// role's own message is what makes the file visible: a cover or a link
-// preview's picture is seldom any message's own file, so a search that
-// every row meets this condition with drops filesFilter (Scoped).
+// a message the scope sees, or any role for nil roles. Each table is
+// read through its file index (idx_message_files_file,
+// idx_link_previews_photo), so the condition costs one lookup per row
+// it tests. A scope that does not see every chat joins the message to
+// check its chat, as filesFilter does. The role's own message is what
+// makes the file visible, so a search that every row meets this
+// condition with needs no filesFilter beside it (Scoped): that adds
+// only lookups, since every such row meets filesFilter too.
 //
 // A few percent of the files are link previews' pictures, too many to
 // read and sort them all for every page (the semijoin the optimizer
@@ -575,11 +608,12 @@ type roleTable struct {
 }
 
 // fileRoleTables is the tables holding roles, those of
-// telegram_message_files first and link_preview after.
+// telegram_message_files first and link_preview after; nil roles is
+// every role, with no condition on telegram_message_files' role.
 func fileRoleTables(sc scope.Scope, roles []string) []roleTable {
 	var (
 		mf  []string
-		lp  bool
+		lp  = roles == nil
 		out []roleTable
 	)
 	for _, r := range roles {
@@ -602,6 +636,11 @@ func fileRoleTables(sc scope.Scope, roles []string) []roleTable {
 			cond += " OR x.private_message_id IS NOT NULL"
 		}
 		return join, cond + ")", ga
+	}
+	if roles == nil {
+		join, cond, ca := visible()
+		out = append(out, roleTable{from: "telegram_message_files x" + join, col: "x.file_id",
+			cond: cond, args: ca})
 	}
 	if len(mf) > 0 {
 		join, cond, ca := visible()
