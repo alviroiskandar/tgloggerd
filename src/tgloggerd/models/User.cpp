@@ -519,6 +519,22 @@ bool DB::ensurePhotoHistory(int64_t owner_id, bool is_group,
 	return added;
 }
 
+bool DB::setPhotoHistoryVideo(int64_t owner_id, bool is_group,
+			      uint64_t still_file_id, uint64_t video_file_id)
+{
+	if (still_file_id == 0 || video_file_id == 0)
+		return false;
+	const char *tbl = is_group ? "telegram_group_hist_photo"
+				   : "telegram_user_hist_profile_photo";
+	const char *col = is_group ? "group_id" : "user_id";
+	return db_.execute(std::string("UPDATE ") + tbl +
+			   " SET video_file_id = ? WHERE " + col +
+			   " = ? AND file_id = ? AND (video_file_id IS NULL OR"
+			   " video_file_id <> ?)",
+			   { (int64_t)video_file_id, owner_id,
+			     (int64_t)still_file_id, (int64_t)video_file_id }) > 0;
+}
+
 bool DB::userExists(int64_t user_id)
 {
 	return !db_.query("SELECT 1 FROM telegram_users WHERE id = ?",

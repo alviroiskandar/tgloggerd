@@ -738,7 +738,8 @@ are query parameters.
       "total": 3,
       "photos": [
         {"photo_id": "5123456789012345678", "date": 1700000000,
-         "file_id": 123456, "is_current": true, "animated": false}
+         "file_id": 123456, "video_file_id": null, "is_current": true,
+         "animated": false}
       ]
     }
 
@@ -751,7 +752,14 @@ For each photo the daemon records, never twice:
 - a `telegram_user_hist_profile_photo` row dated with the photo's own
   date, unless the history has a row for that file already; a row
   dated later than the photo's own date (dated by when the daemon saw
-  the photo) takes the photo's date.
+  the photo) takes the photo's date;
+- for an animated photo, its MPEG-4 video (the big animation, else the
+  small one) in `telegram_files` (`video_file_id`, file_type `video`),
+  metadata only like the still, and the history row's `video_file_id`
+  (migration 000051). The video is fetched like the still, through the
+  same history source by its own unique id. A user's or a group's full
+  info showing an animated current photo links its video the same way
+  when the history already has a row for that still.
 
 `photo_id` is TDLib's photo id as a string; `is_current` marks the
 user's current photo. A history photo whose bytes are not stored can be

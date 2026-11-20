@@ -488,6 +488,14 @@ public:
 	 * A row of the file dated later than @date gets @date: it was dated
 	 * by when the photo was seen. Returns whether a row was added.
 	 */
+	/*
+	 * Link the video of an animated photo to its history row: the row(s)
+	 * of @owner_id whose file is the still @still_file_id get
+	 * video_file_id = @video_file_id. Returns whether a row changed.
+	 */
+	bool setPhotoHistoryVideo(int64_t owner_id, bool is_group,
+				  uint64_t still_file_id, uint64_t video_file_id);
+
 	bool ensurePhotoHistory(int64_t owner_id, bool is_group,
 				uint64_t file_id, int64_t date);
 

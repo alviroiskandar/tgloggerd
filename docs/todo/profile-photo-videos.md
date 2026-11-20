@@ -19,6 +19,9 @@ video is lost once the photo changes.
   daemon stores its MPEG-4 video (the big animation, else the small
   one) through the usual store path, under the store's cap, and sets
   the column. Old rows are left without a video.
+  Done: migration 000051; the video is recorded metadata-only like the
+  still and fetched on first view (docs/internal-api.md, the photos
+  endpoints).
 - Go (webapi): the items of GET /api/users/{id}/photos and GET
   /api/groups/{id}/photos gain `video_url` (the /files/<token> URL of
   the video, or null when there is none or it cannot be served) and

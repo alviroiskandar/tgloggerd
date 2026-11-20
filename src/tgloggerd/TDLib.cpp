@@ -538,6 +538,21 @@ const td_api::file *chat_photo_size_with_unique_id(
 	return nullptr;
 }
 
+/* The file of @p (a size or its video) with Telegram unique id @unique_id. */
+const td_api::file *chat_photo_file_with_unique_id(const td_api::chatPhoto &p,
+						   const std::string &unique_id)
+{
+	if (auto *x = chat_photo_size_with_unique_id(p.sizes_, unique_id))
+		return x;
+	if (unique_id.empty())
+		return nullptr;
+	for (const auto *a : { p.animation_.get(), p.small_animation_.get() })
+		if (a && a->file_ && a->file_->remote_ &&
+		    a->file_->remote_->unique_id_ == unique_id)
+			return a->file_.get();
+	return nullptr;
+}
+
 const td_api::linkPreview *message_link_preview(const td_api::MessageContent &c)
 {
 	if (c.get_id() != td_api::messageText::ID)
@@ -780,6 +795,10 @@ struct TDLib::Impl {
 	std::function<void(const MessageReply &)>	message_reply_handler_;
 	std::function<void(const models::User &)>	user_handler_;
 	std::function<void(const models::UserFullInfo &)> user_full_info_handler_;
+	std::function<void(int64_t, bool, const models::File &,
+			   const models::File &)>	photo_video_handler_;
+	void note_photo_video(int64_t owner_id, bool is_group,
+			      const td_api::chatPhoto *photo);
 	std::function<void(const ProfilePhoto &)>	photo_handler_;
 	std::function<void(const models::Group &)>	group_handler_;
 	std::function<void(const GroupPhoto &)>		group_photo_handler_;
@@ -1365,6 +1384,8 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 				if (fi.personal_chat_id != 0)
 					ensure_chat_saved(fi.personal_chat_id);
 				user_full_info_handler_(fi);
+				note_photo_video(u.user_id_, false,
+						 u.user_full_info_->photo_.get());
 				/* A bot's community, if it was added to one. */
 				note_community_named(
 					u.user_full_info_->community_id_);
@@ -1467,6 +1488,9 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 					u.supergroup_full_info_->can_get_members_);
 				note_community_named(
 					u.supergroup_full_info_->community_id_);
+				note_photo_video(-1000000000000LL - u.supergroup_id_,
+						 true,
+						 u.supergroup_full_info_->photo_.get());
 			},
 			[this](td_api::updateCommunity &u) {
 				if (!u.community_)
@@ -1504,6 +1528,9 @@ void TDLib::Impl::process_update(td_api::object_ptr<td_api::Object> update)
 				note_group_member_info(-u.basic_group_id_,
 					(int64_t)u.basic_group_full_info_->members_.size(),
 					!u.basic_group_full_info_->members_.empty());
+				/* A basic group's chat id is minus its id. */
+				note_photo_video(-u.basic_group_id_, true,
+						 u.basic_group_full_info_->photo_.get());
 				if (!st.chat_seen)
 					return;
 				emit_group(u.basic_group_id_);
@@ -3062,6 +3089,7 @@ void TDLib::Impl::request_user_full_info(int64_t user_id)
 				obj);
 			user_full_info_handler_(
 				map_user_full_info(*fi, user_id));
+			note_photo_video(user_id, false, fi->photo_.get());
 		});
 }
 
@@ -4451,8 +4479,8 @@ Object TDLib::Impl::resolve_file(const models::FileSource &src,
 		auto &list = static_cast<const td_api::chatPhotos &>(*obj);
 		for (const auto &ph : list.photos_)
 			if (ph)
-				if (auto *x = chat_photo_size_with_unique_id(
-					    ph->sizes_, src.unique_id))
+				if (auto *x = chat_photo_file_with_unique_id(
+					    *ph, src.unique_id))
 					f = x;
 		break;
 	}
@@ -4465,8 +4493,8 @@ Object TDLib::Impl::resolve_file(const models::FileSource &src,
 			auto &c = static_cast<const td_api::messageChatChangePhoto &>(
 				*m->content_);
 			if (c.photo_)
-				if (auto *x = chat_photo_size_with_unique_id(
-					    c.photo_->sizes_, src.unique_id))
+				if (auto *x = chat_photo_file_with_unique_id(
+					    *c.photo_, src.unique_id))
 					f = x;
 		}
 		break;
@@ -4656,6 +4684,42 @@ void TDLib::setUserFullInfoHandler(
 	std::function<void(const models::UserFullInfo &)> cb)
 {
 	impl_->user_full_info_handler_ = std::move(cb);
+}
+
+void TDLib::setPhotoVideoHandler(
+	std::function<void(int64_t, bool, const models::File &,
+			   const models::File &)> cb)
+{
+	impl_->photo_video_handler_ = std::move(cb);
+}
+
+/*
+ * The video of an animated current photo, from a full info: hand its still
+ * and its MPEG-4 to the photo video handler, which links them in the
+ * photo's history (profile-photo-videos). A still photo does nothing.
+ */
+void TDLib::Impl::note_photo_video(int64_t owner_id, bool is_group,
+				   const td_api::chatPhoto *photo)
+{
+	if (!photo_video_handler_ || !photo)
+		return;
+	const td_api::file *video = chat_photo_animation(photo);
+	const td_api::file *still = chat_photo_best_size_of(photo->sizes_);
+	auto meta = [](const td_api::file *f, const char *type, const char *ext,
+		       models::File &out) {
+		if (!f || !f->remote_ || f->remote_->id_.empty())
+			return false;
+		out.tg_file_id = f->remote_->id_;
+		out.tg_unique_id = f->remote_->unique_id_;
+		out.file_type = type;
+		out.file_size = f->size_ > 0 ? (uint64_t)f->size_ : 0;
+		out.on_disk = false;
+		out.file_ext = ext;
+		return true;
+	};
+	models::File s, v;
+	if (meta(still, "photo", "jpg", s) && meta(video, "video", "mp4", v))
+		photo_video_handler_(owner_id, is_group, s, v);
 }
 
 void TDLib::setProfilePhotoHandler(std::function<void(const ProfilePhoto &)> cb)
