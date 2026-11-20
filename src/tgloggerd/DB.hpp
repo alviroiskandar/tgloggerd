@@ -234,6 +234,26 @@ public:
 	countMessagesToRepair(void);
 
 	/*
+	 * The live messages that should show a still but have none stored:
+	 * a video, an animation, a video note or a video (.webm) sticker
+	 * with no message file of role "thumbnail" (nor "cover", which a
+	 * video shows first). Re-reading one stores the still thumbnail
+	 * TDLib offers, so a message that got one is not listed again; one
+	 * whose video has no Telegram thumbnail stays listed. Input to
+	 * TDLib::refetchThumbnails().
+	 */
+	std::vector<std::pair<int64_t, int64_t>>
+	listMessagesWithoutThumbnail(void);
+
+	/* The statement listMessagesWithoutThumbnail runs, for its plan. */
+	static std::string thumbnailCandidatesSql(void);
+
+	/* How many rows listMessagesWithoutThumbnail would return, per table
+	 * and content_type, for the dry run: ("group", "video") -> n, ... */
+	std::vector<std::tuple<std::string, std::string, uint64_t>>
+	countMessagesWithoutThumbnail(void);
+
+	/*
 	 * What a chat recheck needs of the stored messages of @chat_id
 	 * (telegram_group_messages, or telegram_private_messages unless
 	 * @is_group) around @span: the live ones strictly between its ends,
