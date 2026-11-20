@@ -148,6 +148,11 @@ type Field struct {
 	// plays its role in, the scope condition only the messages whose
 	// own file it is.
 	Scoped bool
+	// Ordered fields have an index that reads the rows in the field's
+	// descending order, the id breaking ties (its index holds the
+	// primary key), so a page sorted by one can stop at its last row
+	// (drivenHint).
+	Ordered bool
 	// NeedsChat fields have no index of their own on a big table: a
 	// search may use one only beside a chat_id = condition that every
 	// row must meet (chatBound), so it reads one chat's rows through
@@ -200,7 +205,23 @@ const (
 	// statementMS is every search statement's time limit
 	// (MAX_EXECUTION_TIME), as in Drogon.
 	statementMS = 3000
+	// drivenRows is the deepest row (offset plus limit) a page keeps
+	// drivenHint for. Read in index order, such a page tests about
+	// rows/share rows for a condition a share of the rows meet: under
+	// a thousand stays well below reading every match of a condition
+	// a few percent of a million rows meet, past it the semijoin wins.
+	drivenRows = 1000
 )
+
+// drivenHint is the hint a Pred puts in an EXISTS whose matches are
+// many but a small share of the rows (Files' link previews), so it is
+// tested row by row as the page's ORDER BY index is read and the
+// LIMIT ends the scan. Without it the optimizer turns the EXISTS into
+// a semijoin that reads every match, looks each row up and sorts them
+// all, which is right for a count, an order no index gives or a deep
+// page: build keeps the hint only in the page statement of a shallow
+// page in an indexed order (Field.Ordered, or the id).
+const drivenHint = "/*+ NO_SEMIJOIN() */"
 
 // Cond is one condition of a search: field key, operator, value and
 // the connector to the next condition.
@@ -764,11 +785,11 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	}
 
 	b := &built{where: binds, filtered: where != "", fulltext: ftExpr != ""}
-	sortExpr := e.defSort
+	sortExpr, ordered := e.defSort, false
 	if req.Sort != "" {
 		if f := e.field(req.Sort, req.Internal); f != nil && f.Sortable &&
 			e.fieldVisible(sc, f) {
-			sortExpr, b.sort = f.Expr, f.Key
+			sortExpr, b.sort, ordered = f.Expr, f.Key, f.Ordered
 		}
 	}
 	switch strings.ToLower(req.Order) {
@@ -796,13 +817,22 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	if sortExpr != e.idCol && b.orderBind == nil {
 		tiebreak = ", " + e.idCol + " DESC"
 	}
-	whereClause := ""
+	// The id's own order needs no tiebreak and an index gives it either
+	// way; another field's index gives it descending only, as the
+	// tiebreak is.
+	driven := sortExpr == e.idCol || (ordered && b.order == "DESC")
+	driven = driven && b.orderBind == nil && b.offset+b.limit <= drivenRows
+	pageWhere, countWhere := where, strings.ReplaceAll(where, drivenHint+" ", "")
+	if !driven {
+		pageWhere = countWhere
+	}
+	whereClause, countClause := "", ""
 	if where != "" {
-		whereClause = " WHERE " + where
+		whereClause, countClause = " WHERE "+pageWhere, " WHERE "+countWhere
 	}
 	countFrom := e.countFromFor(where)
 	hint := "SELECT /*+ MAX_EXECUTION_TIME(" + strconv.Itoa(statementMS) + ") */ "
-	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + whereClause
+	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + countClause
 	sel := e.sel
 	if req.Internal && e.pageSel != "" {
 		sel += ", " + e.pageSel
