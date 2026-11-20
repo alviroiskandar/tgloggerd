@@ -6323,9 +6323,13 @@ components:
             for a stored photo, .webp sticker or thumbnail; for a
             video, animation, video note or video (.webm) sticker,
             stored or not, the stored cover, else the stored Telegram
-            thumbnail, of a message the viewer sees that carried it
-            (never the video's own URL); else null. An animated (.tgs)
-            sticker has none.
+            thumbnail, of a message the viewer sees that carried it;
+            without one, the stored picture a message the viewer sees
+            shows it with where it plays a role there: a rich block's
+            thumbnail at its position, an animated chat photo's still
+            photo, a video link preview's cover, else the preview's
+            photo (never the video's own URL); else null. An animated
+            (.tgs) sticker has none.
         minithumb:
           type: string
           description: >-
