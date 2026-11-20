@@ -203,30 +203,35 @@ service messages keep `content_type = 'service'` and get the
 
 ### 3.5 Service messages: payments, gifts, stars
 
-| TDLib class | Stored | What is lost today | Planned service_type |
+Since msg-service-detail and msg-gifts, every class here keeps its
+detail as curated keys (section 4.2.3); the old-row repair (section
+4.9) gave the rows stored before them their class and keys. What is
+still lost:
+
+| TDLib class | Stored | What is still lost | service_type |
 |---|---|---|---|
-| messagePaymentSuccessful | partly | invoice message, currency, amount, subscription | payment_successful |
-| messagePaymentSuccessfulBot | partly | currency, amount, charge ids (payload and order info are bot-side) | payment_successful_bot |
-| messagePaymentRefunded | not | owner, currency, amount, charge ids | payment_refunded |
-| messageGiftedPremium | partly | gifter, receiver, text, price, months | gifted_premium |
-| messagePremiumGiftCode | not | creator, text, price, months, code | premium_gift_code |
-| messageGiftedStars | not | gifter, receiver, price, stars | gifted_stars |
-| messageGiftedGrams | not | gifter, receiver, amount | gifted_grams |
-| messageGiveawayCreated | not | stars | giveaway_created |
-| messageGiveawayCompleted | not | giveaway message, winners, unclaimed | giveaway_completed |
-| messageGiveawayWinners | not | chat, winners, prize | giveaway_winners |
-| messageGiveawayPrizeStars | not | stars, chat, giveaway | giveaway_prize_stars |
-| messageGift | not | gift, sender, receiver, text, flags, prices | gift |
-| messageUpgradedGift | not | unique gift, sender, receiver, origin, flags | upgraded_gift |
-| messageRefundedUpgradedGift | not | gift, sender, receiver, origin | refunded_upgraded_gift |
-| messageUpgradedGiftPurchaseOffer | not | gift, state, price, expiry | upgraded_gift_purchase_offer |
-| messageUpgradedGiftPurchaseOfferRejected | not | gift, price, offer message | upgraded_gift_purchase_offer_rejected |
-| messagePaidMessagesRefunded | not | message count, stars | paid_messages_refunded |
-| messagePaidMessagePriceChanged | not | price | paid_message_price_changed |
-| messageDirectMessagePriceChanged | not | enabled flag, price | direct_message_price_changed |
-| messageUnpaidMessagesAllowedByLink | not | the event | unpaid_messages_allowed_by_link |
-| messageTonWalletTransfer | not | sender, transaction, peer address, amount, comment | ton_wallet_transfer |
-| messageTonConnectRequest | not | session, state, dApp name, topic | ton_connect_request |
+| messagePaymentSuccessful | fully | nothing (the invoice is its own message, linked by id) | payment_successful |
+| messagePaymentSuccessfulBot | fully | the payload and order info, which only the bot sees | payment_successful_bot |
+| messagePaymentRefunded | fully | nothing | payment_refunded |
+| messageGiftedPremium | fully | nothing; its animation sticker is a `gift` file | gifted_premium |
+| messagePremiumGiftCode | partly | the code itself, never kept since anyone reading the archive could redeem it (`has_code` says there was one) | premium_gift_code |
+| messageGiftedStars | fully | nothing; its animation sticker is a `gift` file | gifted_stars |
+| messageGiftedGrams | fully | nothing; its animation sticker is a `gift` file | gifted_grams |
+| messageGiveawayCreated | fully | nothing (a giveaway without Stars has no `star_count`) | giveaway_created |
+| messageGiveawayCompleted | fully | nothing | giveaway_completed |
+| messageGiveawayWinners | fully | nothing | giveaway_winners |
+| messageGiveawayPrizeStars | fully | nothing; its animation sticker is a `gift` file | giveaway_prize_stars |
+| messageGift | fully | the gift's background colours; its sticker is a `gift` file | gift |
+| messageUpgradedGift | fully | nothing; model, symbol, backdrop and original details are curated, the model and symbol stickers `gift` files | upgraded_gift |
+| messageRefundedUpgradedGift | fully | nothing | refunded_upgraded_gift |
+| messageUpgradedGiftPurchaseOffer | fully | nothing | upgraded_gift_purchase_offer |
+| messageUpgradedGiftPurchaseOfferRejected | fully | nothing | upgraded_gift_purchase_offer_rejected |
+| messagePaidMessagesRefunded | fully | nothing | paid_messages_refunded |
+| messagePaidMessagePriceChanged | fully | nothing | paid_message_price_changed |
+| messageDirectMessagePriceChanged | fully | nothing | direct_message_price_changed |
+| messageUnpaidMessagesAllowedByLink | fully | nothing beyond the event itself | unpaid_messages_allowed_by_link |
+| messageTonWalletTransfer | fully | nothing | ton_wallet_transfer |
+| messageTonConnectRequest | fully | nothing | ton_connect_request |
 
 A gift is kept as Telegram shows it: its sticker (an upgraded gift's
 model and symbol stickers) and the animation stickers of gifted
@@ -857,6 +862,19 @@ Such a row qualifies while it is live and its `content_extra` has no
 `blocks` key; the normal path writes that key along with the text and
 the media files, so a re-read row is not listed again, and one TDLib
 cannot return keeps its JSON. The dry run counts them as `rich`.
+
+The pass has run once over the rows stored before classification and is
+off again. Of the rows it started with,
+about 99.9 % were repaired: they now carry their class and, for service
+messages, their detail. About 0.1 % stayed as they were, because TDLib
+could no longer return their message: in groups only (no private chat
+kept any), roughly half of them `unknown` rows and half service rows,
+most of those pins, and the rest member, photo and title changes and
+video chat notices; and almost no rich rows. They keep what they had
+(the web shows them with its placeholder for an unknown kind). The pass itself
+met no flood wait: under Telegram's limits TDLib sat out the waits
+inside its requests, which is why the pass was capped at five re-reads
+a second and waits for chat rechecks.
 
 ### 4.10 Forwarding to Discord
 

@@ -108,8 +108,6 @@ The file store as a capped cache in front of Telegram:
 Storing every kind of Telegram message faithfully:
 [design/message-types.md](design/message-types.md).
 
-- [`msg-repair-census`](todo/msg-repair-census.md): Count what the repair pass left without a kind or detail, turn it off, and adjust these items.
-
 ## Web backend in Go
 
 The web backend moves from Drogon to Go:
