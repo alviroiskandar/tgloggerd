@@ -66,7 +66,10 @@ and re-running `docker compose up` recompiles incrementally without
 rebuilding the image.
 
 `run.sh <daemon|web|discord|webapi>` is the entrypoint for every
-service; the compose file selects the mode per service. The daemon and
+service but two; the compose file selects the mode per service. The
+render service runs the React application's build, and the stills
+service has an image of its own (`docker/stills/`: Debian's ffmpeg and
+a small Python socket server), which `docker compose up` builds once. The daemon and
 web modes apply their migrations on every start, which is idempotent
 (`migrate ... up` is a no-op once applied).
 
@@ -118,9 +121,11 @@ everything in one `.env` splits it once with `scripts/split-env.py`.
       mysql/                     MySQL server data (docker volume).
       storage/files/             Downloaded files, named by SHA-256.
     Dockerfile                 Toolchain image for both components.
-    docker-compose.yml         mysql, tgloggerd, web, discordd and webapi
-                               services.
+    docker-compose.yml         mysql, tgloggerd, web, discordd, webapi,
+                               render and stills services.
     docker/mysql/init/         MySQL first-init hook (web database/users).
+    docker/stills/             The stills service's image: ffmpeg behind a
+                               socket, for the stills of stored videos.
     run.sh                     Container entrypoint: build, migrate, run.
     .env.example               Compose's own settings; copy to .env.
     env/                       The services' settings and secrets.
