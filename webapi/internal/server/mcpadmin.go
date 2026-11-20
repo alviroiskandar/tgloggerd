@@ -356,7 +356,7 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "mint token", err)
 		return
 	}
-	id, err := webdb.CreateMCPToken(r.Context(), s.app, v.ID, owner, name, sum, webdb.By(v.ID, clientIP(r)))
+	id, err := webdb.CreateMCPToken(r.Context(), s.app, v.ID, owner, name, sum, nil, webdb.By(v.ID, clientIP(r)))
 	if err != nil {
 		s.internalError(w, "store token", err)
 		return
