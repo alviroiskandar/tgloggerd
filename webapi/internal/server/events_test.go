@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -650,4 +651,64 @@ func TestLiveMemberGrants(t *testing.T) {
 	if !slices.Equal(ev.ChatIDs, []int64{rustChat}) || !slices.Equal(ev.UserIDs, []int64{9299000001}) {
 		t.Errorf("stats.changed %+v", ev)
 	}
+}
+
+// stuckWriter is a client that stopped reading on a connection no
+// proxy bounds: a write blocks until the write deadline passes, or
+// for good when none is set (until the test releases it).
+type stuckWriter struct {
+	h        http.Header
+	mu       sync.Mutex
+	deadline time.Time
+	release  chan struct{}
+	writing  chan struct{}
+	once     sync.Once
+}
+
+func (s *stuckWriter) Header() http.Header { return s.h }
+func (s *stuckWriter) WriteHeader(int)     {}
+func (s *stuckWriter) Flush()              {}
+func (s *stuckWriter) SetWriteDeadline(t time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deadline = t
+	return nil
+}
+func (s *stuckWriter) Write(p []byte) (int, error) {
+	s.once.Do(func() { close(s.writing) })
+	s.mu.Lock()
+	dl := s.deadline
+	s.mu.Unlock()
+	var expired <-chan time.Time
+	if !dl.IsZero() {
+		expired = time.After(time.Until(dl))
+	}
+	select {
+	case <-expired:
+		return 0, os.ErrDeadlineExceeded
+	case <-s.release:
+		return len(p), nil
+	}
+}
+
+// A client that stops reading ends its stream after the write timeout
+// and frees its slot, without nginx's send timeout to end it.
+func TestEventsWriteDeadline(t *testing.T) {
+	t.Parallel()
+	e := newLiveEnv(t, liveOpts{cfg: LiveConfig{WriteTimeout: 50 * time.Millisecond}})
+	sw := &stuckWriter{h: http.Header{}, release: make(chan struct{}), writing: make(chan struct{})}
+	t.Cleanup(func() { close(sw.release) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet, "/api/events?topics=chat:-1", nil).WithContext(ctx)
+	r.AddCookie(&http.Cookie{Name: "tgw_session", Value: e.cookie})
+	done := make(chan struct{})
+	go func() { e.s.RequireSession(e.s.events)(sw, r); close(done) }()
+	<-sw.writing
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stream nobody reads is still open")
+	}
+	waitFor(t, "the slot", func() bool { return e.hub.Subscribers() == 0 })
 }

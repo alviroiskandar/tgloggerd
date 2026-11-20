@@ -318,6 +318,10 @@ live.Source, leaving the fan-out as it is.
     reads slower than events arrive loses what is queued and gets a
     resync instead, so one slow reader costs bounded memory and slows
     nobody else.
+  - Each write to a stream has a deadline of 30 seconds (the server
+    sets no write timeout, as streams are long). A browser that stops
+    reading altogether ends its stream then and frees its slot, also
+    where no proxy's send timeout would end it.
   - Refusals, never an empty stream: 503 live_off when live updates
     are off (WEBAPI_LIVE=0 or no WEB_TGLOGGERD_API) or the daemon's
     stream is not connected; 503 unavailable with

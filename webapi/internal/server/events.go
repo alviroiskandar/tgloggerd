@@ -37,11 +37,16 @@ type LiveConfig struct {
 	// revoked or expired session, or a changed scope, ends the stream
 	// with a session event. Default 30 s (WEBAPI_LIVE_RECHECK).
 	Recheck time.Duration
+	// WriteTimeout bounds each write of a frame or heartbeat: a client
+	// that stops reading ends its stream then, instead of holding the
+	// handler until the connection gives up. Default 30 s.
+	WriteTimeout time.Duration
 }
 
 const (
 	defaultHeartbeat = 15 * time.Second
 	defaultRecheck   = 30 * time.Second
+	defaultWriteTime = 30 * time.Second
 	// liveRetry is the reconnection delay, in milliseconds, the stream
 	// asks the browser's EventSource for.
 	liveRetry = 3000
@@ -299,7 +304,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	rc := http.NewResponseController(w)
+	// The server sets no write timeout, as streams are long; each write
+	// gets its own deadline instead, so a client that stopped reading
+	// is let go even when no proxy in front of the service bounds it.
+	writeTimeout := s.liveCfg.WriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = defaultWriteTime
+	}
+	deadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(writeTimeout)) }
 
+	deadline()
 	if _, err := fmt.Fprintf(w, "retry: %d\n\n", liveRetry); err != nil {
 		return
 	}
@@ -338,13 +352,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			// the stream, so the client polls or reconnects elsewhere.
 			return
 		case e := <-sub.Events():
+			deadline()
 			err = writeFrame(w, e)
 		case <-sub.Lost():
+			deadline()
 			err = writeFrame(w, sub.Resync())
 		case <-hb.C:
+			deadline()
 			_, err = w.Write([]byte(": keepalive\n\n"))
 		case <-rk.C:
 			if reason := s.liveRecheck(r, sc); reason != "" {
+				deadline()
 				_ = writeFrame(w, live.Event{Kind: live.KindSession, Reason: reason})
 				_ = rc.Flush()
 				return
