@@ -107,7 +107,22 @@ struct FileStatus {
 	std::optional<uint64_t>	alias_of;	/* row holding the same bytes */
 	bool			has_unique_id = false;	/* tg_unique_id known */
 	int64_t			accessed_at = 0;	/* Unix seconds */
+	bool			generated = false;	/* see isGeneratedFileId */
 };
+
+/*
+ * The tg_file_id of a still the daemon took from a stored video
+ * ("generated:<sha256>"; telegram_files.generated_from_file_id names the
+ * video). Nothing on Telegram holds such a file, so it is never fetched:
+ * the stills pass takes it again from its video.
+ */
+constexpr const char kGeneratedFilePrefix[] = "generated:";
+
+inline bool isGeneratedFileId(const std::string &tg_file_id)
+{
+	return tg_file_id.compare(0, sizeof(kGeneratedFilePrefix) - 1,
+				  kGeneratedFilePrefix) == 0;
+}
 
 /* What the store holds: telegram_files rows with on_disk = 1. */
 struct StoreTotals {

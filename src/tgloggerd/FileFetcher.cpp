@@ -371,6 +371,17 @@ FileFetcher::Result FileFetcher::fetch(uint64_t id, uint64_t offset,
 		throw InternalApi::Error::notFound("unknown file");
 	if (auto r = storedCopy(*row))
 		return *r;
+	/*
+	 * A still the daemon took from a stored video: Telegram never had
+	 * it. Its message's sources would hand over the message's own
+	 * Telegram thumbnail, if it has one now, and those bytes must not
+	 * land in this row.
+	 */
+	if (isGeneratedFileId(row->tg_file_id))
+		throw InternalApi::Error(410, "generated",
+					 "the file is a still generated from a"
+					 " stored video; it is not on Telegram"
+					 " and is generated again later");
 
 	bool fresh = false;
 	TDLib::TdObject file = resolveKnown(*row, deadline);
