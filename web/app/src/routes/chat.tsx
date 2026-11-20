@@ -14,6 +14,7 @@ import { Counts, EffectMark, KindDetail, KindFallback, Reactions, TopicStrip, To
 import { fetchChatWindow } from '../api/chat.ts';
 import { RichText, type RichChat } from '../ui/richtext.tsx';
 import { useLive, useLiveState, useRefetcher } from '../live/react.tsx';
+import type { LiveEvent } from '../live/events.ts';
 import { useFreshGroup, useFreshUser } from '../live/useEntities.tsx';
 import { bytes, fmt } from '../format.ts';
 import { TYPE_LABEL } from './groups.tsx';
@@ -65,6 +66,13 @@ const serviceText = (t?: string) => (t ? serviceLabel(t) : '');
 // At most this many pages of 100 refetched for a window's resync; a
 // window longer than that is refreshed from its start only.
 const RESYNC_PAGES = 10;
+
+// A signed-out visitor's chat refetches its window at most this often
+// (the stream's first resync names the server's figure, in seconds),
+// and every 30 s while its stream is refused or down, never every
+// second: visitors' windows come from a shared cache.
+export const PUBLIC_REFETCH_S = 5;
+export const PUBLIC_POLL_MS = 30_000;
 
 // Where a forward came from: a link to the user, or to the channel's
 // post (or the channel), else just the name.
@@ -479,12 +487,50 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 		setMsgs(next);
 	}, [scope, chatId, topic]);
 
-	// Signed in with Live on, the chat follows its events wherever the
-	// window is; only a window at the newest (following) fetches the
-	// tail, counts unseen messages and polls. The topic stays the same
-	// when the window reaches the newest, so the stream is not reopened.
+	// A signed-out visitor's refetches go under one key, so a burst of
+	// events is one refetch at most every refetch_interval: what the
+	// events since the last one asked for (the window, the tail), done
+	// together.
+	const publicGap = useRef(PUBLIC_REFETCH_S * 1000);
+	const publicWant = useRef({ window: false, tail: false });
+	const newerRef = useRef(newer);
+	newerRef.current = newer;
+	const publicRefetch = useCallback(async () => {
+		const want = publicWant.current;
+		publicWant.current = { window: false, tail: false };
+		if (want.window) await resyncWindow();
+		if (want.tail && !newerRef.current) await fetchNewer();
+	}, [resyncWindow, fetchNewer]);
+	const publicAsk = (what: { window?: boolean; tail?: boolean }) => {
+		if (what.window) publicWant.current.window = true;
+		if (what.tail) publicWant.current.tail = true;
+		if (refetch) refetch.request(`chat:${chatId}:public`, publicGap.current, publicRefetch);
+		else void publicRefetch().catch(() => {});
+	};
+	const onPublicEvent = (e: LiveEvent) => {
+		const cur = msgsRef.current;
+		const first = cur[0], last = cur[cur.length - 1];
+		const inWindow = (id: number) => !!first && !!last && id < last.message_id && (id > first.message_id || !older);
+		if (e.kind === 'resync') {
+			if (e.refetch_interval && e.refetch_interval > 0) publicGap.current = e.refetch_interval * 1000;
+			publicAsk(newer ? { window: true } : { tail: true });
+		} else if (e.kind === 'message.new' && e.message_id !== undefined) {
+			if (inWindow(e.message_id)) { if (!cur.some((m) => m.message_id === e.message_id)) publicAsk({ window: true }); }
+			else if (!newer && last && e.message_id >= last.message_id) publicAsk({ tail: true });
+		} else if ((e.kind === 'message.edited' || e.kind === 'message.deleted' || e.kind === 'file.stored') && e.message_id !== undefined && cur.some((m) => m.message_id === e.message_id)) {
+			publicAsk({ window: true });
+		}
+	};
+
+	// With Live on, the chat follows its events wherever the window is;
+	// only a signed-in window at the newest (following) fetches the tail
+	// at once, counts unseen messages and polls. The topic stays the
+	// same when the window reaches the newest, so the stream is not
+	// reopened. A signed-out visitor follows the same events, through
+	// its own stream, refetching as above.
 	const following = live && !newer && !publicView;
-	useLive(live && !publicView ? [`chat:${chatId}`] : null, (e) => {
+	useLive(live ? [`chat:${chatId}`] : null, (e) => {
+		if (publicView) { onPublicEvent(e); return; }
 		const run = (key: string, fn: () => Promise<unknown>) => (refetch ? refetch.request(key, 250, fn) : void fn().catch(() => {}));
 		const cur = msgsRef.current;
 		const first = cur[0], last = cur[cur.length - 1];
@@ -513,6 +559,19 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 		const t = setInterval(() => { if (!document.hidden) void fetchNewer().catch(() => {}); }, 1000);
 		return () => clearInterval(t);
 	}, [polling, fetchNewer]);
+
+	// A visitor whose stream is refused or down refetches the window
+	// every 30 s while the tab shows, and once when it shows again.
+	const publicDown = publicView && live && (liveState === 'polling' || liveState === 'reconnecting');
+	const publicAskRef = useRef(publicAsk);
+	publicAskRef.current = publicAsk;
+	useEffect(() => {
+		if (!publicDown) return;
+		const ask = () => { if (!document.hidden) publicAskRef.current({ window: true, tail: true }); };
+		const t = setInterval(ask, PUBLIC_POLL_MS);
+		document.addEventListener('visibilitychange', ask);
+		return () => { clearInterval(t); document.removeEventListener('visibilitychange', ask); };
+	}, [publicDown]);
 
 	const onReply = (id: number) => {
 		const t = document.getElementById('m' + id);
@@ -590,7 +649,7 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 			</div>
 			{(!atBottom || newer) && <button type="button" className="c-tobottom" aria-label={unseen ? `Jump to latest, ${unseen} new` : 'Jump to latest'} onClick={toLatest}><ChevronDown size={22} />{unseen > 0 && <span className="c-unseen">{unseen > 99 ? '99+' : unseen}</span>}</button>}
 			<footer className="c-readonly">
-				{publicView ? <><Globe size={14} />Public archive of {title}. Read only.</> : <>Archive view, read only. {!live ? 'Live updates paused.' : liveState === 'polling' ? 'Live updates unavailable; checking for new messages every second.' : 'New messages appear as they are logged.'}</>}
+				{publicView ? <><Globe size={14} />Public archive of {title}. Read only.{publicDown ? ' Live updates unavailable; checking for new messages every 30 seconds.' : liveState === 'live' ? ' New messages appear as they are logged.' : ''}</> : <>Archive view, read only. {!live ? 'Live updates paused.' : liveState === 'polling' ? 'Live updates unavailable; checking for new messages every second.' : 'New messages appear as they are logged.'}</>}
 			</footer>
 		</div>
 	);

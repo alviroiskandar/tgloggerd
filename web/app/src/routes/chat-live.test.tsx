@@ -322,18 +322,4 @@ describe('a window with newer pages', () => {
 	});
 });
 
-describe('a signed-out visitor', () => {
-	it('opens no stream and polls nothing, at the newest or not', async () => {
-		const exposed = fixture<GroupsProps>('/groups').props.rows.find((g) => g.exposed)!;
-		const u = `/groups/${exposed.id}/chat`;
-		for (const has_newer of [false, true]) {
-			const calls = fakeApi('public', {});
-			const page = fixture<ChatProps>(u, 'public');
-			const { unmount } = renderPage(u, 'public', { props: { ...page.props, has_newer }, viewer: { ...page.viewer, chat: { ...page.viewer.chat, auto_load: false } } });
-			await tick(1500);
-			expect(FakeSource.last).toBeNull();
-			expect(callsTo(calls, 'GET', /\/messages$/)).toHaveLength(0);
-			unmount();
-		}
-	});
-});
+// A signed-out visitor's public chat: chat-live-public.test.tsx.
