@@ -157,7 +157,14 @@ target_compile_options(tgloggerd PRIVATE
 # headers can be included from TDLib.cpp. connector-jdbc is the MySQL
 # Connector/C++ legacy JDBC library. OpenSSL::Crypto provides SHA-256 for
 # hashing downloaded files.
-find_package(OpenSSL REQUIRED)
+#
+# 3.5 at least: 1.1.1 and earlier carry the OpenSSL/SSLeay licence, which
+# no version of the GPL can be combined with, and 3.0 to 3.4 are out of
+# upstream support; 3.5 is the long-term-support series
+# (docs/licensing-open-issues.md, item 1). TDLib's own find_package(OpenSSL)
+# runs first and caches what it finds, so this also checks the library TDLib
+# links.
+find_package(OpenSSL 3.5 REQUIRED)
 # libcurl (HTTPS) for the Discord webhook forwarder.
 find_package(CURL REQUIRED)
 # libsodium: the daemon mints the web's /files/<token> URLs for Discord
@@ -171,7 +178,9 @@ find_package(Threads REQUIRED)
 # The internal API (src/tgloggerd/InternalApi.cpp) serves HTTP with
 # Boost.Beast/Asio, which are header-only: nothing links a Boost binary.
 # Only InternalApi.cpp includes them. Its JSON is nlohmann-json.
-find_package(Boost QUIET)
+# CONFIG: Boost's own BoostConfig.cmake. CMake 3.30 and later deprecate the
+# FindBoost module (policy CMP0167) and warn on every configure that uses it.
+find_package(Boost CONFIG QUIET)
 if(NOT Boost_FOUND)
 	# Ubuntu's libboost-dev does not always ship a CMake config; the
 	# headers are all that is needed, so locate them directly.

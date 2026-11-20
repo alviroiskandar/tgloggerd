@@ -18,26 +18,33 @@ checking before anyone relies on it.
 
 ---
 
-## 1. No OpenSSL version floor — actionable now
+## 1. OpenSSL version floor — closed: 3.5 required
 
-Three call sites take any OpenSSL:
+Every call site now requires OpenSSL 3.5, so an older library is a configure
+error instead of a silent link:
 
-- `CMakeLists.txt:92` — `find_package(OpenSSL REQUIRED)`
-- `src/gwdiscord/CMakeLists.txt:42` — `find_package(OpenSSL REQUIRED)`
-- `web/cmake/FindMySQL.cmake:20` — `find_package(OpenSSL QUIET)`
+- `CMakeLists.txt` — `find_package(OpenSSL 3.5 REQUIRED)` (the daemon,
+  discordd and their tests)
+- `src/gwdiscord/CMakeLists.txt` — `find_package(OpenSSL 3.5 REQUIRED)`
+- `web/cmake/FindMySQL.cmake` — `find_package(OpenSSL 3.5 REQUIRED)`; it was
+  `QUIET` and linked OpenSSL only when found; an older or missing OpenSSL
+  now stops the web's configure
 
-OpenSSL relicensed to Apache-2.0 at 3.0.0. Versions **1.1.1 and earlier** carry
-the old dual OpenSSL/SSLeay licence, whose BSD-4-clause-style advertising
-requirement is incompatible with GPL version 2 **and** version 3. So this is the
-one OpenSSL problem `-or-later` cannot help with at all: there is no arm of the
-licence under which that combination works.
+The licensing reason for a floor at all: OpenSSL relicensed to Apache-2.0 at
+3.0.0. Versions **1.1.1 and earlier** carry the old dual OpenSSL/SSLeay
+licence, whose BSD-4-clause-style advertising requirement is incompatible with
+GPL version 2 **and** version 3. So this is the one OpenSSL problem
+`-or-later` cannot help with at all: there is no arm of the licence under
+which that combination works. Any 3.x would settle that.
 
-Today's image is `ubuntu:24.04` with OpenSSL 3.0.13, so it does not bite. Nothing
-enforces it. **[verified]**
+Why 3.5 and not 3.0: upstream support for the 3.0 series ended on 2026-09-07,
+so a 3.0 floor would admit a library that no longer gets security fixes. 3.5
+is the current long-term-support series, supported until 2030-04-08.
 
-Closing it: `find_package(OpenSSL 3.0 REQUIRED)` at each site, which turns a
-silent licensing landmine into a build error. Three commits, because
-`src/gwdiscord/` is committed separately.
+The toolchain image is `ubuntu:26.04`, which ships OpenSSL 3.5.5. Its CMake
+4.x no longer configures projects that declare a minimum below 3.5, and MySQL
+Connector/C++'s bundled protobuf declares 3.1, so the `Dockerfile` sets
+`CMAKE_POLICY_VERSION_MINIMUM=3.5`. **[verified]**
 
 ## 2. MariaDB PARSEC plugin is GPL-2.0-only with no exception — latent, one flag away
 

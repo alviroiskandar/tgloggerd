@@ -39,11 +39,16 @@ endif()
 # the resulting library has no Boost runtime dependency at all.
 # ---------------------------------------------------------------------------
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+# OpenSSL 3.5 at least: 1.1.1 and earlier are under the OpenSSL/SSLeay
+# licence, which no version of the GPL can be combined with, and 3.0 to 3.4
+# are out of upstream support; 3.5 is the long-term-support series.
+find_package(OpenSSL 3.5 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
-find_package(Boost QUIET)
+# CONFIG: Boost's own BoostConfig.cmake. CMake 3.30 and later deprecate the
+# FindBoost module (policy CMP0167) and warn on every configure that uses it.
+find_package(Boost CONFIG QUIET)
 if(NOT Boost_FOUND)
 	# Ubuntu's libboost-dev does not always ship a CMake config; the
 	# headers are all we need, so locate them directly.

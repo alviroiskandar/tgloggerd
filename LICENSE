@@ -66,16 +66,18 @@ later.
     GPL-2.0-only -- including everything on upstream/master and the existing
     release tags -- keep the terms they were given.
 
-Two things this does not fix.  Nothing in the build pins OpenSSL >= 3.0
-(`find_package(OpenSSL ...)` at CMakeLists.txt, src/gwdiscord/CMakeLists.txt
-and web/cmake/FindMySQL.cmake all take any version), and OpenSSL 1.1.1 and
-earlier carry the old dual OpenSSL/SSLeay license, whose advertising clause
-is incompatible with version 2 and version 3 alike.  And "or later" leaves
-the version 2 arm unusable for linked binaries, which an explicit OpenSSL
-linking exception would restore; adding one needs both copyright holders,
-which will never be easier than it is now.
+OpenSSL 1.1.1 and earlier carry the old dual OpenSSL/SSLeay license, whose
+advertising clause is incompatible with version 2 and version 3 alike, so
+the build requires OpenSSL 3.5 (`find_package(OpenSSL 3.5 REQUIRED)` at
+CMakeLists.txt, src/gwdiscord/CMakeLists.txt and web/cmake/FindMySQL.cmake)
+and an older library stops the configure.
 
-Those two and everything else this change left open are written up in
+One thing this does not fix: "or later" leaves the version 2 arm unusable
+for linked binaries, which an explicit OpenSSL linking exception would
+restore; adding one needs both copyright holders, which will never be
+easier than it is now.
+
+That and everything else this change left open are written up in
 docs/licensing-open-issues.md, with the evidence for each and what closing
 it would take.
 
