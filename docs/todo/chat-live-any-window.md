@@ -17,10 +17,13 @@ result only after a reload.
   ([proposal](../design/proposals/chat-live-any-window.md)), its
   decision
   ([2026-11-21-chat-live-public.md](../design/decisions/2026-11-21-chat-live-public.md)),
-  signed-in windows not at the newest (React) and the faults the
-  review found (Go).
-- Left: signed-out viewers of exposed groups, Go (webapi) and React,
-  as the decision says.
+  signed-in windows not at the newest (React), the faults the review
+  found (Go), and signed-out viewers of exposed groups in Go (GET
+  /api/events without a session, the shared window cache).
+- Left: signed-out viewers of exposed groups in React, as the decision
+  says (section 8.2 of the proposal, "Client"): subscribe for a public
+  view, honour the first resync's refetch_interval, refetch every 30 s
+  at most when refused or disconnected, never act on `revoked`.
 
 ## Depends on
 
