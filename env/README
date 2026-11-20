@@ -22,9 +22,9 @@ tgloggerd needs the MySQL root password for the web table grants it
 applies after its migrations (run.sh, apply_web_grants; web/README.web,
 "Database and accounts"), and mysql needs the web passwords for its
 first-initialization hook (docker/mysql/init/10-web-users.sh). The
-render service gets none of these files, and neither does the optional
-opensearch service, which needs no secret while its security plugin is
-off (webapi/README, "Search engine").
+render and stills services get none of these files, and neither does
+the optional opensearch service, which needs no secret while its
+security plugin is off (webapi/README, "Search engine").
 
 Each secret is in one file only, so changing a password means changing
 one file. A setting holds no secret, so a new one goes to settings.env;
