@@ -1,5 +1,7 @@
 // Events of GET /api/events (web-live.md section 3). They name what
 // changed, never the content; the page refetches through the API.
+import type { S } from '../api/schema.ts';
+
 export type LiveKind =
 	| 'message.new' | 'message.edited' | 'message.deleted' | 'file.stored'
 	| 'user.updated' | 'group.updated' | 'stats.changed'
@@ -8,20 +10,9 @@ export type LiveKind =
 
 export const LIVE_KINDS: LiveKind[] = ['message.new', 'message.edited', 'message.deleted', 'file.stored', 'user.updated', 'group.updated', 'stats.changed', 'bot.updated', 'resync', 'session'];
 
-export interface LiveEvent {
-	seq: number;
-	kind: LiveKind;
-	chat_id?: number;
-	message_id?: number;
-	user_id?: number;
-	file_id?: number;
-	bot_id?: number;
-	chat_ids?: number[];
-	user_ids?: number[];
-	fields?: string[];
-	// session events: why the stream ends.
-	reason?: 'scope_changed' | 'revoked';
-}
+// The schema's event, with the kinds the client acts on (others, like
+// hello, are not listened to). Signed-out streams carry no seq.
+export type LiveEvent = Omit<S['LiveEvent'], 'kind'> & { kind: LiveKind };
 
 // The topics an event belongs to (web-live-client.md section 3).
 // resync and session reach every subscriber.

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BACKOFF_MAX_MS, BACKOFF_MIN_MS, LiveManager, jittered, type Clock, type SourceLike } from './manager.ts';
 import { Refetcher, type Visibility } from './refetch.ts';
+import { FetchSource } from './fetchsource.ts';
 import type { LiveEvent } from './events.ts';
 
 const clock: Clock = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (id) => clearTimeout(id as never) };
@@ -10,6 +11,7 @@ class FakeSource implements SourceLike {
 	onopen: ((ev: Event) => unknown) | null = null;
 	onerror: ((ev: Event) => unknown) | null = null;
 	closed = false;
+	retryAfterMs: number | undefined;
 	private ls = new Map<string, ((ev: { data: string }) => void)[]>();
 	constructor(public url: string) {}
 	addEventListener(kind: string, fn: (ev: { data: string }) => void) { this.ls.set(kind, [...(this.ls.get(kind) ?? []), fn]); }
@@ -20,9 +22,9 @@ class FakeSource implements SourceLike {
 }
 
 // random: the back-off's jitter; at 1 each wait is the whole step.
-function setup(random: () => number = () => 1) {
+function setup(random: () => number = () => 1, signedOut = false) {
 	const sources: FakeSource[] = [];
-	const m = new LiveManager({ open: (url) => { const s = new FakeSource(url); sources.push(s); return s; }, clock, random });
+	const m = new LiveManager({ open: (url) => { const s = new FakeSource(url); sources.push(s); return s; }, clock, random, signedOut });
 	const states: string[] = [];
 	m.onState((s) => states.push(s));
 	return { m, sources, states, last: () => sources[sources.length - 1]! };
@@ -147,6 +149,114 @@ describe('LiveManager', () => {
 		vi.advanceTimersByTime(300);
 		last().fail(true);
 		expect(states.at(-1)).toBe('polling');
+	});
+});
+
+// A signed-out stream: no seqs (no resuming, every open a resync from
+// the server) and the server's Retry-After on a refusal.
+describe('LiveManager, signed out', () => {
+	it('never asks to resume and keeps no seq', () => {
+		const { m, sources } = setup(() => 1, true);
+		const un = m.subscribe(['chat:-1'], () => {});
+		vi.advanceTimersByTime(300);
+		sources[0]!.openNow();
+		// Even a stray seq is not kept.
+		sources[0]!.emit({ seq: 41, kind: 'message.new', chat_id: -1, message_id: 5 });
+		un();
+		m.subscribe(['chat:-2'], () => {});
+		vi.advanceTimersByTime(300);
+		expect(sources[1]!.url).not.toContain('last=');
+		sources[1]!.fail(true);
+		vi.advanceTimersByTime(BACKOFF_MAX_MS);
+		expect(sources[2]!.url).not.toContain('last=');
+	});
+
+	it('delivers every event, none of which has a seq', () => {
+		const { m, last } = setup(() => 1, true);
+		const fn = vi.fn();
+		m.subscribe(['chat:-1'], fn);
+		vi.advanceTimersByTime(300);
+		last().openNow();
+		last().emit({ kind: 'resync', refetch_interval: 5 });
+		last().emit({ kind: 'message.new', chat_id: -1, message_id: 5 });
+		last().emit({ kind: 'message.new', chat_id: -1, message_id: 6 });
+		last().emit({ seq: 7, kind: 'message.new', chat_id: -1, message_id: 7 });
+		last().emit({ seq: 7, kind: 'message.new', chat_id: -1, message_id: 8 });
+		expect(fn.mock.calls.map((c) => c[0].message_id ?? c[0].kind)).toEqual(['resync', 5, 6, 7, 8]);
+	});
+
+	it('leaves the resync on a reconnect to the server, which sends one', () => {
+		const { m, last } = setup(() => 1, true);
+		const fn = vi.fn();
+		m.subscribe(['chat:-1'], fn);
+		vi.advanceTimersByTime(300);
+		last().fail(true);
+		vi.advanceTimersByTime(BACKOFF_MIN_MS);
+		last().openNow();
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('waits for the Retry-After of a refusal, with jitter on top', () => {
+		const rolls = [0, 0, 1, 1];
+		const { m, sources, last } = setup(() => rolls.shift() ?? 1, true);
+		m.subscribe(['chat:-1'], () => {});
+		vi.advanceTimersByTime(300);
+		const waits: number[] = [];
+		for (let i = 0; i < 2; i++) {
+			const n = sources.length;
+			last().retryAfterMs = 20_000;
+			last().fail(true);
+			let t = 0;
+			while (sources.length === n && t < 2 * BACKOFF_MAX_MS) { vi.advanceTimersByTime(1); t++; }
+			waits.push(t);
+		}
+		// Never before 20 s; the jitter adds 1.25 to 2.5 s.
+		expect(waits).toEqual([21250, 22500]);
+	});
+});
+
+// The fetch-read stream of signed-out viewers.
+describe('FetchSource', () => {
+	const sse = (chunks: string[]) => new Response(new ReadableStream({ start(c) { for (const x of chunks) c.enqueue(new TextEncoder().encode(x)); c.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
+
+	it('parses frames split across chunks, without ids, and fails when cut off', async () => {
+		vi.useRealTimers();
+		const asked: RequestInit[] = [];
+		const s = new FetchSource('/api/events?topics=chat:-1', async (_u, init) => { asked.push(init!); return sse(['retry: 5000\n\nevent: resync\ndata: {"kind":"res', 'ync","refetch_interval":5}\n\n: heartbeat\n\nevent: message.new\r\ndata: {"kind":"message.new","message_id":3}\r\n\r\n']); });
+		const got: string[] = [];
+		s.addEventListener('resync', (e) => got.push(e.data));
+		s.addEventListener('message.new', (e) => got.push(e.data));
+		const opened = vi.fn();
+		s.onopen = opened;
+		const failed = new Promise((r) => { s.onerror = r; });
+		await failed;
+		expect(opened).toHaveBeenCalledTimes(1);
+		expect(got.map((d) => JSON.parse(d))).toEqual([{ kind: 'resync', refetch_interval: 5 }, { kind: 'message.new', message_id: 3 }]);
+		expect(s.readyState).toBe(2);
+		expect(new Headers(asked[0]!.headers).get('last-event-id')).toBeNull();
+	});
+
+	it('keeps the Retry-After of a refusal', async () => {
+		vi.useRealTimers();
+		const s = new FetchSource('/api/events', async () => new Response('{"error":"unavailable"}', { status: 503, headers: { 'retry-after': '30' } }));
+		const opened = vi.fn();
+		s.onopen = opened;
+		await new Promise((r) => { s.onerror = r; });
+		expect(s.readyState).toBe(2);
+		expect(s.retryAfterMs).toBe(30_000);
+		expect(opened).not.toHaveBeenCalled();
+	});
+
+	it('reports nothing once closed', async () => {
+		vi.useRealTimers();
+		let release: (r: Response) => void = () => {};
+		const s = new FetchSource('/api/events', () => new Promise((r) => { release = r; }));
+		const failed = vi.fn();
+		s.onerror = failed;
+		s.close();
+		release(sse(['event: resync\ndata: {}\n\n']));
+		await new Promise((r) => setTimeout(r, 20));
+		expect(failed).not.toHaveBeenCalled();
 	});
 });
 

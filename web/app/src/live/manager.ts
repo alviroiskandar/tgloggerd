@@ -3,6 +3,11 @@
 // one EventSource for the union, reconnects when the union changes, and
 // falls back to polling when the stream keeps failing. It never
 // refetches anything itself: subscribers do, through the API.
+//
+// A signed-out stream (signedOut) has no seqs: the manager sends no
+// last= and keeps none, and the server starts every open with a resync,
+// so each reconnect is one refetch. Its subscribers never poll the tail
+// every second; the chat refetches its window every 30 s meanwhile.
 import { LIVE_KINDS, topicsOf, type LiveEvent } from './events.ts';
 
 export type LiveState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'polling';
@@ -14,6 +19,9 @@ export interface SourceLike {
 	onerror: ((ev: Event) => unknown) | null;
 	addEventListener(kind: string, fn: (ev: { data: string; lastEventId?: string }) => void): void;
 	close(): void;
+	// A refusal's Retry-After, when the source can read it: the next
+	// attempt waits at least this long.
+	readonly retryAfterMs?: number;
 }
 
 export interface Clock {
@@ -30,6 +38,8 @@ export interface ManagerOptions {
 	// A number in [0, 1) for the back-off's jitter; Math.random unless
 	// a test needs it fixed.
 	random?: () => number;
+	// A signed-out viewer's stream: no seqs (see above).
+	signedOut?: boolean;
 }
 
 type Handler = (e: LiveEvent) => void;
@@ -56,6 +66,7 @@ export class LiveManager {
 	private readonly clock: Clock;
 	private readonly settleMs: number;
 	private readonly random: () => number;
+	private readonly signedOut: boolean;
 	private subs = new Set<Sub>();
 	private stateFns = new Set<(s: LiveState) => void>();
 	private src: SourceLike | null = null;
@@ -74,6 +85,7 @@ export class LiveManager {
 		this.clock = o.clock ?? realClock;
 		this.settleMs = o.settleMs ?? 300;
 		this.random = o.random ?? Math.random;
+		this.signedOut = !!o.signedOut;
 	}
 
 	subscribe(topics: string[], fn: Handler): () => void {
@@ -134,7 +146,7 @@ export class LiveManager {
 
 	private connect(key: string): void {
 		const q = new URLSearchParams({ topics: key });
-		if (this.seq) q.set('last', String(this.seq));
+		if (this.seq && !this.signedOut) q.set('last', String(this.seq));
 		const old = this.src;
 		const src = this.open(`${this.url}?${q}`);
 		this.src = src;
@@ -149,20 +161,21 @@ export class LiveManager {
 			this.backoff = BACKOFF_MIN_MS;
 			const back = this.state === 'polling';
 			this.setState('live');
-			if (back) this.dispatch({ seq: this.seq, kind: 'resync' });
+			// A signed-out stream starts with the server's own resync.
+			if (back && !this.signedOut) this.dispatch({ seq: this.seq, kind: 'resync' });
 		};
 		src.onerror = () => {
 			if (src !== this.src) { src.close(); return; }
 			const now = this.clock.now();
 			this.fails = [...this.fails.filter((t) => now - t < FAIL_WINDOW_MS), now];
-			if (this.state === 'polling' || src.readyState === 2 || this.fails.length >= FAILS_TO_POLL) this.toPolling();
+			if (this.state === 'polling' || src.readyState === 2 || this.fails.length >= FAILS_TO_POLL) this.toPolling(src.retryAfterMs);
 			else this.setState('reconnecting');
 		};
 		const onEvent = (ev: { data: string }) => {
 			if (src !== this.src && src !== old) return;
 			let e: LiveEvent;
 			try { e = JSON.parse(ev.data) as LiveEvent; } catch { return; }
-			if (typeof e.seq === 'number') {
+			if (typeof e.seq === 'number' && !this.signedOut) {
 				// Both streams may deliver an event while they overlap.
 				if (e.seq <= this.seq && e.kind !== 'resync') return;
 				this.seq = Math.max(this.seq, e.seq);
@@ -172,13 +185,14 @@ export class LiveManager {
 		for (const k of LIVE_KINDS) src.addEventListener(k, onEvent);
 	}
 
-	private toPolling(): void {
+	private toPolling(retryAfterMs = 0): void {
 		this.src?.close();
 		this.src = null;
 		this.fails = [];
 		this.setState('polling');
 		this.clock.clearTimeout(this.retry);
-		const wait = jittered(this.backoff, this.random);
+		// Never before the server's Retry-After, jitter on top of it.
+		const wait = Math.max(jittered(this.backoff, this.random), retryAfterMs ? retryAfterMs + jittered(BACKOFF_MIN_MS, this.random) / 2 : 0);
 		this.backoff = Math.min(BACKOFF_MAX_MS, this.backoff * 2);
 		this.retry = this.clock.setTimeout(() => {
 			const key = this.key();
