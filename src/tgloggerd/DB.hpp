@@ -303,6 +303,12 @@ public:
 	std::optional<StillCandidate> stillCandidate(uint64_t video_file_id);
 	/* Its statement, with the video's id as both parameters. */
 	static std::string stillCandidateSql(void);
+	/* The message's video if the message needs a still. */
+	std::optional<StillCandidate>
+	stillCandidateForMessage(bool is_group, int64_t chat_id,
+				 int64_t message_id);
+	/* Its statement, with chat_id and message_id as the parameters. */
+	static std::string stillMessageSql(bool is_group);
 	/* A generated still of the video that is in the store, if any. */
 	std::optional<uint64_t> findGeneratedStill(uint64_t video_file_id);
 	/*

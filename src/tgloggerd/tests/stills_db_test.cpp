@@ -287,6 +287,22 @@ int main()
 	      !db.stillCandidate(vD) && !db.stillCandidate(doc),
 	      "vB, vI, vD and the document do not");
 
+	printf("one message:\n");
+	{
+		auto a = db.stillCandidateForMessage(true, kGroup, 1);
+		auto l = db.stillCandidateForMessage(false, kUser, 2);
+		CHECK(a && a->video_file_id == vA && a->duration == 3 &&
+		      l && l->video_file_id == vL && l->kind == "animation",
+		      "a message that needs a still gives its video");
+		CHECK(!db.stillCandidateForMessage(true, kGroup, 3) &&
+		      !db.stillCandidateForMessage(true, kGroup, 8) &&
+		      !db.stillCandidateForMessage(true, kGroup, 10) &&
+		      !db.stillCandidateForMessage(true, kGroup, 16) &&
+		      !db.stillCandidateForMessage(false, kUser, 99),
+		      "one with a thumbnail, a still sticker, a document or"
+		      " none at all gives nothing");
+	}
+
 	printf("dry-run counts:\n");
 	{
 		std::map<std::pair<std::string, std::string>,
@@ -436,6 +452,27 @@ int main()
 			      { "fk_group_messages_file/ref",
 				"fk_private_messages_file/ref" }),
 		      "one video's messages read by their file_id");
+
+		/* The check of one message: by its unique key. */
+		for (bool group : { true, false }) {
+			std::string q = DB::stillMessageSql(group);
+			q.replace(q.find('?'), 1, std::to_string(group ? kGroup : kUser));
+			q.replace(q.find('?'), 1, "1");
+			std::set<std::string> k;
+			for (const auto &r : raw.query("EXPLAIN FORMAT=TRADITIONAL " + q))
+				if (r.size() >= 7)
+					k.insert(r[2].value_or("NULL") + ":" +
+						 r[6].value_or("NULL") + "/" +
+						 r[4].value_or("NULL"));
+			for (const auto &x : k)
+				printf("  one message: %s\n", x.c_str());
+			const std::string want = std::string("m:uq_") +
+				(group ? "group" : "private") +
+				"_messages_chat_msg/const";
+			CHECK(k.count(want) == 1, group
+			      ? "a group message read by its unique key"
+			      : "a private message read by its unique key");
+		}
 	}
 
 	printf("the video's row deleted:\n");

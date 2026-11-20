@@ -21,11 +21,12 @@ constexpr const char *kKinds =
 /*
  * The generated-still selection of one message table @t, whose rows
  * telegram_message_files points at through @key: FROM and WHERE, the
- * table aliased m, its main file v. @index is the index the message rows
- * come off: the (content_type, date) one for the whole pass, the file_id
- * one for a single video (then @by_file adds the file_id condition). The
- * video row is read by its primary key, the message files by their
- * unique key (key, role, position) and their file rows by primary key.
+ * table aliased m, its main file v. @by says which rows: all of them, off
+ * the (content_type, date) index; those of one video, off the file_id
+ * index (a parameter: the video's id); or one message, by its unique
+ * key (parameters: chat_id, message_id). The video row is read by its
+ * primary key, the message files by their unique key (key, role,
+ * position) and their file rows by primary key.
  *
  * A message is a candidate while it is live, is one of the kinds above
  * (a sticker when its file is .webm), its main file's bytes are in the
@@ -34,17 +35,23 @@ constexpr const char *kKinds =
  * again. A thumbnail row whose file row is gone (file_id NULL) does not
  * count either.
  */
-std::string still_from(const char *t, const char *key, bool by_file)
+enum class By { All, File, Message };
+
+std::string still_from(const char *t, const char *key, By by)
 {
 	const std::string tt = t;
 	const std::string short_name = tt.substr(sizeof("telegram_") - 1);
-	const std::string index = by_file
-		? "fk_" + short_name + "_file"
-		: "idx_" + short_name + "_ctype_date";
+	const std::string index =
+		by == By::All  ? "idx_" + short_name + "_ctype_date" :
+		by == By::File ? "fk_" + short_name + "_file" :
+				 "uq_" + short_name + "_chat_msg";
+	const char *cond =
+		by == By::All  ? "" :
+		by == By::File ? " AND m.file_id = ?" :
+				 " AND m.chat_id = ? AND m.message_id = ?";
 	return " FROM " + tt + " m FORCE INDEX (" + index + ")"
 	       " JOIN telegram_files v ON v.id = m.file_id"
-	       " WHERE m.content_type IN " + std::string(kKinds) +
-	       (by_file ? " AND m.file_id = ?" : "") +
+	       " WHERE m.content_type IN " + std::string(kKinds) + cond +
 	       " AND m.deleted_at IS NULL"
 	       " AND v.on_disk = 1 AND v.sha256 IS NOT NULL"
 	       " AND (m.content_type <> 'sticker' OR v.file_ext = 'webm')"
@@ -81,10 +88,10 @@ std::string DB::stillCandidatesSql(void)
 {
 	return std::string(kStillColumns) +
 	       still_from("telegram_group_messages", "group_message_id",
-			  false) +
+			  By::All) +
 	       " UNION ALL " + kStillColumns +
 	       still_from("telegram_private_messages", "private_message_id",
-			  false);
+			  By::All);
 }
 
 std::vector<StillCandidate> DB::listStillCandidates(void)
@@ -121,12 +128,12 @@ std::vector<StillCount> DB::countStillCandidates(void)
 		"SELECT 'group', m.content_type, COUNT(*),"
 		" COUNT(DISTINCT m.file_id)" +
 		still_from("telegram_group_messages", "group_message_id",
-			   false) +
+			   By::All) +
 		" GROUP BY m.content_type"
 		" UNION ALL SELECT 'private', m.content_type, COUNT(*),"
 		" COUNT(DISTINCT m.file_id)" +
 		still_from("telegram_private_messages", "private_message_id",
-			   false) +
+			   By::All) +
 		" GROUP BY m.content_type");
 
 	std::vector<StillCount> out;
@@ -143,10 +150,10 @@ std::string DB::stillCandidateSql(void)
 {
 	return "(" + std::string(kStillColumns) +
 	       still_from("telegram_group_messages", "group_message_id",
-			  true) +
+			  By::File) +
 	       " LIMIT 1) UNION ALL (" + kStillColumns +
 	       still_from("telegram_private_messages", "private_message_id",
-			  true) +
+			  By::File) +
 	       " LIMIT 1)";
 }
 
@@ -154,6 +161,26 @@ std::optional<StillCandidate> DB::stillCandidate(uint64_t video_file_id)
 {
 	auto rows = db_.query(stillCandidateSql(),
 			      { video_file_id, video_file_id });
+	for (const auto &r : rows)
+		if (r[0].has_value())
+			return candidate_of(r);
+	return std::nullopt;
+}
+
+std::string DB::stillMessageSql(bool is_group)
+{
+	return std::string(kStillColumns) + (is_group
+		? still_from("telegram_group_messages", "group_message_id",
+			     By::Message)
+		: still_from("telegram_private_messages", "private_message_id",
+			     By::Message));
+}
+
+std::optional<StillCandidate>
+DB::stillCandidateForMessage(bool is_group, int64_t chat_id, int64_t message_id)
+{
+	auto rows = db_.query(stillMessageSql(is_group),
+			      { chat_id, message_id });
 	for (const auto &r : rows)
 		if (r[0].has_value())
 			return candidate_of(r);
