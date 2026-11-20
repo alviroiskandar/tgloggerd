@@ -33,11 +33,12 @@ namespace tgloggerd {
  * to the video's messages. It never runs on the TDLib loop or the write
  * queue, so storing messages does not wait for it.
  *
- * Work comes from two queues: the videos of the pass over the archive,
- * listed when the thread starts (newest first), and new messages whose
- * main file was stored (messageFileStored), which go first once they are
- * a little old, so a Telegram thumbnail stored just after the video is
- * seen first. Each is checked against the database again before a frame
+ * Work comes from three queues: the videos of the pass over the archive,
+ * listed when the thread starts (newest first); new messages whose main
+ * file was stored (messageFileStored), which go first once they are a
+ * little old, so a Telegram thumbnail stored just after the video is
+ * seen first; and the generated stills the storage janitor evicted
+ * (stillsEvicted), whose videos go before the pass's. Each is checked against the database again before a frame
  * is asked for (a new message by itself, cheaply, whatever its file is).
  * A video that already has a generated still gets it linked, not made
  * again. A video the service refuses is not asked for again until the
@@ -93,6 +94,14 @@ public:
 	void messageFileStored(bool is_group, int64_t chat_id,
 			       int64_t message_id);
 
+	/*
+	 * The storage janitor evicted these generated stills: take them
+	 * again from the videos they stand for (DB::listStillVideos). Up to
+	 * max_new stills and as many videos are queued; more wait for the
+	 * pass at the next start.
+	 */
+	void stillsEvicted(const std::vector<uint64_t> &still_ids);
+
 	/* The service's kind for a message's content_type; empty if none. */
 	static std::string kindOf(const std::string &content_type);
 
@@ -115,6 +124,8 @@ private:
 	};
 
 	void loop(void);
+	/* Queue the videos evicted still @still_id stands for. */
+	void queueStillVideos(uint64_t still_id);
 	Outcome process(const StillCandidate &c);
 	Outcome linkStill(uint64_t video_file_id, uint64_t still_id);
 	/* Wait until @t or stop; false when stopping. */
@@ -133,6 +144,11 @@ private:
 	std::deque<Fresh>	fresh_;
 	/* (chat_id, message_id) of fresh_; chat ids tell the tables apart. */
 	std::set<std::pair<int64_t, int64_t>> fresh_ids_;
+	/* Evicted generated stills, and the videos they stand for. */
+	std::deque<uint64_t>	evicted_;
+	std::unordered_set<uint64_t> evicted_ids_;
+	std::deque<uint64_t>	regen_;
+	std::unordered_set<uint64_t> regen_ids_;
 	/* Refused by the service; worker thread only. */
 	std::unordered_set<uint64_t> refused_;
 	size_t			backlog_total_ = 0;

@@ -161,6 +161,12 @@ bool StorageJanitor::evictOne(const EvictCandidate &c, bool dry_run, Sweep &s)
 		s.kept++;
 		return false;
 	}
+	if (c.generated && stills_fn_) {
+		if (stills_.size() < kMaxStills)
+			stills_.push_back(c.id);
+		else
+			stills_dropped_++;
+	}
 
 	/* A row with no digest has no blob (it should not be on_disk). */
 	if (c.sha256.empty())
@@ -198,6 +204,8 @@ StorageJanitor::Sweep StorageJanitor::sweep(bool dry_run)
 	s.dry_run = dry_run;
 	const char *verb = dry_run ? "would evict" : "evicted";
 	bool stopped = false;
+	stills_.clear();
+	stills_dropped_ = 0;
 
 	try {
 		StoreTotals tot = db_->storedTotals();
@@ -326,6 +334,16 @@ StorageJanitor::Sweep StorageJanitor::sweep(bool dry_run)
 			(unsigned long long)s.kept,
 			(unsigned long long)s.missing_blobs,
 			(unsigned long long)s.unlink_errors);
+
+	/* Not at shutdown: the stills worker is stopping too. */
+	if (!stopped && !stills_.empty()) {
+		pr_info(l_, "storage: %zu evicted generated still(s) to take"
+			" again%s", stills_.size(), stills_dropped_
+			? "; more wait for the stills pass at the next start"
+			: "");
+		stills_fn_(stills_);
+	}
+	stills_.clear();
 	return s;
 }
 

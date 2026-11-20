@@ -138,6 +138,8 @@ struct EvictCandidate {
 	uint64_t	file_size = 0;
 	/* As the database printed it; the eviction guard compares it back. */
 	std::string	accessed_at;
+	/* A still generated from a video (tg_file_id generated:...). */
+	bool		generated = false;
 };
 
 /*
@@ -329,6 +331,14 @@ public:
 	/* The messages (chat_id, message_id) whose thumbnail is @still_id. */
 	std::vector<std::pair<int64_t, int64_t>>
 	listStillMessages(uint64_t still_id);
+	/*
+	 * The videos a generated still @still_id stands for: the one it was
+	 * taken from and the main file of every message it is the thumbnail
+	 * of, each once.
+	 */
+	std::vector<uint64_t> listStillVideos(uint64_t still_id);
+	/* Its statement, with still_id as all three parameters. */
+	static std::string stillVideosSql(void);
 
 	/*
 	 * What a chat recheck needs of the stored messages of @chat_id

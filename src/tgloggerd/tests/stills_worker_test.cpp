@@ -8,7 +8,9 @@
  * service (docker/stills) whose store is a directory of this test. It
  * puts sample files into that store, records messages for them, runs the
  * worker and checks the stills it stores and links, the refusal of a file
- * that is no video, and a new message of a video that has its still. It
+ * that is no video, a new message of a video that has its still, and a
+ * still the StorageJanitor evicts, taken again unless its video went in
+ * the same sweep. It
  * writes rows under ids no real chat has and deletes them after; run it
  * only against a throwaway database and store:
  *
@@ -22,6 +24,7 @@
  */
 #include <tgloggerd/DB.hpp>
 #include <tgloggerd/StillsWorker.hpp>
+#include <tgloggerd/StorageJanitor.hpp>
 #include <tgloggerd/StoragePath.hpp>
 
 #include <openssl/evp.h>
@@ -276,6 +279,90 @@ int main()
 	{
 		std::lock_guard<std::mutex> lk(mtx);
 		CHECK(stores == 1, "without a second one being made");
+	}
+
+	printf("a still the janitor evicts:\n");
+	{
+		StorageJanitor::Config jc;
+		jc.storage_dir = store;
+		jc.retention_days = 1;
+		jc.sweep_secs = 0;
+		jc.dry_run = false;
+		StorageJanitor j(&db, nullptr, jc);
+		std::vector<std::vector<uint64_t>> handed;
+		j.setStillsEvicted([&](const std::vector<uint64_t> &ids) {
+			{
+				std::lock_guard<std::mutex> lk(mtx);
+				handed.push_back(ids);
+			}
+			w.stillsEvicted(ids);
+		});
+		j.start();
+		auto old = [&](uint64_t id) {
+			raw.execute("UPDATE telegram_files SET accessed_at ="
+				    " NOW() - INTERVAL 2 DAY WHERE id = ?", { id });
+		};
+		auto onDisk = [&](uint64_t id) {
+			return raw.query("SELECT on_disk FROM telegram_files"
+					 " WHERE id = ?", { id })[0][0] == "1";
+		};
+		auto sweep = [&](bool dry) {
+			j.requestSweep(dry);
+			return waitFor(30, [&] {
+				auto st = j.status();
+				return !st.pending && !st.sweeping && st.last &&
+				       st.last->dry_run == dry &&
+				       st.last->retention.files > 0;
+			});
+		};
+		auto handedCount = [&] {
+			std::lock_guard<std::mutex> lk(mtx);
+			return handed.size();
+		};
+		const std::string hex = *raw.query(
+			"SELECT LOWER(HEX(sha256)) FROM telegram_files WHERE id = ?",
+			{ still })[0][0];
+
+		old(still);
+		CHECK(sweep(true) && handedCount() == 0 && onDisk(still),
+		      "a dry run hands nothing on");
+		CHECK(sweep(false) && !onDisk(still) &&
+		      !fs::exists(blobPath(store, hex, "jpg")),
+		      "a real sweep evicts it");
+		{
+			std::lock_guard<std::mutex> lk(mtx);
+			CHECK(handed.size() == 1 &&
+			      handed[0] == std::vector<uint64_t>({ still }),
+			      "and hands it on once, after the sweep");
+		}
+		CHECK(waitFor(30, [&] { return onDisk(still); }) &&
+		      fs::exists(blobPath(store, hex, "jpg")) &&
+		      thumbOf(raw, kGroup, 1) == still &&
+		      thumbOf(raw, kUser, 1) == still &&
+		      thumbOf(raw, kGroup, 4) == still,
+		      "it is taken again, the same row, on every message");
+		CHECK(raw.query("SELECT accessed_at > NOW() - INTERVAL 1 HOUR"
+				" FROM telegram_files WHERE id = ?",
+				{ still })[0][0] == "1",
+		      "and fresh, the last a sweep would evict again");
+		{
+			std::lock_guard<std::mutex> lk(mtx);
+			CHECK(stores == 2, "by one more exchange");
+		}
+
+		old(still);
+		old(v);
+		CHECK(sweep(false) && !onDisk(still) && !onDisk(v),
+		      "a sweep that evicts the still and its video");
+		CHECK(waitFor(10, [&] { return handedCount() == 2; }),
+		      "hands the still on");
+		/* Paced at 10 ms: the worker had its chance by then. */
+		std::this_thread::sleep_for(std::chrono::seconds(2));
+		{
+			std::lock_guard<std::mutex> lk(mtx);
+			CHECK(!onDisk(still) && stores == 2 && !db.stillCandidate(v),
+			      "but it stays evicted: its video is gone too");
+		}
 	}
 
 	auto t0 = std::chrono::steady_clock::now();

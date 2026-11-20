@@ -145,19 +145,21 @@ private:
 	std::unique_ptr<ThreadPool> files_;
 
 	/*
-	 * Evicts files from the store by retention and by the total cap. Uses
-	 * db_ only; start() stops it before draining the pools. Declared after
-	 * db_ and before api_, whose storage routes call it.
-	 */
-	std::unique_ptr<StorageJanitor> janitor_;
-
-	/*
 	 * Generates stills for stored videos without a thumbnail
 	 * (TG_GENERATE_STILLS). Uses db_ and the store, and posts its events
-	 * to serial_; start() stops it with the janitor, before the pools
-	 * drain. Null while off.
+	 * to serial_; start() stops it right after the janitor, before the
+	 * pools drain. Declared before janitor_, which hands it the stills
+	 * it evicts, so it outlives it. Null while off.
 	 */
 	std::unique_ptr<StillsWorker> stills_;
+
+	/*
+	 * Evicts files from the store by retention and by the total cap. Uses
+	 * db_ and stills_; start() stops it before draining the pools.
+	 * Declared after db_ and stills_ and before api_, whose storage
+	 * routes call it.
+	 */
+	std::unique_ptr<StorageJanitor> janitor_;
 
 	/*
 	 * Fetches files from Telegram for the API's fetch route; stopped

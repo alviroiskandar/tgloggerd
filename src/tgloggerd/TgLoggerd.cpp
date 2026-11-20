@@ -1103,7 +1103,6 @@ int TgLoggerd::start(void)
 		env("TG_STORAGE_SWEEP_SECS", "600").c_str(), nullptr, 10);
 	sj_cfg.dry_run = env("TG_STORAGE_DRY_RUN", "1") != "0";
 	janitor_ = std::make_unique<StorageJanitor>(db_.get(), l_, sj_cfg);
-	janitor_->start();
 
 	/*
 	 * Stills taken from the stored bytes of the videos Telegram sent no
@@ -1154,7 +1153,13 @@ int TgLoggerd::start(void)
 		stills_->start();
 		pr_info(l_, "stills: generating stills over %s",
 			st_cfg.socket_path.c_str());
+		/* A still the janitor evicts is taken again at once. */
+		janitor_->setStillsEvicted(
+			[this](const std::vector<uint64_t> &ids) {
+				stills_->stillsEvicted(ids);
+			});
 	}
+	janitor_->start();
 
 	/*
 	 * Before anything else touches the contacts: a contact that an

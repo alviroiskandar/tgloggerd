@@ -632,10 +632,12 @@ at most 200 KB.
   table and kind). At start it lists the stored videos whose live
   messages need a still, newest first; a new message is looked at half
   a minute after its main file is stored or linked, so that a Telegram
-  thumbnail stored just after the video comes first. One video at a
-  time, about one a second, on a thread of its own: storing messages
-  never waits for it. A video the service refuses is not asked for
-  again until the next start.
+  thumbnail stored just after the video comes first; a generated still
+  the storage janitor evicts is taken again as soon as the sweep that
+  evicted it is over (docs/design/storage-cache.md section 9.1). One
+  video at a time, about one a second, on a thread of its own: storing
+  messages never waits for it. A video the service refuses is not asked
+  for again until the next start.
 - Which: a live message of those kinds whose main file is in the store
   (`on_disk`, with a digest) and that has no `cover` and no
   `thumbnail`, except a thumbnail that is a generated still evicted
@@ -652,8 +654,9 @@ at most 200 KB.
   Telegram, and a Telegram thumbnail stored later replaces it (the
   normal upsert of the role).
 - Fetching: a generated still is never asked of Telegram (the fetch
-  answers 410 `generated`, docs/internal-api.md); when evicted, the
-  pass takes it again (docs/design/storage-cache.md section 9.1).
+  answers 410 `generated`, docs/internal-api.md); when evicted, it is
+  taken again from the video (docs/design/storage-cache.md section
+  9.1).
 
 ### 4.4 Polls
 

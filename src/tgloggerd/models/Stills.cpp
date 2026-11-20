@@ -290,4 +290,31 @@ DB::listStillMessages(uint64_t still_id)
 	return out;
 }
 
+std::string DB::stillVideosSql(void)
+{
+	/* The still by its primary key, its links off idx_message_files_file
+	 * and their messages by primary key; UNION drops the repeats. */
+	return "SELECT generated_from_file_id FROM telegram_files"
+	       " WHERE id = ? AND generated_from_file_id IS NOT NULL"
+	       " UNION SELECT m.file_id FROM telegram_message_files x"
+	       " JOIN telegram_group_messages m ON m.id = x.group_message_id"
+	       " WHERE x.file_id = ? AND x.role = 'thumbnail'"
+	       " AND m.file_id IS NOT NULL"
+	       " UNION SELECT m.file_id FROM telegram_message_files x"
+	       " JOIN telegram_private_messages m ON m.id = x.private_message_id"
+	       " WHERE x.file_id = ? AND x.role = 'thumbnail'"
+	       " AND m.file_id IS NOT NULL";
+}
+
+std::vector<uint64_t> DB::listStillVideos(uint64_t still_id)
+{
+	auto rows = db_.query(stillVideosSql(),
+			      { still_id, still_id, still_id });
+	std::vector<uint64_t> out;
+	for (const auto &r : rows)
+		if (r[0].has_value())
+			out.push_back(std::stoull(*r[0]));
+	return out;
+}
+
 } /* namespace tgloggerd */
