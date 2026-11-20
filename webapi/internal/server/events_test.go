@@ -712,3 +712,52 @@ func TestEventsWriteDeadline(t *testing.T) {
 	}
 	waitFor(t, "the slot", func() bool { return e.hub.Subscribers() == 0 })
 }
+
+// A signed-in viewer may read the public chat of an exposed group its
+// scope does not see, and its chat view subscribes to chat:<id>: the
+// group's message and file events reach it through that topic, and
+// nothing else widens (messages, stats, group:). A group withdrawn
+// from exposure ends the stream with scope_changed.
+func TestLiveExposedChatTopic(t *testing.T) {
+	t.Parallel()
+	const hidden = int64(-1001000000005) // neither granted nor exposed
+	lg := testdb.New(t, testdb.Logger, "sample")
+	e := newLiveEnv(t, liveOpts{ro: lg.DB, cfg: LiveConfig{Recheck: 50 * time.Millisecond},
+		state: &webdb.SessionState{Role: "member", Active: true, SessionRow: 1,
+			GrantedGroups: []int64{kernelChat}}})
+	st := e.open(fmt.Sprintf("topics=messages,stats,chat:%d,chat:%d,group:%d",
+		gnuWeeb, hidden, gnuWeeb))
+	st.expect("100", "hello")
+	broad := e.open("topics=messages")
+	broad.expect("100", "hello")
+
+	e.conn.Send(live.Event{Seq: 101, Kind: live.KindMessageNew, ChatID: hidden, MessageID: 1})
+	e.conn.Send(live.Event{Seq: 102, Kind: live.KindGroupUpdated, ChatID: gnuWeeb})
+	e.conn.Send(live.Event{Seq: 103, Kind: live.KindStatsChanged, ChatIDs: []int64{gnuWeeb}})
+	e.conn.Send(live.Event{Seq: 104, Kind: live.KindMessageNew, ChatID: gnuWeeb, MessageID: 2})
+	e.conn.Send(live.Event{Seq: 105, Kind: live.KindMessageEdited, ChatID: gnuWeeb, MessageID: 2})
+	e.conn.Send(live.Event{Seq: 106, Kind: live.KindFileStored, ChatID: gnuWeeb, MessageID: 2, FileID: 9})
+	e.conn.Send(live.Event{Seq: 107, Kind: live.KindMessageDeleted, ChatID: gnuWeeb, MessageID: 2})
+	e.conn.Send(live.Event{Seq: 108, Kind: live.KindMessageNew, ChatID: kernelChat, MessageID: 3})
+
+	if ev := st.expect("104", "message.new"); ev.ChatID != gnuWeeb {
+		t.Fatalf("%+v", ev)
+	}
+	st.expect("105", "message.edited")
+	st.expect("106", "file.stored")
+	st.expect("107", "message.deleted")
+	st.expect("108", "message.new")
+	// messages alone does not reach the exposed group.
+	if ev := broad.expect("108", "message.new"); ev.ChatID != kernelChat {
+		t.Fatalf("%+v", ev)
+	}
+
+	if _, err := lg.DB.Exec("DELETE FROM telegram_public_groups WHERE group_id = ?", gnuWeeb); err != nil {
+		t.Fatal(err)
+	}
+	f := st.next()
+	if f.event != "session" || f.data != `{"kind":"session","reason":"scope_changed"}` {
+		t.Fatalf("after the withdrawal: %+v", f)
+	}
+	st.ended()
+}
