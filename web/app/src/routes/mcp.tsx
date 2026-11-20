@@ -1,7 +1,7 @@
 // Integrations > MCP: the exposure allowlist and the access tokens
 // (web/docs/mcp.md). Exposing a group also publishes its chat on the web.
 import { useState } from 'react';
-import { ArrowRight, ArrowRightLeft, Check, Copy, Globe, KeyRound, Pencil, Plus, ShieldAlert, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowRight, ArrowRightLeft, Check, Copy, Globe, KeyRound, ListFilter, Pencil, Plus, ShieldAlert, Trash2, TriangleAlert } from 'lucide-react';
 import Shell from '../ui/Shell.tsx';
 import { Link, useNav } from '../nav.tsx';
 import { Avatar, Btn, Card, PageHead, Pill } from '../ui/primitives.tsx';
@@ -13,7 +13,7 @@ import { ago, compact, fmt } from '../format.ts';
 import type { PageData } from '../page.ts';
 import type { GroupSummary } from '../types.ts';
 import type { RouteDef } from './index.tsx';
-import { ScopeSummary } from './mcp-scope.tsx';
+import { ScopeEditor, ScopeSummary, blockedPrivate, sameScope, scopeRefs, type ScopeEntry } from './mcp-scope.tsx';
 import type { S } from '../api/schema.ts';
 
 export type McpIndexProps = S['McpIndexProps'];
@@ -152,6 +152,14 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 	// The token being given to another owner (superadmins), and to whom.
 	const [moving, setMoving] = useState<Token | null>(null);
 	const [to, setTo] = useState('');
+	// The new token's scope, and the token whose scope is being edited
+	// with its draft.
+	const [scope, setScope] = useState<ScopeEntry[]>([]);
+	const [scoping, setScoping] = useState<Token | null>(null);
+	const [scopeDraft, setScopeDraft] = useState<ScopeEntry[]>([]);
+	const opts = page.props.scope_options;
+	// The new token's owner as a person: whether it may hold private chats.
+	const ownerOf = (id: number) => owners.find((o) => o.id === id) ?? { id, name: '', role: v.account?.role };
 	const refresh = () => navigate(page.url, { replace: true, scroll: false });
 	const transfer = async () => {
 		setErr('');
@@ -161,11 +169,18 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 		setErr('');
 		try { await ok(api.PATCH('/api/mcp/tokens/{id}', { params: { path: { id: renaming!.id } }, body: { name: draft } })); setRenaming(null); refresh(); } catch (x) { setErr(errText(x)); }
 	};
+	// Sent only when it changed; [] reads every exposed group again.
+	const saveScope = async () => {
+		setErr('');
+		if (sameScope(scopeDraft, scoping!.scope)) { setScoping(null); return; }
+		try { await ok(api.PATCH('/api/mcp/tokens/{id}', { params: { path: { id: scoping!.id } }, body: { scope: scopeRefs(scopeDraft) } })); setScoping(null); refresh(); } catch (x) { setErr(errText(x)); }
+	};
 	const mint = async () => {
 		setErr('');
 		try {
-			const r = await ok(api.POST('/api/mcp/tokens', { body: owner === me ? { name } : { name, owner_id: owner } }));
-			setMinting(false); setCopied(false); setMinted(r.token); setName(''); setOwner(me); refresh();
+			const body = { name, ...(owner === me ? {} : { owner_id: owner }), ...(scope.length ? { scope: scopeRefs(scope) } : {}) };
+			const r = await ok(api.POST('/api/mcp/tokens', { body }));
+			setMinting(false); setCopied(false); setMinted(r.token); setName(''); setOwner(me); setScope([]); refresh();
 		} catch (x) { setErr(errText(x)); }
 	};
 	const revoke = async (id: number) => { try { await ok(api.POST('/api/mcp/tokens/{id}/revoke', { params: { path: { id } } })); refresh(); } catch (x) { setErr(errText(x)); } };
@@ -173,7 +188,7 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 		<Shell crumbs={[['MCP', '/mcp-admin'], ['Access tokens', null]]}>
 			<PageHead title="Access tokens" sub="A token reads every exposed group unless its scope narrows it, so treat one like a password."
 				actions={<Btn primary icon={Plus} onClick={() => setMinting(true)}>Mint a token</Btn>} />
-			{err && !minting && !renaming && !moving && <div className="a-banner warn" role="alert"><TriangleAlert size={15} /><span>{err}</span></div>}
+			{err && !minting && !renaming && !moving && !scoping && <div className="a-banner warn" role="alert"><TriangleAlert size={15} /><span>{err}</span></div>}
 			{minted && (
 				<div className="a-card a-minted">
 					<div className="a-cardhead"><h2><KeyRound size={15} /> Copy this token now</h2></div>
@@ -195,7 +210,7 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 								<td title={t.created}>{ago(t.created, v)}</td>
 								<td>{t.last_used ? ago(t.last_used, v) : <span className="a-muted">never</span>}</td>
 								<td>{t.revoked ? <span className="a-muted">revoked {ago(t.revoked, v)}</span> : <Pill tone="ok">active</Pill>}</td>
-								<td className="a-rowactions"><Btn ghost icon={Pencil} onClick={() => { setErr(''); setDraft(t.name); setRenaming(t); }}>Rename</Btn>{page.props.can_transfer && <Btn ghost icon={ArrowRightLeft} onClick={() => { setErr(''); setTo(''); setMoving(t); }}>Transfer</Btn>}{!t.revoked && <Btn ghost danger onClick={() => { if (confirm(`Revoke ${t.name || 'this token'}? Clients using it stop working at once.`)) void revoke(t.id); }}>Revoke</Btn>}</td>
+								<td className="a-rowactions"><Btn ghost icon={Pencil} onClick={() => { setErr(''); setDraft(t.name); setRenaming(t); }}>Rename</Btn>{!t.revoked && <Btn ghost icon={ListFilter} onClick={() => { setErr(''); setScopeDraft(t.scope); setScoping(t); }}>Scope</Btn>}{page.props.can_transfer && <Btn ghost icon={ArrowRightLeft} onClick={() => { setErr(''); setTo(''); setMoving(t); }}>Transfer</Btn>}{!t.revoked && <Btn ghost danger onClick={() => { if (confirm(`Revoke ${t.name || 'this token'}? Clients using it stop working at once.`)) void revoke(t.id); }}>Revoke</Btn>}</td>
 							</tr>
 						))}</tbody>
 					</table>
@@ -204,7 +219,7 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 			<p className="a-muted a-foot">Revoking keeps the row for the audit trail; the token stops working at once.</p>
 			{minting && (
 				<Modal title="Mint a token" onClose={() => setMinting(false)}
-					footer={<><span className="a-grow" /><Btn ghost onClick={() => setMinting(false)}>Cancel</Btn><Btn primary onClick={() => void mint()}>Mint</Btn></>}>
+					footer={<><span className="a-grow" /><Btn ghost onClick={() => setMinting(false)}>Cancel</Btn><Btn primary disabled={blockedPrivate(scope, opts, ownerOf(owner)).length > 0} onClick={() => void mint()}>Mint</Btn></>}>
 					{err && <div className="a-banner warn" role="alert"><TriangleAlert size={15} /><span>{err}</span></div>}
 					<Field label="Name" hint="A label, so this one can be revoked later without guessing which is which."><input id="mcp-token-label" name="mcp-token-label" value={name} onChange={(e) => setName(e.target.value)} maxLength={64} {...NO_FILL} /></Field>
 					{owners.length > 1 && (
@@ -214,6 +229,15 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 							</select>
 						</Field>
 					)}
+					<ScopeEditor value={scope} onChange={setScope} options={opts} owner={ownerOf(owner)} />
+				</Modal>
+			)}
+			{scoping && (
+				<Modal title={`Scope of ${scoping.name || 'this token'}`} onClose={() => setScoping(null)}
+					footer={<><span className="a-grow" /><Btn ghost onClick={() => setScoping(null)}>Cancel</Btn><Btn primary disabled={blockedPrivate(scopeDraft, opts, scoping.owner).length > 0} onClick={() => void saveScope()}>Save</Btn></>}>
+					{err && <div className="a-banner warn" role="alert"><TriangleAlert size={15} /><span>{err}</span></div>}
+					<p className="a-muted sm">What the token reads, from its next request on. Clients keep their token.</p>
+					<ScopeEditor value={scopeDraft} onChange={setScopeDraft} options={opts} owner={scoping.owner} />
 				</Modal>
 			)}
 			{renaming && (

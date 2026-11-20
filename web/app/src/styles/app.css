@@ -765,6 +765,12 @@
 .app .a-tokscope-more { border: 0; background: none; padding: 0 4px; color: var(--accent-text); font-size: 12px; cursor: pointer; }
 .app .a-tokscope-more:hover { text-decoration: underline; }
 .app .a-tokscope-none { display: inline-flex; align-items: center; gap: 4px; flex-basis: 100%; color: var(--danger); font-size: 12px; }
+.app .a-tokscope-edit { display: grid; gap: 12px; }
+.app .a-tokscope-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.app .a-tokscope-list li { display: inline-flex; align-items: center; gap: 2px; }
+.app .a-tokscope-list .a-pill { margin-right: 0; }
+.app .a-tokscope-uid { display: flex; gap: 8px; }
+.app .a-tokscope-uid input { flex: 1; min-width: 0; }
 .app .a-people { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
 .app .a-people li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
 .app .a-people li > .a-grow { display: flex; flex-direction: column; }
