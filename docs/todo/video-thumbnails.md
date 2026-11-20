@@ -30,11 +30,10 @@ in the files grid and preview. Left:
   store its thumbnail through the fetch path, under the store's cap.
 - Frames: a still taken from the stored bytes (ffmpeg, in a container
   of its own, never in the web service's request path) for videos
-  with neither a cover nor a Telegram thumbnail, if the project owner
-  decides to generate them; this version uses only what Telegram
-  sends.
-- Video avatars in the users' and groups' photo carousels, and search
-  and list results that show media: not looked at yet.
+  with neither a cover nor a Telegram thumbnail, as decided in
+  [2026-11-20-video-generated-stills.md](../design/decisions/2026-11-20-video-generated-stills.md).
+- Search and list results that show media: not looked at yet. Video
+  avatars are item `profile-photo-videos`.
 - Not in scope: animated (.tgs) stickers, which the chat already plays
   with Lottie; a thumbnail for them is a separate question.
 
@@ -56,5 +55,5 @@ Nothing.
 
 - Old rows have their thumbnails, or the project owner has decided
   they need none.
-- The project owner has decided on generated frames, and they are
-  built if wanted.
+- Stored videos without a cover or a Telegram thumbnail have a
+  generated still.
