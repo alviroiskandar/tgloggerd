@@ -18,8 +18,11 @@ export function routeOf(page: PageData) {
 }
 
 function LiveRoot({ children }: { children: ReactNode }) {
-	const { viewer } = useNav();
-	return <LiveProvider enabled={viewer.signed_in}><EntityProvider enabled={viewer.signed_in}><PageLive>{children}</PageLive></EntityProvider></LiveProvider>;
+	const { viewer, page } = useNav();
+	// Signed out, only an exposed group's public chat has a stream; every
+	// other signed-out page has none.
+	const mode = viewer.signed_in ? 'signed-in' : page.route === 'group_chat' ? 'signed-out' : null;
+	return <LiveProvider mode={mode}><EntityProvider enabled={viewer.signed_in}><PageLive>{children}</PageLive></EntityProvider></LiveProvider>;
 }
 
 function Current() {
