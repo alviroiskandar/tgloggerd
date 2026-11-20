@@ -581,6 +581,16 @@ page's loader reads its first window through the same code. after=0
 is the oldest messages, and after_ts=<unix time> starts at the first
 message sent then or later, as Drogon's after_ts did.
 
+Signed-out visitors (an exposed group's public chat) are answered from
+a cache they share (internal/server/publicwindow.go): their live pages
+all refetch the same windows on the same events, and a signed-out
+window depends only on the chat and the query (its file links are
+tokens that do not depend on the request). An answer is kept for
+WEBAPI_LIVE_PUBLIC_CACHE_SECS, keyed by the chat and the window's
+parameters; while one is read, the visitors asking for the same window
+wait for that read. Only a 200 is kept, at most 4096 windows; signed-in
+viewers always read for themselves.
+
 Each message carries what the Drogon chat view shows
 (internal/server/chatmedia.go): how its media renders (image, video,
 animation, lottie, audio, file), its size, duration, a sticker's
@@ -1449,6 +1459,9 @@ and its own:
     WEBAPI_LIVE_PUBLIC_EXPOSURE_SECS  seconds between two readings of
                          the exposed groups while a signed-out stream is
                          open, default 10
+    WEBAPI_LIVE_PUBLIC_CACHE_SECS     seconds a signed-out chat window
+                         is kept for every visitor (Chats), default 2;
+                         0 reads every request
     WEBAPI_RECHECK       "0" asks the daemon for no chat rechecks
                          (Chats, "Recheck"); they also need
                          WEB_TGLOGGERD_API

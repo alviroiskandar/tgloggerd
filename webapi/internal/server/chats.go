@@ -765,13 +765,28 @@ func (s *Server) optionalSession(w http.ResponseWriter, r *http.Request) (sess *
 // visitors may read the chats of exposed groups, as the public chat
 // page does; for anything else they get 401, whether it exists or not,
 // so they learn nothing about it. A signed-in viewer gets 404 for what
-// its scope hides.
+// its scope hides. Visitors are answered from a cache they share
+// (publicwindow.go), since their live pages all refetch the same
+// windows at once.
 func (s *Server) getChatMessages(w http.ResponseWriter, r *http.Request) {
 	sess, sc, ok := s.optionalSession(w, r)
 	if !ok {
 		return
 	}
 	noStore(w)
+	if sess != nil {
+		s.chatMessages(w, r, sess, sc)
+		return
+	}
+	key := windowKey(r.PathValue("scope"), r.PathValue("id"), r.URL.Query())
+	s.public().window.serve(w, r, key, func(w http.ResponseWriter, r *http.Request) {
+		s.chatMessages(w, r, nil, sc)
+	})
+}
+
+// chatMessages answers a chat window for getChatMessages; sess is nil
+// for a signed-out visitor.
+func (s *Server) chatMessages(w http.ResponseWriter, r *http.Request, sess *auth.Session, sc scope.Scope) {
 	hidden := func() {
 		if sess == nil {
 			writeError(w, http.StatusUnauthorized, "unauthenticated", nil)

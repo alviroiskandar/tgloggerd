@@ -95,18 +95,23 @@ func (c PublicLiveConfig) withDefaults() PublicLiveConfig {
 // made on first use (Server.public), so a Server built without New
 // has it too.
 type publicLive struct {
-	cfg  PublicLiveConfig
-	expo *exposure
-	caps *visitorCaps
+	cfg    PublicLiveConfig
+	expo   *exposure
+	caps   *visitorCaps
+	window *windowCache
 }
 
 func (s *Server) public() *publicLive {
 	s.publicOnce.Do(func() {
 		cfg := s.liveCfg.Public.withDefaults()
 		s.publicState = &publicLive{
-			cfg:  cfg,
-			expo: newExposure(s, cfg.Exposure),
-			caps: newVisitorCaps(cfg),
+			cfg:    cfg,
+			expo:   newExposure(s, cfg.Exposure),
+			caps:   newVisitorCaps(cfg),
+			window: newWindowCache(cfg.Cache),
+		}
+		if s.clock != nil {
+			s.publicState.window.now = s.clock
 		}
 	})
 	return s.publicState
