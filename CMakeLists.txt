@@ -374,6 +374,21 @@ target_compile_options(photo_history_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(photo_history_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
+# Which messages the old-row thumbnail pass re-reads, and the plan of
+# that read, against a throwaway MySQL with every migration applied
+# (TGL_TEST_MYSQL_* as community_db_test); not part of the default build:
+#   cmake --build build --target thumbnails_db_test && build/thumbnails_db_test
+add_executable(thumbnails_db_test EXCLUDE_FROM_ALL
+	src/tgloggerd/tests/thumbnails_db_test.cpp
+	src/tgloggerd/DB.cpp
+	${TGLOGGERD_MODEL_SOURCES}
+	src/mysql/ConnectionPool.cpp
+	src/mysql/Database.cpp)
+target_include_directories(thumbnails_db_test PRIVATE src)
+target_compile_options(thumbnails_db_test PRIVATE -Wall -Wextra)
+target_link_libraries(thumbnails_db_test PRIVATE connector-jdbc
+	nlohmann_json::nlohmann_json Threads::Threads)
+
 # discordd -- the Discord daemon (logs Discord messages, forwards them to
 # Telegram). Added last: it links Td::TdStatic and connector-jdbc from the
 # subprojects above, and pulls in the self-contained gwdiscord library. Its

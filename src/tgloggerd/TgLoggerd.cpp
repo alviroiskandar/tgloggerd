@@ -370,6 +370,45 @@ int TgLoggerd::start(void)
 		}
 	}
 	/*
+	 * Opt-in, one-off pass for the videos, animations, video notes and
+	 * video stickers logged before the daemon stored their still
+	 * thumbnails: each is re-fetched and stored again, which stores the
+	 * still TDLib offers (docs/design/message-types.md section 4.9).
+	 * "dry" only counts them. It shares the repair's budget and runs
+	 * after it. A message that got its still is not listed again; one
+	 * whose video has no Telegram thumbnail is re-read on every start
+	 * while this is on, which is why it is off by default.
+	 */
+	const std::string thumbs = env("TG_THUMBNAILS_ON_START", "0");
+	if (thumbs == "dry") {
+		try {
+			uint64_t total = 0;
+			for (const auto &c : db_->countMessagesWithoutThumbnail()) {
+				pr_info(l_, "thumbnails (dry run): %llu %s %s"
+					" message(s) without a still",
+					(unsigned long long)std::get<2>(c),
+					std::get<0>(c).c_str(),
+					std::get<1>(c).c_str());
+				total += std::get<2>(c);
+			}
+			pr_info(l_, "thumbnails (dry run): %llu message(s) would"
+				" be re-fetched", (unsigned long long)total);
+		} catch (const std::exception &e) {
+			pr_error(l_, "thumbnails: could not count messages: %s",
+				 e.what());
+		}
+	} else if (thumbs != "0") {
+		try {
+			auto msgs = db_->listMessagesWithoutThumbnail();
+			pr_info(l_, "thumbnails: %zu message(s) have no still;"
+				" re-fetching them", msgs.size());
+			tdlib_->refetchThumbnails(std::move(msgs));
+		} catch (const std::exception &e) {
+			pr_error(l_, "thumbnails: could not list messages: %s",
+				 e.what());
+		}
+	}
+	/*
 	 * Handlers run on the event loop, where the models are already built
 	 * from td_api objects. They only enqueue the persistence work: DB
 	 * upserts go to serial_ (order preserved); media hashing goes to

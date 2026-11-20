@@ -212,3 +212,128 @@ describe('edits and deletions in the window', () => {
 		expect(order()).toHaveLength(all.length);
 	});
 });
+
+// A window that does not end at the newest (opened at a message or a
+// date, or scrolled back): it still follows the chat's events for the
+// messages it holds, but leaves what comes after it to the newer pages.
+describe('a window with newer pages', () => {
+	// Answers "around" as server() does, and "after" from the whole
+	// window, with more always beyond it.
+	function behindServer(msgs: () => ChatMessage[]) {
+		return fakeApi('superadmin', {
+			'GET /api/chats/group/:id/messages': (c) => {
+				const all = msgs();
+				const lim = Number(c.query.get('limit'));
+				const a = c.query.get('around');
+				if (a) {
+					const i = all.findIndex((m) => m.message_id >= Number(a));
+					const from = Math.max(0, i - Math.floor(lim / 2));
+					return { messages: all.slice(from, from + lim), has_older: true, has_newer: true };
+				}
+				const af = Number(c.query.get('after'));
+				return { messages: all.filter((m) => m.message_id > af).slice(0, lim), has_older: true, has_newer: true };
+			},
+		});
+	}
+
+	// Opened with has_newer and without auto-load, so nothing loads the
+	// newer pages by itself during the test.
+	async function openBehind(missing: number[] = []) {
+		const page = fixture<ChatProps>(url());
+		const shown = full().filter((m) => !missing.includes(m.message_id));
+		renderPage(url(), 'superadmin', { props: { ...page.props, messages: shown, has_newer: true }, viewer: { ...page.viewer, chat: { ...page.viewer.chat, auto_load: false } } });
+		await waitFor(() => expect(FakeSource.last?.url).toMatch(/chat%3A|chat:/));
+		act(() => FakeSource.last!.open());
+		return FakeSource.last!;
+	}
+
+	it('subscribes to the chat', async () => {
+		behindServer(full);
+		const s = await openBehind();
+		expect(decodeURIComponent(s.url)).toContain(`chat:${gid()}`);
+		expect(screen.getByRole('button', { name: 'Load newer messages' })).toBeTruthy();
+	});
+
+	it('puts a message filled mid-window in its place', async () => {
+		const all = full();
+		const gap = all[20]!;
+		const calls = behindServer(full);
+		const s = await openBehind([gap.message_id]);
+		act(() => s.emit({ seq: 1, kind: 'message.new', chat_id: gid(), message_id: gap.message_id }));
+		await waitFor(() => expect(document.getElementById('m' + gap.message_id)).toBeTruthy());
+		const o = order();
+		const at = o.indexOf(gap.message_id);
+		expect(o[at - 1]).toBe(all[19]!.message_id);
+		expect(o[at + 1]).toBe(all[21]!.message_id);
+		expect(after(calls)).toHaveLength(0);
+	});
+
+	it('updates an edited message in place', async () => {
+		const m = full()[15]!;
+		const edited = () => full().map((x) => (x.id === m.id ? { ...x, content_type: 'text' as const, text: 'edited while scrolled back', media: null, album: [], detail: null, service: null, edited_at: x.date } : x));
+		const calls = behindServer(edited);
+		const s = await openBehind();
+		act(() => s.emit({ seq: 1, kind: 'message.edited', chat_id: gid(), message_id: m.message_id }));
+		await screen.findByText('edited while scrolled back');
+		expect(around(calls)[0]!.query.get('around')).toBe(String(m.message_id));
+	});
+
+	it('fetches and counts nothing for a new message after the window', async () => {
+		const last = full().at(-1)!;
+		const calls = behindServer(full);
+		const s = await openBehind();
+		const before = windowCalls(calls).length;
+		act(() => {
+			s.emit({ seq: 1, kind: 'message.new', chat_id: gid(), message_id: last.message_id + 1 });
+			s.emit({ seq: 2, kind: 'message.new', chat_id: gid(), message_id: last.message_id });
+		});
+		await tick(400);
+		expect(windowCalls(calls)).toHaveLength(before);
+		expect(screen.queryByRole('button', { name: /new$/ })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeTruthy();
+	});
+
+	it('refetches the window itself on a resync, not the tail', async () => {
+		const all = full();
+		const gap = all[25]!, m = all[10]!;
+		const now = () => full().map((x) => (x.id === m.id ? { ...x, content_type: 'text' as const, text: 'changed while events were missed', media: null, album: [], detail: null, service: null, edited_at: x.date } : x));
+		const calls = behindServer(now);
+		const s = await openBehind([gap.message_id]);
+		act(() => s.emit({ seq: 1, kind: 'resync' }));
+		await screen.findByText('changed while events were missed');
+		await waitFor(() => expect(document.getElementById('m' + gap.message_id)).toBeTruthy());
+		const cursors = after(calls).map((c) => c.query.get('after'));
+		expect(cursors[0]).toBe(String(all[0]!.message_id - 1));
+		expect(cursors).not.toContain(String(all.at(-1)!.message_id));
+		const o = order();
+		expect(o).toEqual(all.map((x) => x.message_id));
+		// The window stays a window: its newer pages are still to load.
+		expect(screen.getByRole('button', { name: 'Load newer messages' })).toBeTruthy();
+	});
+
+	it('does not poll the tail while the stream is down', async () => {
+		const calls = behindServer(full);
+		const s = await openBehind();
+		// Refused: the manager polls until its retry.
+		act(() => { s.readyState = 2; s.onerror?.(new Event('error')); });
+		await screen.findByText(/Live updates unavailable/);
+		await tick(1500);
+		expect(windowCalls(calls)).toHaveLength(0);
+	});
+});
+
+describe('a signed-out visitor', () => {
+	it('opens no stream and polls nothing, at the newest or not', async () => {
+		const exposed = fixture<GroupsProps>('/groups').props.rows.find((g) => g.exposed)!;
+		const u = `/groups/${exposed.id}/chat`;
+		for (const has_newer of [false, true]) {
+			const calls = fakeApi('public', {});
+			const page = fixture<ChatProps>(u, 'public');
+			const { unmount } = renderPage(u, 'public', { props: { ...page.props, has_newer }, viewer: { ...page.viewer, chat: { ...page.viewer.chat, auto_load: false } } });
+			await tick(1500);
+			expect(FakeSource.last).toBeNull();
+			expect(callsTo(calls, 'GET', /\/messages$/)).toHaveLength(0);
+			unmount();
+		}
+	});
+});

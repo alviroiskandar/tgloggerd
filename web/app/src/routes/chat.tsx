@@ -62,6 +62,10 @@ const chatPath = (id: number, at?: number) => `${id < 0 ? '/groups' : '/users'}/
 // A service message's action as words, when it came without its text.
 const serviceText = (t?: string) => (t ? serviceLabel(t) : '');
 
+// At most this many pages of 100 refetched for a window's resync; a
+// window longer than that is refreshed from its start only.
+const RESYNC_PAGES = 10;
+
 // Where a forward came from: a link to the user, or to the channel's
 // post (or the channel), else just the name.
 function ForwardLine({ m }: { m: ChatMessage }) {
@@ -390,6 +394,16 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 		setNewer(true);
 	}, [scope, chatId, topic]);
 
+	// Keep the message at the top of the view where it is once the next
+	// messages are rendered (see the layout effect above).
+	const keepPlace = () => {
+		const el = scroller.current;
+		if (!el) return;
+		const top = el.getBoundingClientRect().top;
+		const seen = [...el.querySelectorAll<HTMLElement>('.c-feed > [id^="m"]')].find((x) => x.getBoundingClientRect().bottom > top);
+		if (seen) afterRender.current = { anchor: seen.id, top: seen.getBoundingClientRect().top };
+	};
+
 	const replaceMessage = useCallback(async (messageId: number) => {
 		const w = await fetchChatWindow(scope, chatId, { around: messageId }, 3, undefined, topic);
 		const got = new Map(w.messages.map((m) => [m.id, m]));
@@ -423,19 +437,54 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 				const i = next.findIndex((x) => x.message_id > m.message_id);
 				next.splice(i < 0 ? next.length : i, 0, m);
 			}
-			const el = scroller.current;
-			if (el) {
-				const top = el.getBoundingClientRect().top;
-				const seen = [...el.querySelectorAll<HTMLElement>('.c-feed > [id^="m"]')].find((x) => x.getBoundingClientRect().bottom > top);
-				if (seen) afterRender.current = { anchor: seen.id, top: seen.getBoundingClientRect().top };
-			}
+			keepPlace();
 			msgsRef.current = next;
 			setMsgs(next);
 		}
 	}, [scope, chatId, topic, older]);
 
+	// After a resync (events were missed), a window that does not end at
+	// the newest is refetched in place rather than from the tail: its own
+	// stretch, from its first message, page by page up to its last one.
+	// Changed messages replace theirs, missing ones go in by message id,
+	// and the reader's view stays where it was. What lies after the
+	// window still comes with the newer pages.
+	const resyncWindow = useCallback(async () => {
+		const sig = win.current?.signal;
+		if (!sig) return;
+		const start = msgsRef.current;
+		const first = start[0], last = start[start.length - 1];
+		if (!first || !last) return;
+		const got: ChatMessage[] = [];
+		let cursor = first.message_id - 1;
+		for (let pages = 0; pages < RESYNC_PAGES; pages++) {
+			const w = await fetchChatWindow(scope, chatId, { after: cursor }, 100, sig, topic);
+			if (sig.aborted) return;
+			got.push(...w.messages);
+			const end = w.messages[w.messages.length - 1];
+			if (!end || !w.has_newer || end.message_id >= last.message_id) break;
+			cursor = end.message_id;
+		}
+		if (!got.length) return;
+		const fresh = new Map(got.map((m) => [m.id, m]));
+		const next = msgsRef.current.map((m) => fresh.get(m.id) ?? m);
+		const have = new Set(next.map((m) => m.id));
+		for (const m of got) {
+			if (have.has(m.id) || m.message_id <= first.message_id || m.message_id >= last.message_id) continue;
+			const i = next.findIndex((x) => x.message_id > m.message_id);
+			next.splice(i < 0 ? next.length : i, 0, m);
+		}
+		keepPlace();
+		msgsRef.current = next;
+		setMsgs(next);
+	}, [scope, chatId, topic]);
+
+	// Signed in with Live on, the chat follows its events wherever the
+	// window is; only a window at the newest (following) fetches the
+	// tail, counts unseen messages and polls. The topic stays the same
+	// when the window reaches the newest, so the stream is not reopened.
 	const following = live && !newer && !publicView;
-	useLive(following ? [`chat:${chatId}`] : null, (e) => {
+	useLive(live && !publicView ? [`chat:${chatId}`] : null, (e) => {
 		const run = (key: string, fn: () => Promise<unknown>) => (refetch ? refetch.request(key, 250, fn) : void fn().catch(() => {}));
 		const cur = msgsRef.current;
 		const first = cur[0], last = cur[cur.length - 1];
@@ -446,8 +495,13 @@ function Chat({ page }: { page: PageData<ChatProps> }) {
 				gaps.current.add(e.message_id);
 				run(`chat:${chatId}:gaps`, fillGaps);
 			}
-		} else if (e.kind === 'message.new' || e.kind === 'resync') run(`chat:${chatId}:tail`, fetchNewer);
-		else if ((e.kind === 'message.edited' || e.kind === 'message.deleted' || e.kind === 'file.stored') && e.message_id !== undefined && msgsRef.current.some((m) => m.message_id === e.message_id)) {
+		} else if (e.kind === 'message.new' || e.kind === 'resync') {
+			// Not at the newest, a new message after the window is left to
+			// the newer pages (the jump button already says there are newer
+			// messages), and a resync refreshes the window itself.
+			if (!newer) run(`chat:${chatId}:tail`, fetchNewer);
+			else if (e.kind === 'resync') run(`chat:${chatId}:window`, resyncWindow);
+		} else if ((e.kind === 'message.edited' || e.kind === 'message.deleted' || e.kind === 'file.stored') && e.message_id !== undefined && msgsRef.current.some((m) => m.message_id === e.message_id)) {
 			const id = e.message_id;
 			run(`chat:${chatId}:m${id}`, () => replaceMessage(id));
 		}

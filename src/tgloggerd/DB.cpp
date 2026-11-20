@@ -263,6 +263,77 @@ bool DB::chatKnown(int64_t chat_id)
 		{ chat_id }).empty();
 }
 
+/*
+ * The thumbnail selection (listMessagesWithoutThumbnail) of one message
+ * table @t, whose rows telegram_message_files points at through @key:
+ * FROM and WHERE, the table aliased m. The rows come off the
+ * (content_type, date) index, forced so that a table where these kinds
+ * are common is not scanned whole; the files row is read by its primary
+ * key and only for a sticker, and the message files by their unique key
+ * (key, role, position). A sticker is a video sticker when its stored
+ * file's extension is webm (TDLib names a downloaded one so) or, for one
+ * stored without its file, when its curated detail says format webm.
+ */
+static std::string thumbnail_from(const char *t, const char *key)
+{
+	const std::string tt = t;
+	return " FROM " + tt + " m FORCE INDEX (idx_" +
+	       tt.substr(sizeof("telegram_") - 1) + "_ctype_date)"
+	       " LEFT JOIN telegram_files f"
+	       " ON f.id = m.file_id AND m.content_type = 'sticker'"
+	       " WHERE m.content_type IN"
+	       " ('video','animation','video_note','sticker')"
+	       " AND m.deleted_at IS NULL"
+	       " AND (m.content_type <> 'sticker' OR f.file_ext = 'webm'"
+	       " OR JSON_UNQUOTE(JSON_EXTRACT(m.content_extra, '$.format'))"
+	       " = 'webm')"
+	       " AND NOT EXISTS (SELECT 1 FROM telegram_message_files x"
+	       " WHERE x." + std::string(key) + " = m.id"
+	       " AND x.role IN ('thumbnail','cover'))";
+}
+
+std::string DB::thumbnailCandidatesSql(void)
+{
+	return "SELECT m.chat_id, m.message_id" +
+	       thumbnail_from("telegram_group_messages", "group_message_id") +
+	       " UNION ALL SELECT m.chat_id, m.message_id" +
+	       thumbnail_from("telegram_private_messages",
+			      "private_message_id");
+}
+
+std::vector<std::pair<int64_t, int64_t>> DB::listMessagesWithoutThumbnail(void)
+{
+	auto rows = db_.query(thumbnailCandidatesSql());
+
+	std::vector<std::pair<int64_t, int64_t>> out;
+	out.reserve(rows.size());
+	for (const auto &r : rows) {
+		if (!r[0].has_value() || !r[1].has_value())
+			continue;
+		out.emplace_back(std::stoll(*r[0]), std::stoll(*r[1]));
+	}
+	return out;
+}
+
+std::vector<std::tuple<std::string, std::string, uint64_t>>
+DB::countMessagesWithoutThumbnail(void)
+{
+	auto rows = db_.query(
+		"SELECT 'group', m.content_type, COUNT(*)" +
+		thumbnail_from("telegram_group_messages", "group_message_id") +
+		" GROUP BY m.content_type"
+		" UNION ALL SELECT 'private', m.content_type, COUNT(*)" +
+		thumbnail_from("telegram_private_messages",
+			       "private_message_id") +
+		" GROUP BY m.content_type");
+
+	std::vector<std::tuple<std::string, std::string, uint64_t>> out;
+	for (const auto &r : rows)
+		if (r[0].has_value() && r[1].has_value() && r[2].has_value())
+			out.emplace_back(*r[0], *r[1], std::stoull(*r[2]));
+	return out;
+}
+
 std::vector<std::tuple<std::string, std::string, uint64_t>>
 DB::countMessagesToRepair(void)
 {

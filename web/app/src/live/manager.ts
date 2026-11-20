@@ -27,6 +27,9 @@ export interface ManagerOptions {
 	url?: string;
 	clock?: Clock;
 	settleMs?: number;
+	// A number in [0, 1) for the back-off's jitter; Math.random unless
+	// a test needs it fixed.
+	random?: () => number;
 }
 
 type Handler = (e: LiveEvent) => void;
@@ -39,11 +42,20 @@ export const FAIL_WINDOW_MS = 30_000;
 export const BACKOFF_MIN_MS = 5_000;
 export const BACKOFF_MAX_MS = 60_000;
 
+// Equal jitter: each wait is half its back-off step plus a random part
+// of the other half, so tabs refused or cut off at the same moment do
+// not all retry at the same moment.
+export function jittered(step: number, random: () => number): number {
+	const r = Math.min(Math.max(random(), 0), 1);
+	return Math.round(step / 2 + (step / 2) * r);
+}
+
 export class LiveManager {
 	private readonly open: (url: string) => SourceLike;
 	private readonly url: string;
 	private readonly clock: Clock;
 	private readonly settleMs: number;
+	private readonly random: () => number;
 	private subs = new Set<Sub>();
 	private stateFns = new Set<(s: LiveState) => void>();
 	private src: SourceLike | null = null;
@@ -61,6 +73,7 @@ export class LiveManager {
 		this.url = o.url ?? '/api/events';
 		this.clock = o.clock ?? realClock;
 		this.settleMs = o.settleMs ?? 300;
+		this.random = o.random ?? Math.random;
 	}
 
 	subscribe(topics: string[], fn: Handler): () => void {
@@ -165,7 +178,7 @@ export class LiveManager {
 		this.fails = [];
 		this.setState('polling');
 		this.clock.clearTimeout(this.retry);
-		const wait = this.backoff;
+		const wait = jittered(this.backoff, this.random);
 		this.backoff = Math.min(BACKOFF_MAX_MS, this.backoff * 2);
 		this.retry = this.clock.setTimeout(() => {
 			const key = this.key();

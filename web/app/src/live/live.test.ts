@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LiveManager, type Clock, type SourceLike } from './manager.ts';
+import { BACKOFF_MAX_MS, BACKOFF_MIN_MS, LiveManager, jittered, type Clock, type SourceLike } from './manager.ts';
 import { Refetcher, type Visibility } from './refetch.ts';
 import type { LiveEvent } from './events.ts';
 
@@ -19,9 +19,10 @@ class FakeSource implements SourceLike {
 	emit(e: LiveEvent) { for (const fn of this.ls.get(e.kind) ?? []) fn({ data: JSON.stringify(e) }); }
 }
 
-function setup() {
+// random: the back-off's jitter; at 1 each wait is the whole step.
+function setup(random: () => number = () => 1) {
 	const sources: FakeSource[] = [];
-	const m = new LiveManager({ open: (url) => { const s = new FakeSource(url); sources.push(s); return s; }, clock });
+	const m = new LiveManager({ open: (url) => { const s = new FakeSource(url); sources.push(s); return s; }, clock, random });
 	const states: string[] = [];
 	m.onState((s) => states.push(s));
 	return { m, sources, states, last: () => sources[sources.length - 1]! };
@@ -109,6 +110,35 @@ describe('LiveManager', () => {
 		last().openNow();
 		expect(states.at(-1)).toBe('live');
 		expect(fn).toHaveBeenCalledWith(expect.objectContaining({ kind: 'resync' }));
+	});
+
+	it('jitters each back-off wait between half its step and the whole step', () => {
+		const rolls = [0, 0.5, 0.999];
+		const { m, sources, last } = setup(() => rolls.shift() ?? 0);
+		m.subscribe(['stats'], () => {});
+		vi.advanceTimersByTime(300);
+		// Refused three times: steps of 5, 10 and 20 s.
+		const waits: number[] = [];
+		for (let i = 0; i < 3; i++) {
+			const n = sources.length;
+			last().fail(true);
+			let t = 0;
+			while (sources.length === n && t < BACKOFF_MAX_MS) { vi.advanceTimersByTime(1); t++; }
+			waits.push(t);
+		}
+		expect(waits).toEqual([2500, 7500, 19990]);
+	});
+
+	it('keeps every jittered wait within its bounds', () => {
+		for (let step = BACKOFF_MIN_MS; step <= BACKOFF_MAX_MS; step *= 2) {
+			for (const r of [0, 0.25, 0.5, 0.75, 0.9999, -1, 2]) {
+				const w = jittered(step, () => r);
+				expect(w).toBeGreaterThanOrEqual(step / 2);
+				expect(w).toBeLessThanOrEqual(step);
+			}
+		}
+		const many = new Set(Array.from({ length: 50 }, () => jittered(BACKOFF_MIN_MS, Math.random)));
+		expect(many.size).toBeGreaterThan(1);
 	});
 
 	it('polls at once when the server refuses the stream', () => {

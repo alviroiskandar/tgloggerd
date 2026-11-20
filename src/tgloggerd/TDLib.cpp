@@ -1001,9 +1001,15 @@ struct TDLib::Impl {
 	std::deque<std::pair<int64_t, int64_t>>	repair_pending_;
 	size_t						repair_total_ = 0;
 	size_t						repair_sent_ = 0;
+	/* Old-row thumbnail queue (see refetchThumbnails), same lock; it
+	 * shares the repair's share of the budget and runs after it. */
+	std::deque<std::pair<int64_t, int64_t>>	thumbs_pending_;
+	size_t						thumbs_total_ = 0;
+	size_t						thumbs_sent_ = 0;
 	time_t						relink_tick_ = 0;
 	int						relink_in_tick_ = 0;
-	/* What the repair sent this second (recheck::kRepairPerSecond). */
+	/* What the repair and the thumbnail pass sent this second, together
+	 * (recheck::kRepairPerSecond). */
 	int						repair_in_tick_ = 0;
 
 	/*
@@ -3155,7 +3161,7 @@ void TDLib::Impl::drain_relink(void)
 	drain_recheck();
 	{
 		std::lock_guard<std::mutex> lk(refetch_mtx_);
-		if (repair_pending_.empty())
+		if (repair_pending_.empty() && thumbs_pending_.empty())
 			return;
 		const auto now = recheck::Clock::now();
 		const bool may = recheck::repairMayRun(
@@ -3163,8 +3169,9 @@ void TDLib::Impl::drain_relink(void)
 			now - repair_last_sent_);
 		if (may == repair_paused_) {
 			repair_paused_ = !may;
-			pr_info(l_, may ? "repair: resumed (%zu recheck(s) waiting)"
-					: "repair: paused while %zu recheck(s) wait",
+			pr_info(l_, may ? "%s: resumed (%zu recheck(s) waiting)"
+					: "%s: paused while %zu recheck(s) wait",
+				repair_pending_.empty() ? "thumbnails" : "repair",
 				recheck_q_.size() + (size_t)recheck_inflight_);
 		}
 		if (!may)
@@ -3175,25 +3182,43 @@ void TDLib::Impl::drain_relink(void)
 	 * Old-row repair, after the relink queue and from what is left of the
 	 * same budget. A re-fetched message is stored again through the
 	 * normal path, which classifies it; one TDLib can no longer return
-	 * keeps what it has. At most recheck::kRepairPerSecond a second.
+	 * keeps what it has. Then, once the repair queue is empty, the
+	 * old-row thumbnail pass the same way: the normal path stores the
+	 * still thumbnail TDLib offers. Both together at most
+	 * recheck::kRepairPerSecond a second.
 	 */
 	while (recheck::repairAllowance(kRelinkPerSecond, relink_in_tick_,
 					repair_in_tick_) > 0) {
 		std::pair<int64_t, int64_t> m;
+		bool thumb = false;
 		{
 			std::lock_guard<std::mutex> lk(refetch_mtx_);
-			if (repair_pending_.empty())
+			if (!repair_pending_.empty()) {
+				m = repair_pending_.front();
+				repair_pending_.pop_front();
+			} else if (!thumbs_pending_.empty()) {
+				m = thumbs_pending_.front();
+				thumbs_pending_.pop_front();
+				thumb = true;
+			} else {
 				return;
-			m = repair_pending_.front();
-			repair_pending_.pop_front();
+			}
 		}
 		refetch_edited_message(m.first, m.second << 20, false);
 		relink_in_tick_++;
 		repair_in_tick_++;
-		if (++repair_sent_ % 1000 == 0 || repair_sent_ == repair_total_)
+		if (thumb) {
+			if (++thumbs_sent_ % 1000 == 0 ||
+			    thumbs_sent_ == thumbs_total_)
+				pr_info(l_, "thumbnails: re-fetched %zu of %zu"
+					" message(s) without a still",
+					thumbs_sent_, thumbs_total_);
+		} else if (++repair_sent_ % 1000 == 0 ||
+			   repair_sent_ == repair_total_) {
 			pr_info(l_, "repair: re-fetched %zu of %zu old message(s)"
 				" without their kind or detail", repair_sent_,
 				repair_total_);
+		}
 	}
 }
 
@@ -4920,6 +4945,14 @@ void TDLib::repairMessages(std::vector<std::pair<int64_t, int64_t>> msgs)
 	impl_->repair_total_ += msgs.size();
 	for (auto &m : msgs)
 		impl_->repair_pending_.push_back(m);
+}
+
+void TDLib::refetchThumbnails(std::vector<std::pair<int64_t, int64_t>> msgs)
+{
+	std::lock_guard<std::mutex> lk(impl_->refetch_mtx_);
+	impl_->thumbs_total_ += msgs.size();
+	for (auto &m : msgs)
+		impl_->thumbs_pending_.push_back(m);
 }
 
 void TDLib::relinkMessageMedia(std::vector<std::pair<int64_t, int64_t>> msgs)

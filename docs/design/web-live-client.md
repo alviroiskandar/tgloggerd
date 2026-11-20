@@ -68,7 +68,7 @@ unknown) are not asked for again until the next page load.
 
 | Event | Refreshes | How |
 |---|---|---|
-| `message.new` | open chat on `chat_id` | at the live edge: fetch newer from the cursor and append; scrolled up: show "N new messages" below, nothing moves |
+| `message.new` | open chat on `chat_id` | inside the window: put in its place by message id; at the live edge: fetch newer from the cursor and append; scrolled up: show "N new messages" below, nothing moves; a window that does not hold the newest (opened at a message or a date) leaves a message after it to its newer pages |
 | | message search lists (`messages` topic) | mark page 1 stale and show "New messages, refresh"; never reorder rows on their own |
 | `message.edited` | the message, wherever loaded | refetch that message in the open chat window, or the message page; the bubble updates in place with its edit marker |
 | `message.deleted` | the message, wherever loaded | as edited; the bubble is struck through, not removed |
@@ -76,7 +76,7 @@ unknown) are not asked for again until the next page load.
 | `group.updated` | the group in the entity cache | as users; on the group's page, also its page data (description, admins, usernames) |
 | `file.stored` | the bubble and file card of that file | refetch the message or the file row; a "Not stored" placeholder becomes the media |
 | `stats.changed` | the dashboard; entities of the listed `chat_ids` and `user_ids` that are on screen | counters update in place; a list sorted by a counter keeps its order until refreshed |
-| `resync` | every mounted query | refetch all, chats from their cursors |
+| `resync` | every mounted query | refetch all, chats at the live edge from their cursors; a chat window that does not hold the newest is refetched in place, from its first message to its last |
 | `session` | the whole app | `scope_changed`: refetch everything, a page now hidden becomes 404; `revoked`: go to the sign-in page |
 
 ## 5. Throttling
@@ -102,7 +102,8 @@ unknown) are not asked for again until the next page load.
   using the server's `retry:` value). After three failures within 30 s,
   or when `/api/events` answers that live updates are off, it switches
   to polling and keeps retrying the stream with back-off (5 s doubling
-  to 60 s).
+  to 60 s), each wait jittered to between half its step and the whole
+  step, so tabs cut off together do not all retry together.
 - Polling: an open chat at its live edge asks for newer messages every
   second, as today's live mode does; other pages refetch their mounted
   queries every 30 s and on window focus. Hidden tabs do not poll.
