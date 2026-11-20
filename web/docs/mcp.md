@@ -621,8 +621,8 @@ The Go service serves the administration as JSON operations
     POST   /api/mcp/groups               {"group_id": -100..., "note": "..."}; 201
     DELETE /api/mcp/groups/{group_id}
     PATCH  /api/mcp/groups/{group_id}    {"note": "..."}; 204
-    POST   /api/mcp/tokens               {"name": "...", "owner_id": n}; 201 {id, token}
-    PATCH  /api/mcp/tokens/{id}          {"name": "..."}; 204
+    POST   /api/mcp/tokens               {"name": "...", "owner_id": n, "scope": [...]}; 201 {id, token}
+    PATCH  /api/mcp/tokens/{id}          {"name": "...", "scope": [...]}, either or both; 204
     POST   /api/mcp/tokens/{id}/revoke
     POST   /api/mcp/tokens/{id}/transfer {"owner_id": n}; 204
 
@@ -659,6 +659,24 @@ The Go service serves the administration as JSON operations
   new owner. Taking `mcp_tokens` away from a member does not revoke
   its tokens: `/mcp` refuses them until the ability is given back or
   they are transferred.
+- Scope ([Token scopes](#token-scopes-go-service)): `scope` is a list
+  of `{"kind": "federation" | "group" | "private", "id": n}`, written
+  when minting or by PATCH, which replaces it as a whole (`[]` is every
+  exposed group again). Each entry once, at most 200. A federation
+  must exist, a group must be one the viewer can see (it need not be
+  exposed: the entry is inactive until it is), a private chat must be
+  a user the archive knows, by its positive id; anything else is 400
+  `bad_request` and nothing is written. A `private` entry is written
+  only by a superadmin, on a token a superadmin owns or that has no
+  owner record; otherwise 403 `forbidden`, with the reason in
+  `message`. So an admin editing a token that still carries an
+  inactive private entry from an earlier owner drops it to save. The
+  tokens list gives each token's `scope` as `{kind, id, name, active}`
+  (federations, then groups, then private chats; `active` false for a
+  deleted federation, a group not exposed, a private chat on a token
+  whose owner is not a superadmin), and `scope_options`: the
+  federations, the exposed groups the viewer sees, and `private`, true
+  for a superadmin.
 - Only groups the viewer may see are exposed, listed, counted or
   withdrawn; a hidden group is 404 like an unknown one
   (web-accounts.md section 4). Exposing a group twice is 409
@@ -675,12 +693,13 @@ The Go service serves the administration as JSON operations
   `mcp_unexpose`, `mcp_note`, `mcp_token_create` (with `for <owner
   id>` when minted for another account), `mcp_token_rename`,
   `mcp_token_revoke`, `mcp_token_transfer` (`from <id> to <id>`, 0 for
-  no owner record), beside the ownership rows `owner_set` and
+  no owner record), `mcp_token_scope` (`token <id>: <entries>`, or
+  `all exposed groups`), beside the ownership rows `owner_set` and
   `owner_transfer` (with the group or the token's id and name, never
   the token; `mcp_note` and `mcp_token_rename` with `old -> new`, each
   cut to its share of the 255 characters when both do not fit). An
-  unchanged note or name, and a transfer to the owner a token has,
-  write no row.
+  unchanged note, name or scope, and a transfer to the owner a token
+  has, write no row.
 - An exposed group is owned by the account that exposed it, a token
   by the account it was minted for (`web_resource_relations`, see
   *Ownership* in [accounts.md](accounts.md)); withdrawing a group
@@ -689,8 +708,9 @@ The Go service serves the administration as JSON operations
   migration 000015. The tokens list names each token's owner (or
   "Shared", id 0, without an owner record) and minter, with `owners`,
   who the viewer may mint for or transfer to, and `can_transfer`.
-  Ownership does not change what a token reads: that is the exposure
-  list alone.
+  What a token reads is the exposure list narrowed by its scope;
+  ownership changes it only for private chat entries, which work while
+  a superadmin owns the token.
 
 ## Configuration
 

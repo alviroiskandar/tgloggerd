@@ -8,6 +8,7 @@ package logdb
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"tgloggerd/webapi/internal/scope"
 )
@@ -140,4 +141,60 @@ func SetExposedNote(ctx context.Context, db *sql.DB, id int64, note string) (str
 		}
 	}
 	return old, true, tx.Commit()
+}
+
+// ExposedGroupIDs is every exposed group, whoever views it: whether a
+// token's scope entry still reaches its group (decisions/2026-11-20-
+// mcp-token-scope.md) does not depend on the viewer.
+func ExposedGroupIDs(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
+	rows, err := db.QueryContext(ctx, "SELECT group_id FROM telegram_public_groups")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// UserNames is the name of each user of ids the archive knows, first
+// and last name, else its username, else "": the private chats of MCP
+// token scopes, whose chat id is the peer's user id.
+func UserNames(ctx context.Context, db *sql.DB, ids []int64) (map[int64]string, error) {
+	out := map[int64]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := db.QueryContext(ctx, "SELECT u.id, TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', "+
+		"COALESCE(u.last_name, ''))), COALESCE((SELECT x.username FROM telegram_user_usernames x "+
+		"WHERE x.user_id = u.id AND x.kind = 'active' ORDER BY x.position LIMIT 1), '') "+
+		"FROM telegram_users u WHERE u.id IN (?"+strings.Repeat(", ?", len(ids)-1)+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id         int64
+			name, user string
+		)
+		if err := rows.Scan(&id, &name, &user); err != nil {
+			return nil, err
+		}
+		if name == "" {
+			name = user
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
 }
