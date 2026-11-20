@@ -148,6 +148,12 @@ type Field struct {
 	// plays its role in, the scope condition only the messages whose
 	// own file it is.
 	Scoped bool
+	// Count is the ids that meet an = or in condition of a Pred field
+	// (vals as Pred takes them), one row each, read without the
+	// entity's table: the count of a search with that condition alone
+	// and no scope condition, which would otherwise test every row
+	// of the table. nil counts through the WHERE.
+	Count func(sc scope.Scope, vals []string) (string, []any)
 	// Ordered fields have an index that reads the rows in the field's
 	// descending order, the id breaking ties (its index holds the
 	// primary key), so a page sorted by one can stop at its last row
@@ -498,6 +504,7 @@ func parseJSONArray(raw string) ([]any, error) {
 type built struct {
 	countSQL, pageSQL string
 	where             []any // the WHERE's values, the count's values
+	count             []any // the count's values instead, when not nil
 	orderBind         any   // the relevance sort's value, or nil
 	sort, order       string
 	limit, offset     int
@@ -738,6 +745,34 @@ func (e *Entity) scopedBy(chains [][]Cond, internal bool) bool {
 	return false
 }
 
+// alone is the Count query of a search whose only condition is an = or
+// in condition of a field with Count, under no scope condition (a scope
+// that sees every row, or one a Scoped field confines), and its values.
+// The condition was checked by chain.
+func (e *Entity) alone(sc scope.Scope, req SearchRequest, scopeCond string) (string, []any, bool) {
+	var conds []Cond
+	for _, ch := range append([][]Cond{req.Conds}, req.And...) {
+		conds = append(conds, ch...)
+	}
+	if scopeCond != "" || len(conds) != 1 {
+		return "", nil, false
+	}
+	c := conds[0]
+	f := e.field(c.C, req.Internal)
+	if f == nil || f.Count == nil || !c.HasV {
+		return "", nil, false
+	}
+	switch {
+	case c.O == "=" && !c.IsList:
+		q, a := f.Count(sc, []string{c.V})
+		return q, a, true
+	case c.O == "in" && c.IsList:
+		q, a := f.Count(sc, c.L)
+		return q, a, true
+	}
+	return "", nil, false
+}
+
 func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	n := len(req.Conds)
 	for _, ch := range req.And {
@@ -833,6 +868,9 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	countFrom := e.countFromFor(where)
 	hint := "SELECT /*+ MAX_EXECUTION_TIME(" + strconv.Itoa(statementMS) + ") */ "
 	b.countSQL = hint + "COUNT(*) AS n FROM " + countFrom + countClause
+	if q, a, ok := e.alone(sc, req, scopeCond); ok {
+		b.countSQL, b.count = hint+"COUNT(*) AS n FROM ("+q+") ids", append([]any{}, a...)
+	}
 	sel := e.sel
 	if req.Internal && e.pageSel != "" {
 		sel += ", " + e.pageSel
@@ -860,10 +898,17 @@ func (e *Entity) build(sc scope.Scope, req SearchRequest) (*built, error) {
 	if b.orderBind != nil {
 		want++
 	}
-	if strings.Count(b.pageSQL, "?") != want {
+	if strings.Count(b.pageSQL, "?") != want || strings.Count(b.countSQL, "?") != len(b.countArgs()) {
 		return nil, errors.New("search: placeholders and values differ")
 	}
 	return b, nil
+}
+
+func (b *built) countArgs() []any {
+	if b.count != nil {
+		return b.count
+	}
+	return b.where
 }
 
 func (b *built) pageArgs() []any {
@@ -951,7 +996,7 @@ func searchSQL(ctx context.Context, db *sql.DB, sc scope.Scope, e *Entity, req S
 	// The count only feeds the pager, so it never fails the request:
 	// when it fails or runs out of time, the total is estimated below.
 	if b.filtered || !e.estimateBrowse {
-		if n, err := countInt(ctx, db, b.countSQL, b.where...); err == nil {
+		if n, err := countInt(ctx, db, b.countSQL, b.countArgs()...); err == nil {
 			res.Total, res.TotalExact = n, true
 		} else if ctx.Err() != nil {
 			return nil, ctx.Err()

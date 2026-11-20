@@ -107,3 +107,113 @@ func TestFileRolePlans(t *testing.T) {
 		}
 	}
 }
+
+// A count by role alone reads the role tables, not every file; beside
+// another condition it counts through the WHERE as before. Both give
+// the same numbers, for every scope.
+func TestFileRoleCount(t *testing.T) {
+	t.Parallel()
+	db := testdb.New(t, testdb.Logger, "sample").DB
+	roleArchive(t, db)
+	// Previews and thumbnails in a hidden group, a private chat's
+	// preview, and a preview without a picture yet.
+	for _, q := range []string{
+		"INSERT INTO telegram_group_messages (id, chat_id, message_id, date, content_type, text) " +
+			"VALUES (7000201, -1001000000002, 810001 << 20, 1794000000, 'text', 'x'), " +
+			"(7000202, -1001000000002, 810002 << 20, 1794000000, 'video', NULL), " +
+			"(7000203, -1001000000001, 810003 << 20, 1794000000, 'text', 'y')",
+		"INSERT INTO telegram_link_previews (group_message_id, url, display_url, photo_file_id) " +
+			"VALUES (7000201, 'https://example.org/h', '', 7000031), " +
+			"(7000203, 'https://example.org/n', '', NULL)",
+		"INSERT INTO telegram_message_files (group_message_id, role, position, file_id) " +
+			"VALUES (7000202, 'thumbnail', 0, 7000033), (7000202, 'cover', 0, 7000030)",
+		"INSERT INTO telegram_private_messages (id, chat_id, message_id, date, content_type, text) " +
+			"VALUES (7000301, 9299000002, 820001 << 20, 1794000000, 'text', 'z')",
+		"INSERT INTO telegram_link_previews (private_message_id, url, display_url, photo_file_id) " +
+			"VALUES (7000301, 'https://example.org/p', '', 7000032)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	member := scope.For(scope.Viewer{ID: 5, Role: scope.Member,
+		GrantedGroups: []int64{-1001000000001}})
+	admin := scope.For(scope.Viewer{ID: 6, Role: scope.Admin,
+		HideGroups: []int64{-1001000000002}})
+	role := func(vals ...string) Cond {
+		if len(vals) == 1 {
+			return Cond{C: "role", O: "=", V: vals[0], HasV: true, N: "AND"}
+		}
+		return Cond{C: "role", O: "in", L: vals, IsList: true, HasV: true, N: "AND"}
+	}
+	// Every file of the archive has an id above 0, so the second
+	// condition changes no count, only the way it is counted.
+	other := Cond{C: "id", O: ">", V: "0", HasV: true}
+	count := func(b *built) int64 {
+		t.Helper()
+		n, err := countInt(t.Context(), db, b.countSQL, b.countArgs()...)
+		if err != nil {
+			t.Fatalf("%s: %v", b.countSQL, err)
+		}
+		return n
+	}
+	for _, s := range []struct {
+		name string
+		sc   scope.Scope
+	}{{"everything", scope.Everything()}, {"admin", admin}, {"member", member}} {
+		for _, r := range []Cond{
+			role("link_preview"), role("thumbnail"), role("cover"),
+			role("cover", "link_preview"), role("thumbnail", "cover", "link_preview"),
+		} {
+			name := s.name + " " + r.V + strings.Join(r.L, ",")
+			b, err := Files.build(s.sc, SearchRequest{Conds: []Cond{r}, Limit: 24})
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			plan := planOf(t, db, b.countSQL, b.countArgs()...)
+			if _, ok := keyOf(plan, "f"); ok {
+				t.Errorf("%s: the count reads telegram_files: %v", name, plan)
+			}
+			with, err := Files.build(s.sc, SearchRequest{Conds: []Cond{r, other}, Limit: 24})
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if _, ok := keyOf(planOf(t, db, with.countSQL, with.countArgs()...), "f"); !ok {
+				t.Errorf("%s: with another condition the count does not read the files: %s",
+					name, with.countSQL)
+			}
+			// The cover is in the hidden group only.
+			if a, w := count(b), count(with); a != w || a == 0 && (s.name == "everything" ||
+				r.V != "cover") {
+				t.Errorf("%s: %d alone, %d with another condition", name, a, w)
+			}
+		}
+	}
+	// What each scope sees of the previews: 100 in GNU/Weeb, one in
+	// the hidden group, one in a private chat.
+	for _, c := range []struct {
+		sc   scope.Scope
+		want int64
+	}{{scope.Everything(), 102}, {admin, 101}, {member, 100}} {
+		b, err := Files.build(c.sc, SearchRequest{Conds: []Cond{role("link_preview")}, Limit: 24})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := count(b); n != c.want {
+			t.Errorf("%v: %d previews, want %d", c.sc.Role(), n, c.want)
+		}
+	}
+	// != and an OR keep counting through the WHERE.
+	for _, req := range []SearchRequest{
+		{Conds: []Cond{{C: "role", O: "!=", V: "cover", HasV: true}}},
+		{Conds: []Cond{{C: "role", O: "=", V: "cover", HasV: true, N: "OR"}, other}},
+	} {
+		b, err := Files.build(scope.Everything(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.count != nil || !strings.Contains(b.countSQL, "FROM telegram_files f") {
+			t.Errorf("%v: count %s", req.Conds, b.countSQL)
+		}
+	}
+}

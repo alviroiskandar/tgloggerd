@@ -464,7 +464,7 @@ var Files = &Entity{
 		ordered(col("updated_at", "f.updated_at", Datetime, "Updated", dtOps, true)),
 		col("accessed_at", "f.accessed_at", Datetime, "Last access", dtOps, true),
 		{Key: "role", Label: "Role in a message", Type: Enum, Enum: FileRoles,
-			Ops: enumOps, Pred: fileRolePred, Scoped: true},
+			Ops: enumOps, Pred: fileRolePred, Scoped: true, Count: fileRoleCount},
 	},
 	cols: []Col{
 		{"thumb", "", "filethumb", ""},
@@ -536,10 +536,51 @@ const FileRoles = "cover,live_video,paid,preview,poll,game,invoice,chat_photo,th
 // semijoin.
 func fileRolePred(sc scope.Scope, roles []string) (string, []any) {
 	var (
-		mf    []string
-		lp    bool
 		parts []string
 		args  []any
+	)
+	for _, t := range fileRoleTables(sc, roles) {
+		parts = append(parts, "EXISTS (SELECT "+t.hint+"1 FROM "+t.from+" WHERE "+t.col+
+			" = f.id"+t.cond+")")
+		args = append(args, t.args...)
+	}
+	return strings.Join(parts, " OR "), args
+}
+
+// fileRoleCount is the ids fileRolePred matches, read from the role
+// tables alone: the count of a search with no other condition
+// (Field.Count). It reads a few rows per file with a role instead of
+// testing every file, and needs no telegram_files row: both tables'
+// file columns are foreign keys to it.
+func fileRoleCount(sc scope.Scope, roles []string) (string, []any) {
+	var (
+		parts []string
+		args  []any
+	)
+	for _, t := range fileRoleTables(sc, roles) {
+		parts = append(parts, "SELECT DISTINCT "+t.col+" AS id FROM "+t.from+" WHERE "+t.col+
+			" IS NOT NULL"+t.cond)
+		args = append(args, t.args...)
+	}
+	return strings.Join(parts, " UNION "), args
+}
+
+// roleTable is one table of the role conditions: its FROM (alias x,
+// joined to the message for a scope that does not see every chat), its
+// file column, the hint of its EXISTS ("" or drivenHint and a space)
+// and its condition beyond the file, with its values.
+type roleTable struct {
+	from, col, hint, cond string
+	args                  []any
+}
+
+// fileRoleTables is the tables holding roles, those of
+// telegram_message_files first and link_preview after.
+func fileRoleTables(sc scope.Scope, roles []string) []roleTable {
+	var (
+		mf  []string
+		lp  bool
+		out []roleTable
 	)
 	for _, r := range roles {
 		if r == "link_preview" {
@@ -564,20 +605,20 @@ func fileRolePred(sc scope.Scope, roles []string) (string, []any) {
 	}
 	if len(mf) > 0 {
 		join, cond, ca := visible()
-		parts = append(parts, "EXISTS (SELECT 1 FROM telegram_message_files x"+join+
-			" WHERE x.file_id = f.id AND x.role IN ("+placeholders(len(mf))+")"+cond+")")
+		t := roleTable{from: "telegram_message_files x" + join, col: "x.file_id",
+			cond: " AND x.role IN (" + placeholders(len(mf)) + ")" + cond}
 		for _, r := range mf {
-			args = append(args, r)
+			t.args = append(t.args, r)
 		}
-		args = append(args, ca...)
+		t.args = append(t.args, ca...)
+		out = append(out, t)
 	}
 	if lp {
 		join, cond, ca := visible()
-		parts = append(parts, "EXISTS (SELECT "+drivenHint+" 1 FROM telegram_link_previews x"+join+
-			" WHERE x.photo_file_id = f.id"+cond+")")
-		args = append(args, ca...)
+		out = append(out, roleTable{from: "telegram_link_previews x" + join,
+			col: "x.photo_file_id", hint: drivenHint + " ", cond: cond, args: ca})
 	}
-	return strings.Join(parts, " OR "), args
+	return out
 }
 
 // --- messages ----------------------------------------------------------

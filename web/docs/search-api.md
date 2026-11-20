@@ -276,12 +276,16 @@ a page in an indexed order (id, `file_type`, size, hits, `created_at`,
 `updated_at`; descending, or id either way) within its first 1000 rows, the
 `link_preview` EXISTS is tested row by row as the files are read in that order
 (`NO_SEMIJOIN`), since a few percent of all files are previews' pictures; the
-count and other pages let the optimizer read every preview. The files page's
-rows (FileRow in webapi/openapi.yaml) say the role in `role`: a file that is no
-message's own file names the first visible message that carries it in a role,
-with `role: {role, message_kind}`, where `message_kind` is that message's
-content type; a message's own file has
-`role: null`. The Drogon search has no such field.
+count and other pages let the optimizer read every preview. A search whose only
+condition is an `=` or `in` role is counted from the role tables alone (the
+UNION of their file ids, joined to the message for a viewer who does not see
+every chat), not by testing every file; with any other condition the count
+tests the files, and runs out of time into an estimate as other counts do. The
+files page's rows (FileRow in webapi/openapi.yaml) say the role in `role`: a
+file that is no message's own file names the first visible message that carries
+it in a role, with `role: {role, message_kind}`, where `message_kind` is that
+message's content type; a message's own file has `role: null`. The Drogon
+search has no such field.
 
 Sortable keys: `id, file_type, name, ext, size, hits, created_at, updated_at,
 accessed_at`.
