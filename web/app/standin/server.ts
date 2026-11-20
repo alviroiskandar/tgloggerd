@@ -16,6 +16,14 @@
 // in the fixtures (message.new with a free message_id below the newest
 // fills that gap); POST /api/_standin/events {"off": true} makes the
 // stream refuse and drops open ones, to exercise the polling fallback.
+// Signed out, a stream may ask only chat:<id> topics of exposed groups
+// (at most 4; anything else is 401), carries no ids and no seq, starts
+// with a resync (with refetch_interval) on every open and leaves out
+// file_id, as Go's does;
+// POST /api/_standin/events {"public_full": <Retry-After seconds>}
+// refuses signed-out streams with 503 as when their caps are reached
+// (0 lifts it), and withdrawing a group's exposure ends its streams
+// with a session scope_changed event.
 // TGD_STANDIN_TICK=<ms> emits a new message into a subscribed chat that
 // often.
 import { createServer as createHttp, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -83,6 +91,11 @@ const liveClients = new Set<LiveClient>();
 const liveRing: Ev[] = [];
 let liveSeq = 1000;
 let liveOff = false;
+// Seconds of Retry-After while signed-out streams are refused; 0 lets
+// them in.
+let publicFull = 0;
+const PUBLIC_TOPICS = 4;
+const PUBLIC_REFETCH_SECS = 5;
 
 function evTopics(e: Ev): string[] | null {
 	if (e.kind.startsWith('message.') || e.kind === 'file.stored') return [`chat:${e.chat_id}`, 'messages'];
@@ -94,7 +107,31 @@ function evTopics(e: Ev): string[] | null {
 }
 
 function sendEv(c: LiveClient, e: Ev): void {
+	if (c.who === 'public') {
+		// No seq, no file_id.
+		const { seq: _s, file_id: _f, ...rest } = e as Ev & { file_id?: number };
+		c.res.write(`event: ${e.kind}\ndata: ${JSON.stringify(rest)}\n\n`);
+		return;
+	}
 	c.res.write(`id: ${e.seq}\nevent: ${e.kind}\ndata: ${JSON.stringify(e)}\n\n`);
+}
+
+// The topics a signed-out stream may ask: chat:<id> of exposed groups.
+function publicTopicsOk(fx: Record<string, any>, topics: Set<string>): boolean {
+	if (!topics.size || topics.size > PUBLIC_TOPICS) return false;
+	return [...topics].every((t) => /^chat:-\d+$/.test(t) && fx.exposedGroup(Number(t.slice(5))));
+}
+
+// Signed-out streams of a group no longer exposed end, as Go's periodic
+// check ends them: scope_changed, never revoked.
+async function endWithdrawn(): Promise<void> {
+	const fx = await vite.ssrLoadModule('/standin/fixtures.ts');
+	for (const c of [...liveClients]) {
+		if (c.who !== 'public' || publicTopicsOk(fx, c.topics)) continue;
+		c.res.write(`event: session\ndata: ${JSON.stringify({ kind: 'session', reason: 'scope_changed' })}\n\n`);
+		c.res.end();
+		liveClients.delete(c);
+	}
 }
 
 async function publish(e: Omit<Ev, 'seq'>): Promise<Ev> {
@@ -112,10 +149,26 @@ async function publish(e: Omit<Ev, 'seq'>): Promise<Ev> {
 }
 
 async function openStream(req: IncomingMessage, res: ServerResponse, url: URL, who: Persona): Promise<void> {
-	if (who === 'public') { send(res, 401, { error: 'unauthenticated' }); return; }
-	if (liveOff) { send(res, 503, { error: 'live_off', message: 'Live updates are off.' }); return; }
 	const fx = await vite.ssrLoadModule('/standin/fixtures.ts');
 	const c: LiveClient = { res, who, topics: new Set((url.searchParams.get('topics') || '').split(',').filter(Boolean)) };
+	if (who === 'public') {
+		if (!publicTopicsOk(fx, c.topics)) { send(res, 401, { error: 'unauthenticated' }); return; }
+		if (liveOff || publicFull) {
+			res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': String(publicFull || 5) });
+			res.end(JSON.stringify({ error: 'unavailable', message: 'Too many live streams are open.' }));
+			return;
+		}
+		// No seqs: every open starts with a resync, Last-Event-ID or not,
+		// naming the least seconds between two refetches of a window.
+		res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+		res.write('retry: 5000\n\n');
+		sendEv(c, { seq: 0, kind: 'resync', refetch_interval: PUBLIC_REFETCH_SECS });
+		liveClients.add(c);
+		const beat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
+		req.on('close', () => { clearInterval(beat); liveClients.delete(c); });
+		return;
+	}
+	if (liveOff) { send(res, 503, { error: 'live_off', message: 'Live updates are off.' }); return; }
 	res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
 	res.write('retry: 2000\n\n');
 	const last = Number(req.headers['last-event-id'] || url.searchParams.get('last') || 0);
@@ -347,6 +400,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		liveClients.clear();
 		liveRing.length = 0;
 		liveOff = false;
+		publicFull = 0;
 		csrfTokens.clear();
 		csrfTokens.add('standin-csrf');
 		send(res, 200, { reset: true });
@@ -367,7 +421,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		return;
 	}
 	if (url.pathname === '/api/_standin/events' && req.method === 'POST') {
-		liveOff = !!JSON.parse((await readBody(req)) || '{}').off;
+		const b = JSON.parse((await readBody(req)) || '{}');
+		if ('public_full' in b) {
+			publicFull = Math.max(0, Number(b.public_full) || 0);
+			if (publicFull) for (const c of [...liveClients]) if (c.who === 'public') { c.res.end(); liveClients.delete(c); }
+			send(res, 200, { public_full: publicFull });
+			return;
+		}
+		liveOff = !!b.off;
 		if (liveOff) for (const c of liveClients) c.res.end();
 		send(res, 200, { off: liveOff });
 		return;
@@ -378,6 +439,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		const body = req.method === 'GET' ? Object.fromEntries(url.searchParams) : JSON.parse((await readBody(req)) || '{}');
 		const [status, out] = fx.adminApi(req.method || 'GET', url.pathname.slice('/api/'.length), body, who);
 		if (status === 204) { res.writeHead(204); res.end(); } else send(res, status, out);
+		if (req.method !== 'GET' && url.pathname.startsWith('/api/mcp/')) await endWithdrawn();
 		return;
 	}
 	const lk = url.pathname.match(/^\/api\/users\/(\d+)\/lookup-name$/);
