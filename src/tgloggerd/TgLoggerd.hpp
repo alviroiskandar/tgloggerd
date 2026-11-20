@@ -27,6 +27,7 @@ class EventBus;
 class StorageJanitor;
 class FileFetcher;
 class Contacts;
+class StillsWorker;
 
 class TgLoggerd {
 public:
@@ -149,6 +150,14 @@ private:
 	 * db_ and before api_, whose storage routes call it.
 	 */
 	std::unique_ptr<StorageJanitor> janitor_;
+
+	/*
+	 * Generates stills for stored videos without a thumbnail
+	 * (TG_GENERATE_STILLS). Uses db_ and the store, and posts its events
+	 * to serial_; start() stops it with the janitor, before the pools
+	 * drain. Null while off.
+	 */
+	std::unique_ptr<StillsWorker> stills_;
 
 	/*
 	 * Fetches files from Telegram for the API's fetch route; stopped
