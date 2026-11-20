@@ -212,7 +212,7 @@ func run(log *slog.Logger, cfg *config.Config) error {
 		},
 		Proxies:    server.TrustedProxies(cfg.TrustedProxies),
 		Live:       hub,
-		LiveCfg:    server.LiveConfig{Recheck: cfg.LiveRecheck},
+		LiveCfg:    server.LiveConfig{Recheck: cfg.LiveRecheck, Public: server.PublicLiveConfig(cfg.LivePublic)},
 		Counts:     logdb.NewCountCache(cfg.CountCache),
 		Render:     renderer,
 		Assets:     assets,

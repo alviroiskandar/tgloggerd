@@ -56,6 +56,9 @@ type liveOpts struct {
 	// superadmin's), and ro the logger's database its scope reads.
 	state *webdb.SessionState
 	ro    *sql.DB
+	// proxies are trusted for X-Forwarded-For, so a test can open
+	// streams from several client addresses.
+	proxies TrustedProxies
 }
 
 func newLiveEnv(t *testing.T, o liveOpts) *liveEnv {
@@ -79,6 +82,7 @@ func newLiveEnv(t *testing.T, o liveOpts) *liveEnv {
 			}},
 		liveCfg: o.cfg,
 		ro:      o.ro,
+		proxies: o.proxies,
 	}
 	if !o.noHub {
 		e.d = livetest.New(t, testKey)
@@ -104,7 +108,7 @@ func newLiveEnv(t *testing.T, o liveOpts) *liveEnv {
 	for _, rt := range e.s.routes() {
 		mux.HandleFunc(rt.pattern, rt.handler)
 	}
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(e.s.withClient(mux))
 	t.Cleanup(srv.Close)
 	e.url = srv.URL
 	e.cookie = e.cookies.Issue(httptest.NewRecorder(), e.cookies.NewSession(1, "admin", "admin", 0))

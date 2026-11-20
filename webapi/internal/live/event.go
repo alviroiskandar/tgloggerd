@@ -53,6 +53,9 @@ type Event struct {
 	More      bool     `json:"more,omitempty"`
 	Fields    []string `json:"fields,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
+	// RefetchInterval is set on the first frame of a signed-out
+	// stream only: the least seconds between two window refetches.
+	RefetchInterval int `json:"refetch_interval,omitempty"`
 }
 
 // Known reports whether the kind is one the Hub passes on.

@@ -1837,7 +1837,8 @@ export function liveChange(kind: string, b: { chat_id?: number; message_id?: num
 // Whether a persona may see an event (web-live.md section 3).
 export function liveVisible(persona: Persona, e: { kind: string; chat_id?: number; user_id?: number; bot_id?: number }): boolean {
 	const s = scopeOf(persona);
-	if (s.role === 'public') return false;
+	// Signed out: only the chat events of exposed groups.
+	if (s.role === 'public') return (e.kind.startsWith('message.') || e.kind === 'file.stored') && e.chat_id !== undefined && exposedGroup(e.chat_id);
 	if (e.bot_id !== undefined) return botsFor(persona).some((b) => b.id === e.bot_id);
 	if (e.chat_id !== undefined) {
 		if (e.chat_id < 0) { const g = getGroup(e.chat_id); return !!g && s.group(g); }
@@ -1845,6 +1846,11 @@ export function liveVisible(persona: Persona, e: { kind: string; chat_id?: numbe
 	}
 	if (e.user_id !== undefined) { const u = getUser(e.user_id); return !!u && s.user(u); }
 	return true;
+}
+
+// Whether a group is exposed, for the signed-out live stream.
+export function exposedGroup(id: number): boolean {
+	return id < 0 && !!getGroup(id)?.exposed;
 }
 
 // A group the persona may see, for the pin endpoint.

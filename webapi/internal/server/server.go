@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"tgloggerd/webapi/internal/auth"
@@ -189,6 +190,10 @@ type Server struct {
 	series *logdb.SeriesCache
 	// rechecks has the daemon recheck the chat stretches served.
 	rechecks *rechecker
+	// publicState is the signed-out viewers' live state
+	// (Server.public), made once by publicOnce.
+	publicOnce  sync.Once
+	publicState *publicLive
 }
 
 // New returns the service's handler: the routes wrapped in request
@@ -322,7 +327,7 @@ func (s *Server) routes() []route {
 		{"POST /api/logout", s.postLogout},
 		{"GET /api/session", s.RequireSession(s.session, allGates...)},
 		{"GET /files/{token}", s.serveFile},
-		{"GET /api/events", s.RequireSession(s.events)},
+		{"GET /api/events", s.events},
 		{"GET /api/page/{path...}", s.getPage},
 		{"GET /app/assets/{file...}", s.serveAsset},
 		{"POST /api/account/password", s.RequireSession(s.changePassword, scope.PasswordChange)},

@@ -73,6 +73,11 @@ The client side is specified in [web-live-client.md](web-live-client.md)
   dropping the rest.
 - HTTP/2 between nginx and browsers, so one stream per tab does not
   exhaust HTTP/1.1's per-host connection limit.
+- Signed-out visitors of an exposed group's public chat get a stream
+  too, limited to a few `chat:<id>` topics of exposed groups, without
+  seqs or file ids and within caps of their own
+  ([decision](decisions/2026-11-21-chat-live-public.md); webapi/README,
+  "Live updates").
 
 ## 5. Resuming
 

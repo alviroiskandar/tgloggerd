@@ -1,6 +1,8 @@
 // Applies pageLive() to the current page: refetches it in place or
 // raises the "new activity" notice the shell shows, polls while the
-// stream is down, and follows session events.
+// stream is down, and follows session events. Signed out, only the
+// public chat has a stream: it follows that chat's session events and
+// nothing else (the chat view handles the rest).
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useNav } from '../nav.tsx';
 import { useLive, useLiveState, useRefetcher } from './react.tsx';
@@ -17,7 +19,10 @@ export function PageLive({ children }: { children: ReactNode }) {
 	const { page, refresh } = useNav();
 	const refetch = useRefetcher();
 	const state = useLiveState();
-	const spec = pageLive(page);
+	const signedOut = !page.viewer.signed_in;
+	const spec = signedOut ? null : pageLive(page);
+	const chat = signedOut && page.route === 'group_chat' ? (page.props as { chat?: { kind: string; group?: { id: number } } }).chat : undefined;
+	const publicTopics = chat?.kind === 'group' && chat.group ? [`chat:${chat.group.id}`] : null;
 	const [shown, setShown] = useState(false);
 	useEffect(() => setShown(false), [page]);
 
@@ -27,7 +32,14 @@ export function PageLive({ children }: { children: ReactNode }) {
 		else void refresh();
 	};
 
-	useLive(spec?.topics ?? null, (e: LiveEvent) => {
+	useLive(spec?.topics ?? publicTopics, (e: LiveEvent) => {
+		if (signedOut) {
+			// A visitor has no session to lose: revoked is not for it. A
+			// withdrawn group (scope_changed) reloads the page, whose answer
+			// says whether the chat is still public.
+			if (e.kind === 'session' && e.reason === 'scope_changed') void refresh();
+			return;
+		}
 		if (e.kind === 'session') {
 			if (e.reason === 'revoked') location.assign(`/login?next=${encodeURIComponent(page.url)}`);
 			else void refresh();

@@ -27,7 +27,9 @@ import (
 // 4, as Server-Sent Events, fanned out from the daemon's stream by a
 // live.Hub. Each event passes the subscriber's topics and then the
 // request scope, so a viewer never learns of activity in a chat hidden
-// from them. The contract is in webapi/README and openapi.yaml.
+// from them. A signed-out visitor may follow the chats of exposed
+// groups only (publiclive.go). The contract is in webapi/README and
+// openapi.yaml.
 
 // LiveConfig tunes GET /api/events. A zero field takes its default.
 type LiveConfig struct {
@@ -42,6 +44,8 @@ type LiveConfig struct {
 	// that stops reading ends its stream then, instead of holding the
 	// handler until the connection gives up. Default 30 s.
 	WriteTimeout time.Duration
+	// Public limits the streams of signed-out viewers (publiclive.go).
+	Public PublicLiveConfig
 }
 
 const (
@@ -260,14 +264,22 @@ func liveOff(w http.ResponseWriter, message string) {
 		map[string]any{"message": message})
 }
 
-// events serves GET /api/events.
+// events serves GET /api/events. A session is optional: without one
+// the stream is a signed-out visitor's (publicEvents).
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	sess, _ := SessionFrom(r.Context())
+	ps, sc, ok := s.optionalSession(w, r)
+	if !ok {
+		return
+	}
 	noStore(w)
 	t, err := parseTopics(r.URL.Query().Get("topics"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request",
 			map[string]any{"message": err.Error()})
+		return
+	}
+	if ps == nil {
+		s.publicEvents(w, r, t)
 		return
 	}
 	last, err := lastSeen(r)
@@ -281,7 +293,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sc := s.requestScope(r, &sess)
 	filter := s.liveFilter
 	var exposed map[int64]bool
 	if filter == nil {
@@ -316,6 +327,38 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	defer sub.Close()
 
+	recheck := s.liveCfg.Recheck
+	if recheck <= 0 {
+		recheck = defaultRecheck
+	}
+	s.serveStream(w, r, sub, streamOpts{
+		retry: liveRetry,
+		first: append([]live.Event{{Seq: st.Seq, Kind: st.Kind}}, st.Replay...),
+		every: recheck,
+		check: func() string { return s.liveRecheck(r, sc, t, exposed) },
+	})
+}
+
+// streamOpts is how serveStream runs one stream.
+type streamOpts struct {
+	// retry is the reconnection delay asked for, in milliseconds.
+	retry int
+	// first is what is sent before the subscription's events.
+	first []live.Event
+	// resync, when set, rewrites the resync sent to a stream that fell
+	// behind.
+	resync func(live.Event) live.Event
+	// check is called every `every`, and whenever the channel wake
+	// returns is closed (wake is called again after each check); a
+	// reason it answers ends the stream with a session event.
+	every time.Duration
+	wake  func() <-chan struct{}
+	check func() string
+}
+
+// serveStream writes a subscription's events until the client goes,
+// the hub ends the subscription, a write fails or check ends it.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request, sub *live.Sub, o streamOpts) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	// nginx honours this per answer, besides the location's settings.
@@ -332,13 +375,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	deadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(writeTimeout)) }
 
 	deadline()
-	if _, err := fmt.Fprintf(w, "retry: %d\n\n", liveRetry); err != nil {
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n", o.retry); err != nil {
 		return
 	}
-	if err := writeFrame(w, live.Event{Seq: st.Seq, Kind: st.Kind}); err != nil {
-		return
-	}
-	for _, e := range st.Replay {
+	for _, e := range o.first {
 		if err := writeFrame(w, e); err != nil {
 			return
 		}
@@ -351,14 +391,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if heartbeat <= 0 {
 		heartbeat = defaultHeartbeat
 	}
-	recheck := s.liveCfg.Recheck
-	if recheck <= 0 {
-		recheck = defaultRecheck
-	}
 	hb := time.NewTicker(heartbeat)
 	defer hb.Stop()
-	rk := time.NewTicker(recheck)
-	defer rk.Stop()
+	var tick <-chan time.Time
+	if o.every > 0 {
+		rk := time.NewTicker(o.every)
+		defer rk.Stop()
+		tick = rk.C
+	}
+	var wake <-chan struct{}
+	if o.wake != nil {
+		wake = o.wake()
+	}
 
 	for {
 		var err error
@@ -373,16 +417,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			deadline()
 			err = writeFrame(w, e)
 		case <-sub.Lost():
+			e := sub.Resync()
+			if o.resync != nil {
+				e = o.resync(e)
+			}
 			deadline()
-			err = writeFrame(w, sub.Resync())
+			err = writeFrame(w, e)
 		case <-hb.C:
 			deadline()
 			_, err = w.Write([]byte(": keepalive\n\n"))
-		case <-rk.C:
-			if reason := s.liveRecheck(r, sc, t, exposed); reason != "" {
-				deadline()
-				_ = writeFrame(w, live.Event{Kind: live.KindSession, Reason: reason})
-				_ = rc.Flush()
+		case <-tick:
+			if s.endStream(w, rc, deadline, o.check()) {
+				return
+			}
+			continue
+		case <-wake:
+			wake = o.wake()
+			if s.endStream(w, rc, deadline, o.check()) {
 				return
 			}
 			continue
@@ -391,6 +442,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// endStream sends the session event that ends a stream, for a check's
+// reason; false when there is none.
+func (s *Server) endStream(w http.ResponseWriter, rc *http.ResponseController,
+	deadline func(), reason string) bool {
+	if reason == "" {
+		return false
+	}
+	deadline()
+	_ = writeFrame(w, live.Event{Kind: live.KindSession, Reason: reason})
+	_ = rc.Flush()
+	return true
 }
 
 // liveUsers is the users a stream of a viewer that does not see users
