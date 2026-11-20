@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+	"strings"
 
 	"tgloggerd/webapi/internal/scope"
 )
@@ -257,7 +258,9 @@ type FileStill struct {
 // the messages the scope sees, in one query per message table: the
 // same video sent again carries the same pictures, and a message
 // logged before the daemon stored thumbnails has none, so any visible
-// message that has one will do. A file with none is left out.
+// message that has one will do. A video that has none from a message
+// of its own gets the picture a message it plays a role in shows it
+// with (roleStills). A file with none is left out.
 func FileStills(ctx context.Context, db *sql.DB, sc scope.Scope, ids []uint64) (map[uint64]FileStill, error) {
 	gf, ga := sc.GroupFilter("m.chat_id")
 	return fileStills(ctx, db, ids, gf, ga, sc.SeesPrivate())
@@ -325,7 +328,79 @@ func fileStills(ctx context.Context, db *sql.DB, ids []uint64, gf string, ga []a
 			return nil, err
 		}
 	}
+	if err := roleStills(ctx, db, args, gf, ga, private, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// roleStillCandidates are the stored pictures a video gets from a
+// message it plays a role in (rather than being its own file), as the
+// chat shows it there, with their rank (0 first): a rich block's still
+// thumbnail at its position (rich.go), an animated chat photo's still
+// photo (photoAnimation), a video link preview's cover, else the
+// preview's photo (previewMedium). A paid item, a game's animation
+// and a live photo's video have none. FK is the message table's key
+// in telegram_message_files and telegram_link_previews; the ids are
+// bound twice.
+const roleStillCandidates = "SELECT v.file_id, v.FK AS msg, 0 AS prio, st.file_id AS still " +
+	"FROM telegram_message_files v JOIN telegram_message_files st ON st.FK = v.FK AND (" +
+	"(v.role = 'rich' AND st.role = 'thumbnail' AND st.position = v.position) OR " +
+	"(v.role = 'chat_photo' AND v.position = 1 AND st.role = 'chat_photo' AND st.position = 0) OR " +
+	"(v.role = 'preview_media' AND v.position = 0 AND st.role = 'preview_media' AND st.position = 1 " +
+	"AND EXISTS (SELECT 1 FROM telegram_link_previews vp WHERE vp.FK = v.FK AND vp.type = 'video'))) " +
+	"WHERE v.file_id IN (IDS) AND v.role IN ('rich', 'chat_photo', 'preview_media') " +
+	"UNION ALL SELECT v.file_id, v.FK, 1, p.photo_file_id " +
+	"FROM telegram_message_files v JOIN telegram_link_previews p ON p.FK = v.FK " +
+	"WHERE v.file_id IN (IDS) AND v.role = 'preview_media' AND v.position = 0"
+
+// roleStills fills in the Thumbnail of the videos of out that have no
+// picture from a message of their own (fileStills), from the messages
+// filter allows that they play a role in (roleStillCandidates), the
+// private ones too if private: the best rank, then the smallest id.
+// args are the video ids. It costs one query per message table, as
+// many videos as there are.
+func roleStills(ctx context.Context, db *sql.DB, args []any, gf string, ga []any, private bool,
+	out map[uint64]FileStill) error {
+	ph := placeholders(len(args))
+	type pick struct{ prio, still uint64 }
+	best := map[uint64]pick{}
+	query := func(table, fk, filter string, fargs []any) error {
+		c := strings.NewReplacer("FK", fk, "IDS", ph).Replace(roleStillCandidates)
+		rs, err := db.QueryContext(ctx, "SELECT c.file_id, c.prio, MIN(c.still) AS still "+
+			"FROM ("+c+") c JOIN telegram_files sf ON sf.id = c.still AND sf.on_disk = 1 "+
+			"JOIN "+table+" m ON m.id = c.msg WHERE "+filter+
+			" GROUP BY c.file_id, c.prio", both(both(args, args), fargs)...)
+		if err != nil {
+			return err
+		}
+		rows, err := scanRows(rs)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			id, p := r.Uint("file_id"), pick{r.Uint("prio"), r.Uint("still")}
+			if b, ok := best[id]; !ok || p.prio < b.prio || p.prio == b.prio && p.still < b.still {
+				best[id] = p
+			}
+		}
+		return nil
+	}
+	if err := query("telegram_group_messages", "group_message_id", gf, ga); err != nil {
+		return err
+	}
+	if private {
+		if err := query("telegram_private_messages", "private_message_id", "1", nil); err != nil {
+			return err
+		}
+	}
+	for id, b := range best {
+		if st := out[id]; st.Cover == 0 && st.Thumbnail == 0 {
+			st.Thumbnail = b.still
+			out[id] = st
+		}
+	}
+	return nil
 }
 
 // ForwardOrigins names where forwarded messages came from, by message

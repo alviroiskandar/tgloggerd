@@ -201,6 +201,16 @@ nothing. Both are read for a whole page at once, in one query per
 message table. A thumbnail's own row is listed as a `photo`, its own
 `thumb`; the `file_type` filter still finds it as `thumbnail`.
 
+A video that no visible message carries as its own file with a picture
+(a rich message's video, an animated chat photo, a link preview's
+video) gets `thumb` from a visible message it plays a role in, as the
+chat shows it there: the stored thumbnail at its block's position
+(role `thumbnail`), the stored still photo (`chat_photo` position 0),
+or a `video` preview's stored cover (`preview_media` position 1), else
+the preview's stored photo; the smallest id among equals. A paid item,
+a game's animation and a live photo's video get none. It costs one
+more query per message table, for the whole page.
+
 ## Files list
 
 Every row of the Drogon files list (`/files`) links to the file's
