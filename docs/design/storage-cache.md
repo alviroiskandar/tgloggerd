@@ -285,16 +285,29 @@ touched and evicted like the rest. Its row says what it is:
 `thumbnail`, `generated_from_file_id` the video's row.
 
 Since Telegram has no copy, an evicted still is not fetched (section
-8): the message shows its minithumb or type icon meanwhile, and the
-stills pass takes it again from the video the next time it runs over
-the archive (at start, with `TG_GENERATE_STILLS` on): a message whose
-thumbnail is an evicted generated still is a candidate again. The
-same frame of the same video, taken by the same ffmpeg, gives the same
-bytes, so the still usually comes
-back as the same row (a still with other bytes, from another ffmpeg,
-is a new row that takes the evicted one's place on the messages). A
-video whose own bytes are evicted gets no
-still until they are stored again.
+8): it is taken again from the video. With `TG_GENERATE_STILLS` on,
+a real sweep hands the generated stills it evicted (their rows say
+`generated:`) to the stills worker once the sweep is over, and the
+worker queues the videos each one stands for: the one it was taken
+from and the main file of every message it is the thumbnail of. It
+takes them before the pass's own backlog, after the new messages. The
+message shows its minithumb or type icon meanwhile. A sweep hands on
+at most 10000 stills and the worker queues at most as many as it
+queues new messages; the rest, like the stills evicted while the
+daemon was down or the pass off, wait for the pass at the next start,
+for which a message whose thumbnail is an evicted generated still is
+a candidate again.
+
+Handing them on after the sweep, not during it, keeps the two from
+fighting: a still evicted together with its video gets nothing (a
+video whose own bytes are evicted gets no still until they are stored
+again), and a still taken again is the most recently accessed row of
+the store, so retention leaves it alone for its whole period and the
+cap reaches it only after every older file. The same frame of the
+same video, taken by the same ffmpeg, gives the same bytes, so the
+still usually comes back as the same row (a still with other bytes,
+from another ffmpeg, is a new row that takes the evicted one's place
+on the messages).
 
 ## 10. Access tracking
 
