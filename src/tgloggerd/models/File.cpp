@@ -63,7 +63,7 @@ FileCandidates find_file_candidates(mysql::Transaction &tx,
 }
 } /* namespace */
 
-uint64_t DB::upsertFile(const models::File &f)
+uint64_t DB::upsertFile(const models::File &f, std::string *row_ext)
 {
 	/*
 	 * De-duplicate by content: the SHA-256 is stored as BINARY(32), so
@@ -178,6 +178,13 @@ uint64_t DB::upsertFile(const models::File &f)
 				   { (int64_t)id, (int64_t)other });
 		}
 	});
+	if (row_ext) {
+		auto rows = db_.query("SELECT COALESCE(file_ext, '')"
+				      " FROM telegram_files WHERE id = ?",
+				      { (int64_t)id });
+		*row_ext = rows.empty() ? std::string()
+					: rows[0][0].value_or("");
+	}
 	return id;
 }
 
@@ -236,7 +243,11 @@ models::KnownFile DB::upsertFileMeta(const models::File &f)
 				"UPDATE telegram_files SET"
 				" hit_count = hit_count + 1,"
 				" tg_unique_id = COALESCE(tg_unique_id, ?),"
-				" file_ext = COALESCE(file_ext, ?),"
+				/* The blob of a row with bytes is named
+				 * <sha256>[.file_ext] (blobPath): its
+				 * extension is fixed once they are stored. */
+				" file_ext = IF(sha256 IS NULL,"
+				" COALESCE(file_ext, ?), file_ext),"
 				" orig_file_name = IF(orig_file_name = '', ?, orig_file_name),"
 				/* Seen again: in use, keep it from eviction. */
 				" accessed_at = NOW()"

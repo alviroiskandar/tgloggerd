@@ -513,8 +513,12 @@ public:
 	/*
 	 * Insert a file, or, if a row with the same SHA-256 already exists,
 	 * bump its hit_count. Returns the telegram_files.id in both cases.
+	 * When @row_ext is given it gets the row's file_ext afterwards (empty
+	 * for none): the name its blob must have, which differs from
+	 * f.file_ext when an existing row already had one.
 	 */
-	uint64_t upsertFile(const models::File &f);
+	uint64_t upsertFile(const models::File &f,
+			    std::string *row_ext = nullptr);
 
 	/*
 	 * Record a file without its bytes (storage-cache.md section 6):

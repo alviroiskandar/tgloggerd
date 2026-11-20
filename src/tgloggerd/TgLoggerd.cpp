@@ -1679,7 +1679,33 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 	f.orig_file_name = orig_file_name;
 	f.on_disk = blob->on_disk;
 
-	uint64_t id = db_->upsertFile(f);
+	std::string row_ext;
+	uint64_t id = db_->upsertFile(f, &row_ext);
+	/*
+	 * The row may already have had another extension (recorded
+	 * metadata-only first, or these bytes stored before under another
+	 * one): its blob must be named by the row's, which is where the web
+	 * and the janitor look for it.
+	 */
+	if (blob->on_disk && row_ext != blob->ext) {
+		std::error_code ec;
+		if (renameBlob(storage_dir_, blob->sha256_hex, blob->ext,
+			       row_ext, ec))
+			pr_info(l_, "Renamed stored file to its row's extension"
+				" | id=%llu sha256=%s ext=%s->%s",
+				(unsigned long long)id,
+				blob->sha256_hex.c_str(),
+				blob->ext.empty() ? "(none)" : blob->ext.c_str(),
+				row_ext.empty() ? "(none)" : row_ext.c_str());
+		else
+			pr_error(l_, "Failed to rename stored file to its row's"
+				 " extension | id=%llu sha256=%s ext=%s->%s: %s",
+				 (unsigned long long)id,
+				 blob->sha256_hex.c_str(),
+				 blob->ext.empty() ? "(none)" : blob->ext.c_str(),
+				 row_ext.empty() ? "(none)" : row_ext.c_str(),
+				 ec.message().c_str());
+	}
 	/* Remember it so later references link instead of re-downloading. */
 	known_files_.put(tg_file_id, tg_unique_id,
 			 models::KnownFile{ id, false });
