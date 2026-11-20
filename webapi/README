@@ -281,7 +281,8 @@ the source; the daemon's stream is the only source today, and a broker
 (several web instances, several publishers) would be another
 live.Source, leaving the fan-out as it is.
 
-  - A session is required (401 without one). Topics: chat:<chat_id>
+  - A session is required, except for the signed-out streams below
+    (401 otherwise). Topics: chat:<chat_id>
     (message.new, message.edited, message.deleted, file.stored of one
     chat), messages (the same for every visible chat), user:<id>
     (user.updated), group:<chat_id> (group.updated), stats
@@ -343,6 +344,41 @@ live.Source, leaving the fan-out as it is.
     are refused and poll until it is back.
   - On SIGTERM the hub stops first and every stream closes, so open
     streams do not hold the shutdown up.
+
+Signed-out streams (internal/server/publiclive.go,
+docs/design/decisions/2026-11-21-chat-live-public.md): a visitor
+reading the public chat of an exposed group follows it without a
+session.
+
+  - Only chat:<chat_id> topics of exposed groups, at most
+    WEBAPI_LIVE_PUBLIC_TOPICS of them. Any other topic, a group that is
+    not exposed or does not exist, or more chats answer 401
+    unauthenticated alike, as the chat window answers a visitor.
+  - Exposure is matched against a snapshot of telegram_public_groups in
+    memory, read when the first signed-out stream opens, every
+    WEBAPI_LIVE_PUBLIC_EXPOSURE_SECS while one is open, and at once
+    when POST or DELETE /api/mcp/groups changes it. A withdrawn group
+    stops passing events and ends its streams with a session event of
+    reason scope_changed (never revoked, which would send a visitor to
+    the sign-in page).
+  - No seq: frames have no "id:" line and events no seq, last= and
+    Last-Event-ID are ignored, and every stream starts with a resync
+    whose refetch_interval is WEBAPI_LIVE_PUBLIC_REFETCH_SECS, the
+    least time the client leaves between two refetches of its window.
+    The seqs would tell anyone the event rate of the whole archive and
+    when the daemon started; a reconnect costs one refetch instead.
+  - file.stored carries no file_id, a row id over every chat's files.
+  - "retry:" is 5 to 15 seconds, different per stream, so visitors do
+    not all come back at once after the daemon's stream dropped them.
+  - Caps of their own, checked before the hub: WEBAPI_LIVE_PUBLIC_MAX
+    streams in all, WEBAPI_LIVE_PUBLIC_PER_ADDR per client address (an
+    IPv4 address or an IPv6 /64, from the client address
+    WEBAPI_TRUSTED_PROXIES finds) and WEBAPI_LIVE_PUBLIC_OPENS_PER_MINUTE
+    opens per address and minute, refused with 503 unavailable and
+    Retry-After (30, or 60 for the opens). They are outside
+    WEBAPI_LIVE_MAX_SUBSCRIBERS (Hub.SubscribeWith, Uncapped), so
+    signed-in viewers keep all its slots whatever visitors do. Each
+    gets a buffer of WEBAPI_LIVE_PUBLIC_BUFFER events.
 
 ## Routing /api/events through nginx
 
@@ -1398,6 +1434,21 @@ and its own:
                          default 4096
     WEBAPI_LIVE_RECHECK  seconds between two session checks of an open
                          stream, default 30
+    WEBAPI_LIVE_PUBLIC_MAX       signed-out event streams at most, in
+                         all, default 200; 0 allows none
+    WEBAPI_LIVE_PUBLIC_PER_ADDR  signed-out streams per client address
+                         (IPv4 address or IPv6 /64), default 4
+    WEBAPI_LIVE_PUBLIC_OPENS_PER_MINUTE   signed-out streams one
+                         address may open per minute, default 10
+    WEBAPI_LIVE_PUBLIC_TOPICS    chats one signed-out stream may follow,
+                         default 4
+    WEBAPI_LIVE_PUBLIC_BUFFER    events queued per signed-out stream,
+                         default 32
+    WEBAPI_LIVE_PUBLIC_REFETCH_SECS   least seconds a signed-out client
+                         leaves between two window refetches, default 5
+    WEBAPI_LIVE_PUBLIC_EXPOSURE_SECS  seconds between two readings of
+                         the exposed groups while a signed-out stream is
+                         open, default 10
     WEBAPI_RECHECK       "0" asks the daemon for no chat rechecks
                          (Chats, "Recheck"); they also need
                          WEB_TGLOGGERD_API

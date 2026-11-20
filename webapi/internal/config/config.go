@@ -98,6 +98,9 @@ type Config struct {
 	// LiveRecheck is how often an open stream checks its session again
 	// (WEBAPI_LIVE_RECHECK, seconds).
 	LiveRecheck time.Duration
+	// LivePublic limits the signed-out viewers' event streams
+	// (WEBAPI_LIVE_PUBLIC_*; webapi/README, "Live updates").
+	LivePublic LivePublic
 	// Recheck limits the chat rechecks asked of the daemon
 	// (WEBAPI_RECHECK_*; webapi/README, "Recheck").
 	Recheck Recheck
@@ -199,6 +202,61 @@ type Recheck struct {
 	PublicPerMinute, PublicBurst, PublicReserve int
 	Timeout                                     time.Duration
 	MaxInFlight                                 int
+}
+
+// LivePublic is the limits of the signed-out viewers' event streams,
+// in the shape of server.PublicLiveConfig. A zero setting turns the
+// thing off and is read as -1 here: Max (no signed-out streams), Cache
+// (no shared window cache).
+type LivePublic struct {
+	Max, PerAddr, OpensPerMinute, Topics, Buffer int
+	Refetch, Cache, Exposure                     time.Duration
+}
+
+func livePublic() (LivePublic, error) {
+	var p LivePublic
+	var err error
+	if p.Max, err = integer("WEBAPI_LIVE_PUBLIC_MAX", "200"); err != nil {
+		return p, err
+	}
+	if p.Max < 0 {
+		return p, fmt.Errorf("WEBAPI_LIVE_PUBLIC_MAX: %q is negative",
+			env("WEBAPI_LIVE_PUBLIC_MAX", "200"))
+	}
+	if p.Max == 0 {
+		p.Max = -1
+	}
+	for _, v := range []struct {
+		key, def string
+		dst      *int
+	}{
+		{"WEBAPI_LIVE_PUBLIC_PER_ADDR", "4", &p.PerAddr},
+		{"WEBAPI_LIVE_PUBLIC_OPENS_PER_MINUTE", "10", &p.OpensPerMinute},
+		{"WEBAPI_LIVE_PUBLIC_TOPICS", "4", &p.Topics},
+		{"WEBAPI_LIVE_PUBLIC_BUFFER", "32", &p.Buffer},
+	} {
+		if *v.dst, err = positive(v.key, v.def); err != nil {
+			return p, err
+		}
+	}
+	n, err := positive("WEBAPI_LIVE_PUBLIC_REFETCH_SECS", "5")
+	if err != nil {
+		return p, err
+	}
+	p.Refetch = time.Duration(n) * time.Second
+	if n, err = positive("WEBAPI_LIVE_PUBLIC_EXPOSURE_SECS", "10"); err != nil {
+		return p, err
+	}
+	p.Exposure = time.Duration(n) * time.Second
+	if n, err = integer("WEBAPI_LIVE_PUBLIC_CACHE_SECS", "2"); err != nil || n < 0 {
+		return p, fmt.Errorf("WEBAPI_LIVE_PUBLIC_CACHE_SECS: %q is not a number of seconds",
+			env("WEBAPI_LIVE_PUBLIC_CACHE_SECS", "2"))
+	}
+	p.Cache = time.Duration(n) * time.Second
+	if n == 0 {
+		p.Cache = -1
+	}
+	return p, nil
 }
 
 func recheckLimits() (Recheck, error) {
@@ -428,6 +486,9 @@ func FromEnv() (*Config, error) {
 		return nil, err
 	}
 	c.LiveRecheck = time.Duration(recheck) * time.Second
+	if c.LivePublic, err = livePublic(); err != nil {
+		return nil, err
+	}
 	if c.Recheck, err = recheckLimits(); err != nil {
 		return nil, err
 	}
