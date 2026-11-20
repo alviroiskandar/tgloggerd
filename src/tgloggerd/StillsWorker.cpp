@@ -70,6 +70,48 @@ void StillsWorker::messageFileStored(bool is_group, int64_t chat_id,
 	cv_.notify_all();
 }
 
+void StillsWorker::stillsEvicted(const std::vector<uint64_t> &still_ids)
+{
+	size_t queued = 0;
+	{
+		std::lock_guard<std::mutex> lk(mtx_);
+		if (stop_)
+			return;
+		for (uint64_t id : still_ids) {
+			if (evicted_.size() >= cfg_.max_new)
+				break;
+			if (evicted_ids_.insert(id).second) {
+				evicted_.push_back(id);
+				queued++;
+			}
+		}
+	}
+	if (queued)
+		pr_info(l_, "stills: %zu evicted still(s) to take again",
+			queued);
+	cv_.notify_all();
+}
+
+void StillsWorker::queueStillVideos(uint64_t still_id)
+{
+	std::vector<uint64_t> videos;
+	try {
+		videos = db_.listStillVideos(still_id);
+	} catch (const std::exception &e) {
+		pr_error(l_, "stills: could not list the videos of evicted"
+			 " still %llu: %s", (unsigned long long)still_id,
+			 e.what());
+		return;
+	}
+	std::lock_guard<std::mutex> lk(mtx_);
+	for (uint64_t v : videos) {
+		if (regen_.size() >= cfg_.max_new)
+			break;
+		if (regen_ids_.insert(v).second)
+			regen_.push_back(v);
+	}
+}
+
 bool StillsWorker::sleepUntil(Clock::time_point t)
 {
 	std::unique_lock<std::mutex> lk(mtx_);
@@ -96,6 +138,9 @@ void StillsWorker::loop(void)
 	for (;;) {
 		std::optional<uint64_t> video;
 		std::optional<Fresh> msg;
+		std::optional<uint64_t> evicted;
+		/* video is one of an evicted still, not of the pass. */
+		bool regen = false;
 		{
 			std::unique_lock<std::mutex> lk(mtx_);
 			for (;;) {
@@ -109,6 +154,19 @@ void StillsWorker::loop(void)
 					fresh_.pop_front();
 					break;
 				}
+				if (!regen_.empty()) {
+					video = regen_.front();
+					regen_ids_.erase(*video);
+					regen_.pop_front();
+					regen = true;
+					break;
+				}
+				if (!evicted_.empty()) {
+					evicted = evicted_.front();
+					evicted_ids_.erase(*evicted);
+					evicted_.pop_front();
+					break;
+				}
 				if (!backlog_.empty()) {
 					video = backlog_.front();
 					backlog_.pop_front();
@@ -119,6 +177,11 @@ void StillsWorker::loop(void)
 				else
 					cv_.wait_until(lk, fresh_.front().due);
 			}
+		}
+		if (evicted) {
+			/* Only reads: not paced. */
+			queueStillVideos(*evicted);
+			continue;
 		}
 		if (Clock::now() < next && !sleepUntil(next))
 			return;
@@ -141,7 +204,10 @@ void StillsWorker::loop(void)
 		if (o == Outcome::Away) {
 			/* Keep it for when the service is back. */
 			std::lock_guard<std::mutex> lk(mtx_);
-			if (video) {
+			if (regen) {
+				if (regen_ids_.insert(*video).second)
+					regen_.push_front(*video);
+			} else if (video) {
 				backlog_.push_front(*video);
 			} else if (fresh_ids_.insert({ msg->chat_id,
 						       msg->message_id }).second) {
@@ -153,7 +219,7 @@ void StillsWorker::loop(void)
 		}
 		if (o == Outcome::Worked)
 			next = Clock::now() + cfg_.pace;
-		if (video && (++backlog_done_ % 1000 == 0 ||
+		if (video && !regen && (++backlog_done_ % 1000 == 0 ||
 			      backlog_done_ == backlog_total_))
 			pr_info(l_, "stills: went through %zu of %zu video(s);"
 				" %llu still(s) made so far", backlog_done_,

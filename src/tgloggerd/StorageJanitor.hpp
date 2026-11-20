@@ -7,11 +7,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
 #include <condition_variable>
+#include <vector>
 
 #include "helpers/log.h"
 #include "DB.hpp"
@@ -27,6 +29,11 @@ namespace tgloggerd {
  *
  * A thread of its own, woken every sweep_secs and by requestSweep(). Only
  * the database (one pool connection) and the store directory are used.
+ *
+ * The generated stills a real sweep evicted (section 9.1) are handed to
+ * the StillsEvictedFn once the sweep is over, so that they are taken
+ * again from their videos: not during the sweep, which may still evict
+ * the video too, and not before the sweep has moved past them.
  */
 class StorageJanitor {
 public:
@@ -78,12 +85,22 @@ public:
 
 	/* Rows listed per query, and evicted per batch. */
 	static constexpr size_t kBatch = 1000;
+	/* Evicted generated stills handed on per sweep at most; the rest
+	 * wait for the stills pass at the next start. */
+	static constexpr size_t kMaxStills = 10000;
+
+	/* The ids of the generated stills one sweep evicted. */
+	using StillsEvictedFn =
+		std::function<void(const std::vector<uint64_t> &)>;
 
 	StorageJanitor(DB *db, log_hd_t *l, Config cfg);
 	~StorageJanitor(void);
 
 	StorageJanitor(const StorageJanitor &) = delete;
 	StorageJanitor &operator=(const StorageJanitor &) = delete;
+
+	/* Where evicted generated stills go; before start(). */
+	void setStillsEvicted(StillsEvictedFn fn) { stills_fn_ = std::move(fn); }
 
 	void start(void);
 	/* Stop promptly, mid-batch if need be, and join. Idempotent. */
@@ -116,6 +133,10 @@ private:
 	DB		*db_;
 	log_hd_t	*l_;
 	const Config	cfg_;
+	StillsEvictedFn	stills_fn_;
+	/* The generated stills the running sweep evicted; its thread only. */
+	std::vector<uint64_t>	stills_;
+	uint64_t		stills_dropped_ = 0;
 
 	std::thread		thr_;
 	std::mutex		mtx_;

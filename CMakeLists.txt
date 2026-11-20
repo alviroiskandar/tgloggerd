@@ -421,13 +421,15 @@ target_compile_options(stills_db_test PRIVATE -Wall -Wextra)
 target_link_libraries(stills_db_test PRIVATE connector-jdbc
 	nlohmann_json::nlohmann_json Threads::Threads)
 
-# The generated-still pass end to end: StillsWorker against a throwaway
-# MySQL with every migration applied and a running stills service
-# (TGL_TEST_STILLS_* in the test's header); not part of the default build:
+# The generated-still pass end to end: StillsWorker (and a
+# StorageJanitor evicting a still) against a throwaway MySQL with every
+# migration applied and a running stills service (TGL_TEST_STILLS_* in
+# the test's header); not part of the default build:
 #   cmake --build build --target stills_worker_test && build/stills_worker_test
 add_executable(stills_worker_test EXCLUDE_FROM_ALL
 	src/tgloggerd/tests/stills_worker_test.cpp
 	src/tgloggerd/StillsWorker.cpp
+	src/tgloggerd/StorageJanitor.cpp
 	src/tgloggerd/StillsClient.cpp
 	src/tgloggerd/DB.cpp
 	${TGLOGGERD_MODEL_SOURCES}
