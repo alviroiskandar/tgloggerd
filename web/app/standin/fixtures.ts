@@ -1114,17 +1114,27 @@ const groupHistory = (g) => getGroupHistory(g).map((e, i) => ({ kind: e.kind, at
 // current photo its history lacks (set after the newest change the
 // archive recorded), which still comes first.
 const currentMissing = (owner) => Math.abs(owner.id) % 3 === 0;
+// Animated photos, as Go gives them (video_url, video_file_id), by the
+// photo change's index: some have their video (served as the stand-in
+// serves every file, so it does not play), a few have one that cannot
+// be served (a file id, no URL), the rest none. The current photo the
+// history lacks is animated for every other owner.
+function photoVideo(id: number, i: number) {
+	if (i % 4 === 0) return { video_url: `/files/standin-${id * 10 + 1}`, video_file_id: id * 10 + 1 };
+	if (i % 8 === 3) return { video_url: null, video_file_id: id * 10 + 1 };
+	return { video_url: null, video_file_id: null };
+}
 function photosOf(owner, history) {
 	const events = history.map((e, i) => ({ e, i })).filter((x) => x.e.kind === 'photo');
 	const items = events.filter((x) => photoSet(x.i)).map((x) => {
 		const id = photoId(owner, x.i);
-		return { id, at: iso(x.e.at), url: photoUrl(id, x.i), file_id: id };
+		return { id, at: iso(x.e.at), url: photoUrl(id, x.i), file_id: id, ...photoVideo(id, x.i) };
 	});
 	if (currentMissing(owner)) {
 		const id = photoId(owner, 99);
 		const last = events[0] ? Date.parse(iso(events[0].e.at)) : Date.parse('2026-11-01T00:00:00Z');
 		const at = new Date(last + 3600e3).toISOString().replace(/\.\d+Z$/, 'Z');
-		return { items: [{ id, at, url: `/files/standin-${id}`, file_id: id }, ...items], current_id: id };
+		return { items: [{ id, at, url: `/files/standin-${id}`, file_id: id, ...photoVideo(id, Math.abs(owner.id) % 2 === 0 ? 0 : 1) }, ...items], current_id: id };
 	}
 	const newest = events[0];
 	return { items, current_id: newest && photoSet(newest.i) ? photoId(owner, newest.i) : null };
