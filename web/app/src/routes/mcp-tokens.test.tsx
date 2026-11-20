@@ -224,3 +224,55 @@ describe('a member holding mcp_tokens', () => {
 		expect(adminApi('PATCH', 'accounts/5', { abilities: ['mcp'] }, 'superadmin')[0]).toBe(400);
 	});
 });
+
+describe('mcp token scopes in the stand-in', () => {
+	const tokens = (persona: 'superadmin' | 'admin' = 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', persona).props.tokens;
+	const tok = (name: string) => tokens().find((t) => t.name === name)!;
+	const refs = (name: string) => tok(name).scope.map(({ kind, id }) => ({ kind, id }));
+	const opts = (persona: 'superadmin' | 'admin' | 'member') => fixture<McpTokensProps>('/mcp-admin/tokens', persona).props.scope_options;
+
+	it('sends each token\'s scope in order, with its inactive entries', () => {
+		expect(tok('old ci job').scope).toEqual([]);
+		const s = tok('research-agent').scope;
+		expect(s.map((e) => e.kind)).toEqual(['federation', 'group', 'group']);
+		expect(s[1]!.id).toBeLessThan(s[2]!.id);
+		// One of its groups is not exposed.
+		expect(s.filter((e) => e.kind === 'group').map((e) => e.active).sort()).toEqual([false, true]);
+		expect(tok('laptop').scope.map((e) => [e.kind, e.active])).toEqual([['private', true]]);
+		// A deleted federation, and a private chat on an admin's token.
+		expect(tok('').scope.map((e) => [e.kind, e.name === '', e.active])).toEqual([['federation', true, false], ['private', false, false]]);
+	});
+
+	it('offers the exposed groups the viewer sees, and private chats to a superadmin only', () => {
+		expect(opts('superadmin').private).toBe(true);
+		expect(opts('admin').private).toBe(false);
+		expect(opts('member').private).toBe(false);
+		expect(opts('superadmin').federations.map((f) => f.name)).toContain('Default');
+		const exposed = fixture<{ groups: { group: { id: number } }[] }>('/mcp-admin/groups').props.groups.map((g) => g.group.id);
+		expect(opts('superadmin').groups.map((g) => g.id).sort()).toEqual([...exposed].sort());
+		expect(opts('member').groups.length).toBeLessThan(exposed.length);
+	});
+
+	it('writes a private chat for a superadmin on a superadmin\'s token only, with the reason', () => {
+		const user = tok('laptop').scope[0]!.id;
+		const agent = tok('research-agent');
+		const before = refs('research-agent');
+		const [st, body] = adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'private', id: user }] }, 'admin');
+		expect([st, (body as { error: string }).error]).toEqual([403, 'forbidden']);
+		expect((body as { message: string }).message).toMatch(/superadmin/);
+		// The research team owns it: not even a superadmin may.
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'private', id: user }] }, 'superadmin')[0]).toBe(403);
+		expect(adminApi('POST', 'mcp/tokens', { name: 'x', scope: [{ kind: 'private', id: user }] }, 'admin')[0]).toBe(403);
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: [{ kind: 'nope', id: 1 }] }, 'superadmin')[0]).toBe(400);
+		expect(adminApi('PATCH', `mcp/tokens/${agent.id}`, { scope: Array.from({ length: 201 }, () => ({ kind: 'federation', id: 1 })) }, 'superadmin')[0]).toBe(400);
+		expect(refs('research-agent')).toEqual(before);
+		const laptop = tok('laptop');
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [{ kind: 'private', id: user }, { kind: 'federation', id: 0 }, { kind: 'private', id: user }] }, 'superadmin')).toEqual([204, null]);
+		expect(refs('laptop')).toEqual([{ kind: 'federation', id: 0 }, { kind: 'private', id: user }]);
+		expect(tok('laptop').name).toBe('laptop');
+		// [] reads every exposed group again; then back as it was.
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [] }, 'superadmin')).toEqual([204, null]);
+		expect(tok('laptop').scope).toEqual([]);
+		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [{ kind: 'private', id: user }] }, 'superadmin')).toEqual([204, null]);
+	});
+});
