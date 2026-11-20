@@ -1501,12 +1501,17 @@ void TgLoggerd::onCommunityFullInfo(const models::CommunityFullInfo &fi)
 		(unsigned long long)photo);
 }
 
-std::optional<uint64_t>
-TgLoggerd::storeDownloadedFile(const std::string &local_path,
-			       const std::string &tg_file_id,
-			       const std::string &tg_unique_id,
-			       int64_t file_size, const char *file_type,
-			       const std::string &orig_file_name)
+/*
+ * The store half of storeDownloadedFile, without the row: hash the file
+ * at @local_path, name it by its digest and the extension of its path,
+ * and copy it into the store unless it is over the per-file cap
+ * (TG_MAX_STORE_FILE_SIZE). @file_size is the size to judge by when the
+ * file's own size cannot be read. nullopt when it could not be hashed or
+ * copied.
+ */
+std::optional<TgLoggerd::Blob>
+TgLoggerd::putInStore(const std::string &local_path, int64_t file_size,
+		      const std::string &what)
 {
 	auto hex = sha256_file_hex(local_path);
 	if (!hex.has_value()) {
@@ -1523,9 +1528,9 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 
 	/*
 	 * Storage is limited. Files at or above max_store_file_size_ are not
-	 * copied into the store -- only their metadata is recorded below, so
-	 * they stay identifiable and re-downloadable by tg_file_id. Decide on
-	 * the actual on-disk size, falling back to TDLib's reported size.
+	 * copied into the store -- only their metadata is recorded, so they
+	 * stay identifiable and re-downloadable by tg_file_id. Decide on the
+	 * actual on-disk size, falling back to TDLib's reported size.
 	 */
 	std::error_code szec;
 	uintmax_t on_disk_size = fs::file_size(local_path, szec);
@@ -1562,22 +1567,36 @@ TgLoggerd::storeDownloadedFile(const std::string &local_path,
 		}
 	} else {
 		pr_info(l_, "File too large to store (%llu bytes >= %llu limit);"
-			" recording metadata only | tg_file_id=%s sha256=%s",
+			" recording metadata only | %s sha256=%s",
 			(unsigned long long)size_for_policy,
 			(unsigned long long)max_store_file_size_,
-			tg_file_id.c_str(), hex->c_str());
+			what.c_str(), hex->c_str());
 	}
+	return Blob{ std::move(*hex), std::move(ext), store_bytes };
+}
+
+std::optional<uint64_t>
+TgLoggerd::storeDownloadedFile(const std::string &local_path,
+			       const std::string &tg_file_id,
+			       const std::string &tg_unique_id,
+			       int64_t file_size, const char *file_type,
+			       const std::string &orig_file_name)
+{
+	auto blob = putInStore(local_path, file_size,
+			       "tg_file_id=" + tg_file_id);
+	if (!blob.has_value())
+		return std::nullopt;
 
 	models::File f;
 	f.tg_file_id = tg_file_id;
 	f.tg_unique_id = tg_unique_id;
 	f.file_type = file_type;
 	f.file_size = (uint64_t)(file_size < 0 ? 0 : file_size);
-	f.sha256_hex = *hex;
-	if (!ext.empty())
-		f.file_ext = ext;
+	f.sha256_hex = blob->sha256_hex;
+	if (!blob->ext.empty())
+		f.file_ext = blob->ext;
 	f.orig_file_name = orig_file_name;
-	f.on_disk = store_bytes;
+	f.on_disk = blob->on_disk;
 
 	uint64_t id = db_->upsertFile(f);
 	/* Remember it so later references link instead of re-downloading. */
