@@ -581,7 +581,7 @@ A video note's round video is now the main file, like any other media.
 | `game` | a game's photo (position 0) and animation (position 1) |
 | `invoice` | an invoice's product photo |
 | `chat_photo` | the new photo of a chat photo change or a suggested profile photo: the still photo (largest size) at position 0 and, when the photo is animated, its MPEG-4 video at position 1 (file_type `animation`; the big animation, up to 1280x1280, else the small one, 160x160, when TDLib gives only that) |
-| `thumbnail` | the still thumbnail TDLib offers with a video, an animation, a video note or a video (.webm) sticker, when it is an image (JPEG, PNG or WebP; MPEG-4, GIF, TGS and WebM thumbnails are not stored), file_type `thumbnail`: the picture the web shows before the video plays; in a rich message, the still thumbnail of each video and animation of its blocks, at the `position` of its `rich` medium (since msg-rich-video-thumbnails) |
+| `thumbnail` | the still thumbnail TDLib offers with a video, an animation, a video note or a video (.webm) sticker, when it is an image (JPEG, PNG or WebP; MPEG-4, GIF, TGS and WebM thumbnails are not stored), file_type `thumbnail`: the picture the web shows before the video plays; in a rich message, the still thumbnail of each video and animation of its blocks, at the `position` of its `rich` medium (since msg-rich-video-thumbnails); messages logged before the daemon stored thumbnails get theirs from the opt-in thumbnail pass (section 4.9) |
 | `poll`, `preview` | reserved: poll media (msg-polls); other thumbnails (a document's, a photo's sizes) and a video's other qualities are not stored, since they repeat the media |
 | `rich` | the media inside a rich message's page blocks, `position` their order of appearance, depth first through collages, slideshows, quotes, lists, collapsible blocks, covers and embedded posts: each photo (largest size), video, animation, audio file, document and voice note, an embedded page's poster, an embedded post's author photo, the photos of related articles; not a chat link's photo (the chat's own) nor the icons inside rich text |
 | `gift` | file_type `sticker`: at position 0 the gift's sticker (gift, refunded_upgraded_gift), an upgraded gift's model sticker (upgraded_gift and the two purchase offer types), the animation sticker of gifted_premium, gifted_stars, gifted_grams and giveaway_prize_stars, or a giveaway's prize sticker; at position 1 an upgraded gift's symbol sticker. Each keeps its position when the other is missing. Not a premium_gift_code's sticker |
@@ -883,6 +883,25 @@ video chat notices; and almost no rich rows. They keep what they had
 met no flood wait: under Telegram's limits TDLib sat out the waits
 inside its requests, which is why the pass was capped at five re-reads
 a second and waits for chat rechecks.
+
+Videos, animations, video notes and video (.webm) stickers logged
+before the daemon stored their still thumbnails (role `thumbnail`,
+section 4.3) are re-read by a second opt-in pass,
+`TG_THUMBNAILS_ON_START` (`dry` only logs how many there are per table
+and kind). A message qualifies while it is live and has neither a
+`thumbnail` nor a `cover` file; a sticker counts when its stored file's
+extension is `webm` or, for one stored without its file, its curated
+`format` is `webm`. The selection reads the `(content_type, date)`
+index and the message files' unique key. Each is re-read with
+`getMessage` through the normal path, which stores the still TDLib
+offers under the store's cap and changes nothing else (no edit
+version). The pass shares the repair's part of the budget (both
+together at most 5 a second), runs once the repair queue is empty and
+waits for chat rechecks the same way. A message that got its still is
+not listed again; one whose video has no Telegram thumbnail stays a
+candidate and is re-read on every start while the flag is on, so the
+flag goes back off after a pass. The stills generated from the stored
+bytes (item video-thumbnails, "Frames") cover those.
 
 ### 4.10 Forwarding to Discord
 

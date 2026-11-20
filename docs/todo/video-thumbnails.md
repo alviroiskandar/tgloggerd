@@ -28,6 +28,10 @@ in the files grid and preview. Left:
 - Old rows: messages logged before the daemon stored thumbnails have
   none. A one-off pass could ask TDLib for each such message again and
   store its thumbnail through the fetch path, under the store's cap.
+  Done: the opt-in pass `TG_THUMBNAILS_ON_START` (`dry` counts)
+  re-reads them through the normal store path (message-types.md
+  section 4.9); what is left is to run it, and the videos Telegram
+  sends no still for stay for the frames below.
 - Frames: a still taken from the stored bytes (ffmpeg, in a container
   of its own, never in the web service's request path) for videos
   with neither a cover nor a Telegram thumbnail, as decided in
