@@ -13,6 +13,7 @@ import { ago, compact, fmt } from '../format.ts';
 import type { PageData } from '../page.ts';
 import type { GroupSummary } from '../types.ts';
 import type { RouteDef } from './index.tsx';
+import { ScopeSummary } from './mcp-scope.tsx';
 import type { S } from '../api/schema.ts';
 
 export type McpIndexProps = S['McpIndexProps'];
@@ -170,7 +171,7 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 	const revoke = async (id: number) => { try { await ok(api.POST('/api/mcp/tokens/{id}/revoke', { params: { path: { id } } })); refresh(); } catch (x) { setErr(errText(x)); } };
 	return (
 		<Shell crumbs={[['MCP', '/mcp-admin'], ['Access tokens', null]]}>
-			<PageHead title="Access tokens" sub="A token reads every exposed group, so treat one like a password."
+			<PageHead title="Access tokens" sub="A token reads every exposed group unless its scope narrows it, so treat one like a password."
 				actions={<Btn primary icon={Plus} onClick={() => setMinting(true)}>Mint a token</Btn>} />
 			{err && !minting && !renaming && !moving && <div className="a-banner warn" role="alert"><TriangleAlert size={15} /><span>{err}</span></div>}
 			{minted && (
@@ -185,11 +186,12 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 			<div className="a-card a-tablecard">
 				<div className="a-tablescroll">
 					<table className="a-table">
-						<thead><tr><th>Name</th><th>Owner</th><th>Created</th><th>Last used</th><th>Status</th><th /></tr></thead>
+						<thead><tr><th>Name</th><th>Owner</th><th>Reads</th><th>Created</th><th>Last used</th><th>Status</th><th /></tr></thead>
 						<tbody>{page.props.tokens.map((t) => (
 							<tr key={t.id} className={t.revoked ? 'a-off' : ''}>
 								<td>{t.name ? <b>{t.name}</b> : <span className="a-muted">(unnamed)</span>}</td>
 								<td><OwnerCell t={t} /></td>
+								<td className="a-tokscope-cell"><ScopeSummary scope={t.scope} owner={t.owner} /></td>
 								<td title={t.created}>{ago(t.created, v)}</td>
 								<td>{t.last_used ? ago(t.last_used, v) : <span className="a-muted">never</span>}</td>
 								<td>{t.revoked ? <span className="a-muted">revoked {ago(t.revoked, v)}</span> : <Pill tone="ok">active</Pill>}</td>

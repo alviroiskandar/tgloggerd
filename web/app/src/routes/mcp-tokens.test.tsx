@@ -276,3 +276,53 @@ describe('mcp token scopes in the stand-in', () => {
 		expect(adminApi('PATCH', `mcp/tokens/${laptop.id}`, { scope: [{ kind: 'private', id: user }] }, 'superadmin')).toEqual([204, null]);
 	});
 });
+
+describe('mcp token scopes in the list', () => {
+	const scopeCell = (name: string) => rowOf(name).querySelectorAll('td')[2] as HTMLElement;
+	const unnamed = () => screen.getByText('(unnamed)').closest('tr')!.querySelectorAll('td')[2] as HTMLElement;
+
+	it('says All exposed groups for a token without a scope', () => {
+		renderPage('/mcp-admin/tokens');
+		expect(scopeCell('old ci job').textContent).toBe('All exposed groups');
+		expect(screen.getByRole('columnheader', { name: 'Reads' })).toBeTruthy();
+	});
+
+	it('lists federations, groups and private chats, marking the inactive ones and why', () => {
+		const p = fixture<McpTokensProps>('/mcp-admin/tokens').props;
+		const s = p.tokens.find((t) => t.name === 'research-agent')!.scope;
+		renderPage('/mcp-admin/tokens');
+		const cell = scopeCell('research-agent');
+		const pills = [...cell.querySelectorAll('.a-tokscope-e')];
+		expect(pills.map((x) => x.textContent!.replace('inactive', ''))).toEqual(s.map((e) => e.name));
+		const off = cell.querySelector('.a-tokscope-e.off')!;
+		expect(off.textContent).toMatch(/inactive$/);
+		expect(off.getAttribute('title')).toMatch(/not exposed to MCP/);
+		expect(within(cell).getByLabelText('Federation')).toBeTruthy();
+		expect(within(scopeCell('laptop')).getByLabelText('Private chat')).toBeTruthy();
+		expect(cell.textContent).not.toMatch(/reads nothing/);
+	});
+
+	it('warns on a token whose scope is all inactive, and says why each entry is', () => {
+		renderPage('/mcp-admin/tokens');
+		const cell = unnamed();
+		expect(within(cell).getByRole('note').textContent).toBe('This token reads nothing: none of its scope is active');
+		const [fed, chat] = [...cell.querySelectorAll('.a-tokscope-e')];
+		expect(fed!.textContent).toMatch(/^Deleted federation/);
+		expect(fed!.getAttribute('title')).toMatch(/deleted/);
+		expect(chat!.getAttribute('title')).toMatch(/superadmin owns/);
+	});
+
+	it('collapses a long scope behind a toggle', () => {
+		const page = fixture<McpTokensProps>('/mcp-admin/tokens');
+		const scope = [1, 2, 3, 4, 5].map((i) => ({ kind: 'group' as const, id: -i, name: `g${i}`, active: true }));
+		const props = { ...page.props, tokens: page.props.tokens.map((t) => (t.name === 'laptop' ? { ...t, scope } : t)) };
+		renderPage('/mcp-admin/tokens', 'superadmin', { props } as never);
+		const cell = scopeCell('laptop');
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(2);
+		const more = within(cell).getByRole('button', { name: '+3 more' });
+		fireEvent.click(more);
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(5);
+		fireEvent.click(within(cell).getByRole('button', { name: 'Show less' }));
+		expect(cell.querySelectorAll('.a-tokscope-e')).toHaveLength(2);
+	});
+});
