@@ -629,11 +629,14 @@ open pages. The answer never waits for the ask, and its outcome (a
 refusal, a daemon away) is only logged at debug.
 
 A stretch is a chat and a message id: 0 for the newest messages, which
-a window without an anchor shows (its forum topic aside); otherwise the
-anchor's message id (before, after or around, the chat page's ?at= or
-the message its date found, the message page's own message, and for
-the oldest messages, after=0, the window's first), so the same page
-always names the same stretch, as the daemon's own limits key it. Each
+a window without an anchor shows (its forum topic aside), as does a
+window after an anchor that reaches the newest message (a live chat's
+tail refetch, which would otherwise name a new stretch on every new
+message); otherwise the anchor's message id (before, after or around,
+the chat page's ?at= or the message its date found, the message page's
+own message, and for the oldest messages, after=0, the window's
+first), so the same page always names the same stretch, as the
+daemon's own limits key it. Each
 stretch is asked at most once per WEBAPI_RECHECK_NEWEST_SECS (newest)
 or WEBAPI_RECHECK_OLDER_SECS (any other), whoever asks. Signed-out
 visitors, who may be anyone in any number (an exposed group's public

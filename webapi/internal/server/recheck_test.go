@@ -435,3 +435,37 @@ func TestRecheckPublicBucket(t *testing.T) {
 	shut.wait()
 	f.taken()
 }
+
+// A live chat refetches its tail after its last message on every new
+// batch. A window after an anchor that reaches the newest message
+// names the newest stretch, so those refetches ask once per Newest
+// instead of once per new message; one that stops short of the newest
+// still names its anchor.
+func TestRecheckLiveTail(t *testing.T) {
+	t.Parallel()
+	f := newFakeRecheckDaemon(t)
+	e, rc := recheckEnv(t, f, RecheckConfig{})
+	admin := e.as("admin")
+	f.set(http.StatusAccepted, nil)
+	for _, c := range []struct {
+		path string
+		want []recheckKey
+	}{
+		{fmt.Sprintf("/api/chats/group/%d/messages?after=%d", openLab, 800001<<20),
+			[]recheckKey{{openLab, 0}}},
+		// The next batch's refetch, within the minute: nothing.
+		{fmt.Sprintf("/api/chats/group/%d/messages?after=%d", openLab, 800002<<20), nil},
+		{fmt.Sprintf("/api/chats/group/%d/messages?after=%d", openLab, 800004<<20), nil},
+		// Not at the newest (130 messages, windows of 60).
+		{fmt.Sprintf("/api/chats/group/%d/messages?after=%d", pagingLab, labMsg(5)),
+			[]recheckKey{{pagingLab, labMsg(5)}}},
+	} {
+		if code, _, body := e.get(c.path, admin); code != 200 {
+			t.Fatalf("%s: %d %s", c.path, code, body)
+		}
+		rc.wait()
+		if got := f.taken(); !slices.Equal(got, c.want) {
+			t.Errorf("%s asked %v, want %v", c.path, got, c.want)
+		}
+	}
+}

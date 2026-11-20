@@ -110,12 +110,19 @@ func newRechecker(log *slog.Logger, dc *daemon.Client, clock func() time.Time, c
 // anchor its newest messages, else the stretch around the anchor's
 // message id, so the same page always names the same stretch. The
 // oldest messages (after=0) are named by the window's first message;
-// an empty window there names nothing.
+// an empty window there names nothing. A window after an anchor that
+// reaches the newest message names the newest messages: a live chat
+// fetches its tail after its last message on every new batch, and
+// naming each of those anchors would ask for a new stretch every time
+// instead of once per Newest.
 func (rc *rechecker) window(chat int64, a logdb.Anchor, w logdb.Window, signedIn bool) {
 	var around int64
 	switch {
 	case a.Before != nil:
 		around = *a.Before
+	case a.After != nil && !w.HasNewer:
+		rc.ask(chat, 0, signedIn)
+		return
 	case a.After != nil:
 		around = *a.After
 	case a.Around != nil:
