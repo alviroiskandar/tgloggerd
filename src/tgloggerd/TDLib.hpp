@@ -711,6 +711,14 @@ public:
 	void repairMessages(std::vector<std::pair<int64_t, int64_t>> msgs);
 
 	/*
+	 * Queue (chat_id, server message id) pairs to be re-fetched and stored
+	 * again so that the still thumbnail TDLib offers is stored; see
+	 * DB::listMessagesWithoutThumbnail. Shares the repair's share of the
+	 * budget and its wait for chat rechecks, and runs after it.
+	 */
+	void refetchThumbnails(std::vector<std::pair<int64_t, int64_t>> msgs);
+
+	/*
 	 * Queue a recheck of chat @chat_id around server message @around (0 =
 	 * the newest), within the limits of recheck::Queue, and say what
 	 * became of it. Thread-safe. The recheck runs on the loop thread,
