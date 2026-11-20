@@ -138,68 +138,76 @@ service messages keep `content_type = 'service'` and get the
 
 ### 3.3 Service messages: chat membership and settings
 
-| TDLib class | Stored | What is lost today | Planned service_type |
+Since msg-service-detail, every class here keeps its detail as curated
+keys (section 4.2.3), and the old-row repair (section 4.9) gave the rows
+stored before them their class and keys. What is still lost:
+
+| TDLib class | Stored | What is still lost | service_type |
 |---|---|---|---|
-| messageBasicGroupChatCreate | text only | title, initial members | chat_create |
-| messageSupergroupChatCreate | text only | title | chat_create |
-| messageChatChangeTitle | text only | (title is inside the description) | chat_change_title |
-| messageChatChangePhoto | fully | stored: the new photo (role `chat_photo`, section 4.3) and, since msg-chat-backgrounds, an animated photo's video; still lost: a sticker-based photo's sticker and fill | chat_change_photo |
-| messageChatDeletePhoto | fully | - | chat_delete_photo |
-| messageChatAddMembers | partly | which users were added | chat_add_members |
-| messageChatJoinByLink | fully | - | chat_join_by_link |
-| messageChatJoinByRequest | fully | - | chat_join_by_request |
-| messageChatJoinFromCommunity | fully | - (the community itself is in `telegram_communities`, section 4.13) | chat_join_from_community |
-| messageChatDeleteMember | partly | which user was removed | chat_delete_member |
-| messageChatAddedToCommunity | fully | - (the community itself is in `telegram_communities`, section 4.13) | chat_added_to_community |
-| messageChatRemovedFromCommunity | fully | - (TDLib gives no community id) | chat_removed_from_community |
-| messageChatUpgradeTo | partly | supergroup id | chat_upgrade_to |
-| messageChatUpgradeFrom | partly | old title, basic group id | chat_upgrade_from |
-| messageChatOwnerLeft | not | new owner | chat_owner_left |
-| messageChatOwnerChanged | not | new owner | chat_owner_changed |
-| messageChatHasProtectedContentToggled | not | old and new value, request message | chat_has_protected_content_toggled |
-| messageChatHasProtectedContentDisableRequested | not | expired flag | chat_has_protected_content_disable_requested |
-| messagePinMessage | partly | which message was pinned | pin_message |
-| messageScreenshotTaken | fully | - | screenshot_taken |
-| messageChatSetBackground | fully | stored since msg-chat-backgrounds: the background with its fill and pattern settings (section 4.2.3) and its wallpaper or pattern (role `background`, section 4.3), the own-only flag and the previous message; still lost: a chat theme background's colours (only the theme's name is given) | chat_set_background |
-| messageChatSetTheme | partly | the theme | chat_set_theme |
-| messageChatSetMessageAutoDeleteTime | text only | who set it (`from_user_id`) | chat_set_message_auto_delete_time |
-| messageChatBoost | partly | number of boosts | chat_boost |
-| messageForumTopicCreated | text only | icon, implicit-name flag | forum_topic_created |
-| messageForumTopicEdited | partly | new name, new icon | forum_topic_edited |
-| messageForumTopicIsClosedToggled | partly | closed or reopened | forum_topic_is_closed_toggled |
-| messageForumTopicIsHiddenToggled | partly | hidden or shown | forum_topic_is_hidden_toggled |
-| messageCustomServiceAction | fully | - | custom_service_action |
-| messageContactRegistered | fully | - | contact_registered |
-| messageSuggestProfilePhoto | fully | stored: the photo and, since msg-chat-backgrounds, an animated photo's video, as for chat_change_photo | suggest_profile_photo |
-| messageSuggestBirthdate | not | the date | suggest_birthdate |
-| messageProximityAlertTriggered | not | who, whom, distance | proximity_alert_triggered |
-| messageManagedBotCreated | not | bot and manager bot | managed_bot_created |
-| messageBotWriteAccessAllowed | not | why (web app, attachment menu, request) | bot_write_access_allowed |
-| messageUsersShared | not | shared users, button id | users_shared |
-| messageChatShared | not | shared chat, button id | chat_shared |
-| messageWebAppDataSent | not | button text | web_app_data_sent |
-| messageWebAppDataReceived | not | button text, data (bots only) | web_app_data_received |
-| messagePassportDataSent | not | element types | passport_data_sent |
-| messagePassportDataReceived | not | (bots only; encrypted, kept out on purpose) | passport_data_received |
-| messageGameScore | not | game message, score | game_score |
+| messageBasicGroupChatCreate | fully | nothing; `title` and the initial members' `user_ids` | chat_create |
+| messageSupergroupChatCreate | fully | nothing; `title` | chat_create |
+| messageChatChangeTitle | fully | nothing; the new `title` | chat_change_title |
+| messageChatChangePhoto | fully | a sticker-based photo's sticker and fill; the new photo is the `chat_photo` file (section 4.3), an animated photo's video the one at position 1 | chat_change_photo |
+| messageChatDeletePhoto | fully | nothing | chat_delete_photo |
+| messageChatAddMembers | fully | nothing; the added members' `user_ids` | chat_add_members |
+| messageChatJoinByLink | fully | nothing | chat_join_by_link |
+| messageChatJoinByRequest | fully | nothing | chat_join_by_request |
+| messageChatJoinFromCommunity | fully | nothing (the community itself is in `telegram_communities`, section 4.13) | chat_join_from_community |
+| messageChatDeleteMember | fully | nothing; the removed member's `user_id` | chat_delete_member |
+| messageChatAddedToCommunity | fully | nothing (the community itself is in `telegram_communities`, section 4.13) | chat_added_to_community |
+| messageChatRemovedFromCommunity | fully | nothing (TDLib gives no community id) | chat_removed_from_community |
+| messageChatUpgradeTo | fully | nothing; `supergroup_id` | chat_upgrade_to |
+| messageChatUpgradeFrom | fully | nothing; the old `title` and `basic_group_id` | chat_upgrade_from |
+| messageChatOwnerLeft | fully | nothing; `new_owner_user_id` | chat_owner_left |
+| messageChatOwnerChanged | fully | nothing; `new_owner_user_id` | chat_owner_changed |
+| messageChatHasProtectedContentToggled | fully | nothing | chat_has_protected_content_toggled |
+| messageChatHasProtectedContentDisableRequested | fully | nothing | chat_has_protected_content_disable_requested |
+| messagePinMessage | fully | nothing; the pinned `message_id` | pin_message |
+| messageScreenshotTaken | fully | nothing | screenshot_taken |
+| messageChatSetBackground | fully | a chat theme background's colours (TDLib gives only the theme's name); the background's fill and pattern settings are curated (section 4.2.3) and its wallpaper or pattern is the `background` file (section 4.3) | chat_set_background |
+| messageChatSetTheme | fully | nothing; the theme's name, or for a gift theme its gift | chat_set_theme |
+| messageChatSetMessageAutoDeleteTime | fully | nothing; `seconds` and `from_user_id` | chat_set_message_auto_delete_time |
+| messageChatBoost | fully | nothing; `boost_count` | chat_boost |
+| messageForumTopicCreated | fully | nothing; name, icon and the implicit-name flag (the topic itself is in `telegram_forum_topics`, section 4.5) | forum_topic_created |
+| messageForumTopicEdited | fully | nothing; the new name and icon | forum_topic_edited |
+| messageForumTopicIsClosedToggled | fully | nothing | forum_topic_is_closed_toggled |
+| messageForumTopicIsHiddenToggled | fully | nothing | forum_topic_is_hidden_toggled |
+| messageCustomServiceAction | fully | nothing | custom_service_action |
+| messageContactRegistered | fully | nothing | contact_registered |
+| messageSuggestProfilePhoto | fully | as for messageChatChangePhoto: the photo and an animated photo's video are `chat_photo` files | suggest_profile_photo |
+| messageSuggestBirthdate | fully | nothing | suggest_birthdate |
+| messageProximityAlertTriggered | fully | nothing | proximity_alert_triggered |
+| messageManagedBotCreated | fully | nothing | managed_bot_created |
+| messageBotWriteAccessAllowed | fully | nothing | bot_write_access_allowed |
+| messageUsersShared | fully | nothing | users_shared |
+| messageChatShared | fully | nothing | chat_shared |
+| messageWebAppDataSent | fully | nothing | web_app_data_sent |
+| messageWebAppDataReceived | fully | nothing (bots only) | web_app_data_received |
+| messagePassportDataSent | fully | nothing; the element `types` | passport_data_sent |
+| messagePassportDataReceived | partly | the encrypted data, kept out on purpose; only the element `types` (bots only) | passport_data_received |
+| messageGameScore | fully | nothing | game_score |
 
 ### 3.4 Service messages: calls, polls, checklists, posts
 
-| TDLib class | Stored | What is lost today | Planned service_type |
+Since msg-service-detail, every class here keeps its detail as curated
+keys (section 4.2.3), and the old-row repair (section 4.9) gave the rows
+stored before them their class and keys. What is still lost:
+
+| TDLib class | Stored | What is still lost | service_type |
 |---|---|---|---|
-| messageVideoChatScheduled | partly | call id, start date | video_chat_scheduled |
-| messageVideoChatStarted | partly | call id | video_chat_started |
-| messageVideoChatEnded | partly | duration | video_chat_ended |
-| messageInviteVideoChatParticipants | partly | call id, invited users | invite_video_chat_participants |
-| messagePollOptionAdded | not | poll message, option, text | poll_option_added |
-| messagePollOptionDeleted | not | poll message, option, text | poll_option_deleted |
-| messageChecklistTasksDone | not | checklist message, tasks marked and unmarked | checklist_tasks_done |
-| messageChecklistTasksAdded | not | checklist message, new tasks | checklist_tasks_added |
-| messageSuggestedPostApprovalFailed | not | post, price | suggested_post_approval_failed |
-| messageSuggestedPostApproved | not | post, price, send date | suggested_post_approved |
-| messageSuggestedPostDeclined | not | post, comment | suggested_post_declined |
-| messageSuggestedPostPaid | not | post, amounts | suggested_post_paid |
-| messageSuggestedPostRefunded | not | post, reason | suggested_post_refunded |
+| messageVideoChatScheduled | fully | nothing | video_chat_scheduled |
+| messageVideoChatStarted | fully | nothing | video_chat_started |
+| messageVideoChatEnded | fully | nothing | video_chat_ended |
+| messageInviteVideoChatParticipants | fully | nothing | invite_video_chat_participants |
+| messagePollOptionAdded | fully | nothing | poll_option_added |
+| messagePollOptionDeleted | fully | nothing | poll_option_deleted |
+| messageChecklistTasksDone | fully | nothing | checklist_tasks_done |
+| messageChecklistTasksAdded | fully | nothing | checklist_tasks_added |
+| messageSuggestedPostApprovalFailed | fully | nothing | suggested_post_approval_failed |
+| messageSuggestedPostApproved | fully | nothing | suggested_post_approved |
+| messageSuggestedPostDeclined | fully | nothing | suggested_post_declined |
+| messageSuggestedPostPaid | fully | nothing | suggested_post_paid |
+| messageSuggestedPostRefunded | fully | nothing | suggested_post_refunded |
 
 ### 3.5 Service messages: payments, gifts, stars
 
