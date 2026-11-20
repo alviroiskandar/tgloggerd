@@ -29,3 +29,32 @@ test('a photo that cannot be loaded shows a placeholder, not a broken image', as
 	await expect(box.locator('.a-carousel-stage').getByText('Photo not available')).toBeVisible();
 	await expect(box.locator('.a-carousel-stage img')).toHaveCount(0);
 });
+
+// An animated photo whose video cannot play (the stand-in serves every
+// file as a picture): the stage falls back to its still, never a broken
+// player.
+test('an animated photo whose video cannot play shows its still', async ({ page }) => {
+	const rows = (await (await page.request.get('/api/page/users')).json()).props.rows as { id: number }[];
+	let id = 0;
+	let nth = -1;
+	let still = '';
+	for (const r of rows) {
+		const res = await page.request.get(`/api/users/${r.id}/photos`);
+		if (!res.ok()) continue;
+		const items = (await res.json()).items as { id: number; url: string | null; video_url: string | null }[];
+		// The timeline's photo buttons, in order, and one of them animated.
+		const shown = ((await (await page.request.get(`/api/users/${r.id}/history?limit=500`)).json()).entries as { photo_id?: number }[]).filter((e) => e.photo_id !== undefined);
+		nth = shown.findIndex((e) => items.some((x) => x.id === e.photo_id && x.video_url && x.url && !x.url.includes('standin-gone-')));
+		if (nth < 0) continue;
+		id = r.id;
+		still = items.find((x) => x.id === shown[nth]!.photo_id)!.url!;
+		break;
+	}
+	expect(id, 'a user with an animated photo in the stand-in').toBeTruthy();
+	await page.goto(`/users/${id}/history`);
+	await page.locator('.a-timeline').getByRole('button', { name: /^Show this photo/ }).nth(nth).click();
+	const stage = page.getByRole('dialog', { name: /^Photos of / }).locator('.a-carousel-stage');
+	await expect(stage.locator('img.a-carousel-img')).toHaveAttribute('src', still);
+	await expect(stage.locator('video')).toHaveCount(0);
+	await expect(stage.locator('img.a-carousel-img:not(.loading)')).toBeVisible();
+});
