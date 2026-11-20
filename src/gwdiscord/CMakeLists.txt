@@ -43,7 +43,9 @@ find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
-find_package(Boost QUIET)
+# CONFIG: Boost's own BoostConfig.cmake. CMake 3.30 and later deprecate the
+# FindBoost module (policy CMP0167) and warn on every configure that uses it.
+find_package(Boost CONFIG QUIET)
 if(NOT Boost_FOUND)
 	# Ubuntu's libboost-dev does not always ship a CMake config; the
 	# headers are all we need, so locate them directly.
