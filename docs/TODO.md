@@ -119,7 +119,6 @@ The web backend moves from Drogon to Go:
 Accounts, roles and federations:
 [design/web-accounts.md](design/web-accounts.md).
 
-- [`video-thumbnails`](todo/video-thumbnails.md): Show a still thumbnail for every video before it is played, wherever the web shows one.
 - [`drogon-retire`](todo/drogon-retire.md): Remove the Drogon web once nothing routes to it.
 
 ## Operations
