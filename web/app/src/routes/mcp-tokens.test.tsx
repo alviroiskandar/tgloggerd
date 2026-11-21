@@ -435,3 +435,19 @@ describe('the mcp token scope form', () => {
 		expect((await within(dialog()).findByRole('alert')).textContent).toBe('A private chat can be given only to a token a superadmin owns.');
 	});
 });
+
+// Until the Go service serves /mcp, production reads every exposed
+// group whatever a token's scope says; the page says so.
+describe('mcp token scope notice', () => {
+	const NOTICE = /Scopes take effect once MCP is served by the new web service; until then every token reads all exposed groups\./;
+	beforeEach(() => setup());
+
+	it('is shown above the token list and in the scope editor', () => {
+		fakeApi('superadmin');
+		renderPage('/mcp-admin/tokens');
+		expect(screen.getAllByText(NOTICE)).toHaveLength(1);
+		fireEvent.click(screen.getByRole('button', { name: /Mint a token/ }));
+		const dlg = screen.getByRole('dialog');
+		expect(within(dlg).getByText(NOTICE)).toBeTruthy();
+	});
+});

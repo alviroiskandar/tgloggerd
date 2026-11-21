@@ -764,6 +764,8 @@
 .app .a-tokscope-flag { margin-left: 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--danger); text-decoration: none; display: inline-block; }
 .app .a-tokscope-more { border: 0; background: none; padding: 0 4px; color: var(--accent-text); font-size: 12px; cursor: pointer; }
 .app .a-tokscope-more:hover { text-decoration: underline; }
+.app .a-tokscope-pending { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--hover); color: var(--fg-2); font-size: 13px; }
+.app .a-tokscope-pending svg { flex: none; margin-top: 2px; }
 .app .a-tokscope-none { display: inline-flex; align-items: center; gap: 4px; flex-basis: 100%; color: var(--danger); font-size: 12px; }
 .app .a-tokscope-edit { display: grid; gap: 12px; }
 .app .a-tokscope-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }

@@ -3,7 +3,7 @@
 // group (decisions/2026-11-20-mcp-token-scope.md). The list's summary
 // and the form's editor.
 import { useState } from 'react';
-import { Lock, Network, Plus, TriangleAlert, Users, X } from 'lucide-react';
+import { Info, Lock, Network, Plus, TriangleAlert, Users, X } from 'lucide-react';
 import { Btn } from '../ui/primitives.tsx';
 import { Field, MultiPicker, NO_FILL, type PickItem } from '../ui/forms.tsx';
 import type { S } from '../api/schema.ts';
@@ -24,6 +24,17 @@ const KINDS: Record<ScopeKind, { icon: typeof Lock; label: string }> = {
 
 // The entry's name, or what it was when it no longer exists.
 const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation' : e.kind === 'group' ? `Group ${e.id}` : `User ${e.id}`);
+
+// Production's /mcp is still served by the old web service, which
+// ignores token scopes; only the Go service applies them, once it
+// serves /mcp. Until then the page says so. After the switch, set this
+// to false, or remove it with ScopeNotice and its two uses.
+export const SCOPES_PENDING = true;
+
+export function ScopeNotice() {
+	if (!SCOPES_PENDING) return null;
+	return <p className="a-tokscope-pending" role="note"><Info size={14} aria-hidden="true" />Scopes take effect once MCP is served by the new web service; until then every token reads all exposed groups.</p>;
+}
 
 // Why an inactive entry reads nothing, as far as the page can tell.
 function whyInactive(e: ScopeEntry, owner: Person) {
@@ -103,6 +114,7 @@ export function ScopeEditor({ value, onChange, options, owner }: { value: ScopeE
 	const addPrivate = () => { if (id && !uidErr) { add({ kind: 'private', id, name: '', active: true }); setUid(''); } };
 	return (
 		<div className="a-tokscope-edit">
+			<ScopeNotice />
 			<div className="a-field" role="group" aria-label="Scope">
 				<span className="a-field-label">Scope</span>
 				{value.length

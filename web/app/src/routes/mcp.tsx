@@ -13,7 +13,7 @@ import { ago, compact, fmt } from '../format.ts';
 import type { PageData } from '../page.ts';
 import type { GroupSummary } from '../types.ts';
 import type { RouteDef } from './index.tsx';
-import { ScopeEditor, ScopeSummary, blockedPrivate, sameScope, scopeRefs, type ScopeEntry } from './mcp-scope.tsx';
+import { ScopeEditor, ScopeNotice, ScopeSummary, blockedPrivate, sameScope, scopeRefs, type ScopeEntry } from './mcp-scope.tsx';
 import type { S } from '../api/schema.ts';
 
 export type McpIndexProps = S['McpIndexProps'];
@@ -198,6 +198,7 @@ function McpTokens({ page }: { page: PageData<McpTokensProps> }) {
 					<Btn ghost onClick={() => setMinted(null)}>Done</Btn>
 				</div>
 			)}
+			<ScopeNotice />
 			<div className="a-card a-tablecard">
 				<div className="a-tablescroll">
 					<table className="a-table">
