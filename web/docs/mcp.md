@@ -713,11 +713,21 @@ The Go service serves the administration as JSON operations
   a member, a group not granted or a federation holding no granted
   group; for an admin, a group hidden from it or a federation whose
   exposed groups are all hidden from it (a federation with no exposed
-  group is not out of reach because of the hiding). An entry for a group
-  hidden from the viewer goes out with an empty `name`, and when the
-  owner is why it is inactive, as `outside_owner_grants` even if the
-  group is not exposed, so the list says nothing about such a group
-  beyond the id the token holds. Then
+  group is not out of reach because of the hiding). Before all of
+  these, an entry the viewer cannot see tells the viewer nothing
+  ([decision](../../docs/design/decisions/2026-11-22-mcp-scope-hidden-entries.md)):
+  a group hidden from the viewer, or a federation that has at least one
+  group, exposed or not, and none the viewer sees (for Default, the
+  groups in no other federation), goes out with an empty `name`,
+  `active` null and `inactive_reason` `hidden_from_viewer`, whatever
+  the owner sees and whatever the groups' exposure, so exposing or
+  withdrawing a hidden group changes nothing the viewer is shown. A
+  federation with no group at all, or a deleted one, shows its real
+  state. Such
+  an entry may still reach something, so a token reads nothing, as far
+  as the viewer can tell, only when every entry's `active` is false.
+  The reach of `/mcp` does not change with the viewer: it follows the
+  owner. Then
   `scope_options`: the
   federations, the exposed groups the viewer sees, and `private`, true
   for a superadmin.

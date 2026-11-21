@@ -157,7 +157,7 @@ func TestMcpTokenListMemberGrants(t *testing.T) {
 				Scope []struct {
 					Kind   string  `json:"kind"`
 					ID     int64   `json:"id"`
-					Active bool    `json:"active"`
+					Active *bool   `json:"active"`
 					Reason *string `json:"inactive_reason"`
 				} `json:"scope"`
 			} `json:"tokens"`
@@ -170,11 +170,14 @@ func TestMcpTokenListMemberGrants(t *testing.T) {
 			if tk.ID == id {
 				var out []string
 				for _, x := range tk.Scope {
-					r := "null"
+					act, r := "null", "null"
+					if x.Active != nil {
+						act = fmt.Sprint(*x.Active)
+					}
 					if x.Reason != nil {
 						r = *x.Reason
 					}
-					out = append(out, fmt.Sprintf("%s %d %v %s", x.Kind, x.ID, x.Active, r))
+					out = append(out, fmt.Sprintf("%s %d %s %s", x.Kind, x.ID, act, r))
 				}
 				return strings.Join(out, ", ")
 			}
@@ -190,10 +193,16 @@ func TestMcpTokenListMemberGrants(t *testing.T) {
 	want := "federation 0 true null, federation 50 true null, " +
 		"federation 51 false outside_owner_grants, " +
 		"group -1001000000010 false outside_owner_grants, group -1001000000001 true null"
-	for _, role := range []string{"superadmin", "member"} {
-		if got := active(role, 90); got != want {
-			t.Errorf("member's token as %s: %s\nwant %s", role, got, want)
-		}
+	if got := active("superadmin", 90); got != want {
+		t.Errorf("member's token as superadmin: %s\nwant %s", got, want)
+	}
+	// The member does not see CTF Practice, nor so CTF only: those
+	// entries tell it nothing.
+	want = "federation 0 true null, federation 50 true null, " +
+		"federation 51 null hidden_from_viewer, " +
+		"group -1001000000010 null hidden_from_viewer, group -1001000000001 true null"
+	if got := active("member", 90); got != want {
+		t.Errorf("member's token as member: %s\nwant %s", got, want)
 	}
 	// Grants withdrawn: the entries stay, inactive.
 	exec("DELETE FROM web_member_grant_groups WHERE web_user_id = 5 AND group_id = ?", gnuweeb)

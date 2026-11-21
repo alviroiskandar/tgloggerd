@@ -32,10 +32,12 @@ type mcpScopeIn struct {
 
 // mcpScopeJSON is one entry of a token's scope (McpScopeEntry).
 type mcpScopeJSON struct {
-	Kind   string `json:"kind"`
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	Active bool   `json:"active"`
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Active is nil for an entry hidden from the viewer, which is not
+	// told whether it reaches anything.
+	Active *bool `json:"active"`
 	// InactiveReason says why an entry reaches nothing
 	// (McpScopeInactiveReason), nil when it is active.
 	InactiveReason *string `json:"inactive_reason"`
@@ -48,6 +50,9 @@ const (
 	reasonPrivateOwner   = "private_not_superadmin"
 	reasonUserUnknown    = "user_unknown"
 	reasonOutsideGrants  = "outside_owner_grants"
+	// Not a reason the entry is inactive but why the viewer is not
+	// told (decisions/2026-11-22-mcp-scope-hidden-entries.md).
+	reasonHiddenViewer = "hidden_from_viewer"
 )
 
 // mcpScopeOptions is what the token form may offer.
@@ -185,11 +190,13 @@ type scopeView struct {
 	// owner sees (fedSeen).
 	fedGroups map[int64][]int64
 	federated map[int64]bool
-	// viewer is the scope of the request that lists the tokens: a
-	// group entry it does not see goes out without its name, and
-	// without whether the group is exposed when the owner is the
-	// reason it reaches nothing.
+	// viewer is the scope of the request that lists the tokens: an
+	// entry for a group it does not see, or for a federation that has
+	// groups and none it sees, tells it nothing (viewerSeesFed).
 	viewer scope.Scope
+	// defaultHidden is whether Default has groups and the viewer sees
+	// none of them, worked out only when an entry names Default.
+	defaultHidden bool
 }
 
 func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
@@ -235,6 +242,20 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 		for _, g := range fg {
 			sv.federated[g] = true
 		}
+		if !sc.SeesAllGroups() {
+			set := logdb.GroupSet{IDs: fg, Not: true}
+			seen, err := logdb.CountGroups(ctx, s.ro, sc, set)
+			if err != nil {
+				return sv, err
+			}
+			if seen == 0 {
+				has, err := logdb.CountGroups(ctx, s.ro, scope.Everything(), set)
+				if err != nil {
+					return sv, err
+				}
+				sv.defaultHidden = has > 0
+			}
+		}
 	}
 	if sv.exposed, err = logdb.ExposedGroupIDs(ctx, s.ro); err != nil {
 		return sv, err
@@ -257,7 +278,9 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 // hold private chats, and owner, when not nil, the web scope of a
 // member or admin owner (ownerBound), outside which an entry reaches
 // nothing (decisions/2026-11-21-mcp-token-owner-grants.md,
-// 2026-11-22-mcp-token-owner-view.md).
+// 2026-11-22-mcp-token-owner-view.md). An entry hidden from the viewer
+// goes out with no name, active nil and reason hidden_from_viewer,
+// whatever it reaches (2026-11-22-mcp-scope-hidden-entries.md).
 func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *scope.Scope) []mcpScopeJSON {
 	out := []mcpScopeJSON{}
 	for _, e := range es {
@@ -270,22 +293,20 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *sco
 			switch {
 			case !exists:
 				why = reasonFederationGone
+			case !sv.viewerSeesFed(e.ID):
+				why = reasonHiddenViewer
 			case owner != nil && !sv.fedSeen(e.ID, *owner):
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopeGroup:
-			// titles holds only the groups the viewer sees: any other
-			// goes out with an empty name.
+			// titles holds only the groups the viewer sees.
 			j.Name = sv.titles[e.ID]
-			outside := owner != nil && !owner.SeesGroup(e.ID)
 			switch {
-			case outside && !sv.viewer.SeesGroup(e.ID):
-				// Said before not_exposed, so a group hidden from
-				// the viewer tells it nothing about its exposure.
-				why = reasonOutsideGrants
+			case !sv.viewer.SeesGroup(e.ID):
+				why = reasonHiddenViewer
 			case !sv.exposed[e.ID]:
 				why = reasonNotExposed
-			case outside:
+			case owner != nil && !owner.SeesGroup(e.ID):
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopePrivate:
@@ -298,7 +319,12 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *sco
 				why = reasonUserUnknown
 			}
 		}
-		j.Active = why == ""
+		if why == reasonHiddenViewer {
+			j.Name = ""
+		} else {
+			active := why == ""
+			j.Active = &active
+		}
 		if why != "" {
 			j.InactiveReason = &why
 		}
@@ -331,8 +357,38 @@ func (sv scopeView) fedSeen(fed int64, owner scope.Scope) bool {
 		}
 		return false
 	}
+	return sv.fedVisible(fed, owner)
+}
+
+// viewerSeesFed is whether federation fed's entry may tell the viewer
+// what it reaches: unless the federation has groups, exposed or not,
+// and the viewer sees none of them (for Default, every group in no
+// other federation). It does not depend on exposure, so the entry does
+// not change for the viewer when a hidden group is exposed or
+// withdrawn.
+func (sv scopeView) viewerSeesFed(fed int64) bool {
+	if uint64(fed) == webdb.DefaultFederation {
+		return !sv.defaultHidden
+	}
+	gs := sv.fedGroups[fed]
+	if len(gs) == 0 {
+		return true
+	}
+	for _, g := range gs {
+		if sv.viewer.SeesGroup(g) {
+			return true
+		}
+	}
+	return false
+}
+
+// fedVisible is whether sc sees an exposed group federation fed's
+// entry would reach, or the entry reaches no exposed group at all: a
+// federation is out of sight only when every exposed group it reaches
+// is hidden from sc.
+func (sv scopeView) fedVisible(fed int64, sc scope.Scope) bool {
 	var reached []int64
-	if isDefault {
+	if uint64(fed) == webdb.DefaultFederation {
 		for g := range sv.exposed {
 			if !sv.federated[g] {
 				reached = append(reached, g)
@@ -349,7 +405,7 @@ func (sv scopeView) fedSeen(fed int64, owner scope.Scope) bool {
 		return true
 	}
 	for _, g := range reached {
-		if owner.SeesGroup(g) {
+		if sc.SeesGroup(g) {
 			return true
 		}
 	}
