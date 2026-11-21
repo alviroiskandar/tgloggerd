@@ -729,8 +729,13 @@ The Go service serves the administration as JSON operations
   The reach of `/mcp` does not change with the viewer: it follows the
   owner. Then
   `scope_options`: the
-  federations, the exposed groups the viewer sees, and `private`, true
-  for a superadmin.
+  federations the viewer may be told about, by the same rule as a
+  federation entry hidden from it (one that has at least one group,
+  exposed or not, and none the viewer sees is left out; for Default,
+  the groups in no other federation; one with no group stays offered;
+  [decision](../../docs/design/decisions/2026-11-22-mcp-scope-federation-options.md)),
+  the exposed groups the viewer sees, and `private`, true for a
+  superadmin.
 - Only groups the viewer may see are exposed, listed, counted or
   withdrawn; a hidden group is 404 like an unknown one
   (web-accounts.md section 4). Exposing a group twice is 409

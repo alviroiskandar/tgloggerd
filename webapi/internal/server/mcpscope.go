@@ -443,9 +443,9 @@ func ownerBound(a webdb.Account) *scope.Scope {
 	return &sc
 }
 
-// scopeOptions is what the viewer's token form may offer: every
-// federation, the exposed groups it sees, and private chats for a
-// superadmin.
+// scopeOptions is what the viewer's token form may offer: the
+// federations it may be told about (fedSight.sees), the exposed groups
+// it sees, and private chats for a superadmin.
 func (s *Server) scopeOptions(ctx context.Context, sc scope.Scope, v scope.Viewer) (mcpScopeOptions, error) {
 	o := mcpScopeOptions{Federations: []fedRef{}, Groups: []mcpGroupRef{},
 		Private: v.Role == scope.Superadmin}
@@ -453,8 +453,22 @@ func (s *Server) scopeOptions(ctx context.Context, sc scope.Scope, v scope.Viewe
 	if err != nil {
 		return o, err
 	}
+	var sight fedSight
+	if !sc.SeesAllGroups() {
+		named := map[int64]bool{}
+		for _, f := range fs {
+			named[int64(f.ID)] = true
+		}
+		if sight, err = s.newFedSight(ctx, sc, named); err != nil {
+			return o, err
+		}
+	}
 	for _, f := range fs {
-		o.Federations = append(o.Federations, fedRef{ID: f.ID, Name: f.Name})
+		// A viewer that sees every group may be told about every
+		// federation: the zero sight hides none.
+		if sight.sees(int64(f.ID)) {
+			o.Federations = append(o.Federations, fedRef{ID: f.ID, Name: f.Name})
+		}
 	}
 	gs, err := logdb.ExposedGroups(ctx, s.ro, sc)
 	if err != nil {
