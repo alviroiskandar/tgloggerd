@@ -2,9 +2,10 @@
 // The MCP tokens page per role: who owns each token and who minted it,
 // minting for another owner, renaming, and (superadmins) transferring.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { callsTo, fakeApi, fixture, json, renderPage, setup } from '../test/page.tsx';
 import type { McpIndexProps, McpTokensProps } from './mcp.tsx';
+import { ScopeChip, type ScopeEntry } from './mcp-scope.tsx';
 import type { AccountsProps } from './accounts.tsx';
 import { adminApi } from '../../standin/fixtures.ts';
 
@@ -316,7 +317,7 @@ describe('mcp token scopes in the list', () => {
 
 	it('collapses a long scope behind a toggle', () => {
 		const page = fixture<McpTokensProps>('/mcp-admin/tokens');
-		const scope = [1, 2, 3, 4, 5].map((i) => ({ kind: 'group' as const, id: -i, name: `g${i}`, active: true }));
+		const scope = [1, 2, 3, 4, 5].map((i) => ({ kind: 'group' as const, id: -i, name: `g${i}`, active: true, inactive_reason: null }));
 		const props = { ...page.props, tokens: page.props.tokens.map((t) => (t.name === 'laptop' ? { ...t, scope } : t)) };
 		renderPage('/mcp-admin/tokens', 'superadmin', { props } as never);
 		const cell = scopeCell('laptop');
@@ -433,5 +434,38 @@ describe('the mcp token scope form', () => {
 		addFrom(/Add a federation/, 'Default');
 		save();
 		expect((await within(dialog()).findByRole('alert')).textContent).toBe('A private chat can be given only to a token a superadmin owns.');
+	});
+});
+
+// Why an entry is inactive comes from the server (inactive_reason),
+// one hover text per reason.
+describe('mcp token scope: why an entry is inactive', () => {
+	beforeEach(() => setup());
+	const owner = { id: 1, name: 'Administrator', role: 'superadmin' as const, active: true };
+	const off = (kind: 'federation' | 'group' | 'private', id: number, inactive_reason: NonNullable<ScopeEntry['inactive_reason']>): ScopeEntry => ({ kind, id, name: 'x', active: false, inactive_reason });
+
+	it.each([
+		[off('group', -1, 'not_exposed'), /not exposed to MCP/],
+		[off('group', -2, 'outside_owner_grants'), /outside the groups the token's owner is granted/],
+		[off('federation', 9, 'federation_deleted'), /federation was deleted/],
+		[off('federation', 1, 'outside_owner_grants'), /outside the groups the token's owner is granted/],
+		[off('private', 7, 'private_not_superadmin'), /superadmin owns/],
+		[off('private', 8, 'user_unknown'), /knows no such user/],
+	])('says %#', (e, text) => {
+		render(<ScopeChip e={e} owner={owner} />);
+		expect(document.querySelector('.a-tokscope-e.off')!.getAttribute('title')).toMatch(text);
+	});
+
+	it('follows the server on a group outside a member owner\'s grants, not the client\'s guess', () => {
+		// An exposed group (so not "not exposed") the owner is not granted.
+		render(<ScopeChip e={off('group', -3, 'outside_owner_grants')} owner={{ id: 5, name: 'Research team', role: 'member', active: true }} />);
+		expect(document.querySelector('.a-tokscope-e.off')!.getAttribute('title')).not.toMatch(/not exposed/);
+	});
+
+	it('is computed by the stand-in in the server\'s order', () => {
+		const p = fixture<McpTokensProps>('/mcp-admin/tokens').props;
+		for (const t of p.tokens) for (const e of t.scope) expect(e.active).toBe(e.inactive_reason === null);
+		const reasons = p.tokens.flatMap((t) => t.scope.map((e) => e.inactive_reason)).filter(Boolean);
+		expect(reasons).toEqual(expect.arrayContaining(['not_exposed', 'federation_deleted', 'private_not_superadmin']));
 	});
 });

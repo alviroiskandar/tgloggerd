@@ -25,13 +25,16 @@ const KINDS: Record<ScopeKind, { icon: typeof Lock; label: string }> = {
 // The entry's name, or what it was when it no longer exists.
 const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation' : e.kind === 'group' ? `Group ${e.id}` : `User ${e.id}`);
 
-// Why an inactive entry reads nothing, as far as the page can tell.
-function whyInactive(e: ScopeEntry, owner: Person) {
-	if (e.kind === 'federation') return 'Inactive: the federation was deleted, so this entry reads nothing.';
-	if (e.kind === 'group') return e.name ? 'Inactive: the group is not exposed to MCP, so this entry reads nothing until it is.' : 'Inactive: the group is no longer in the archive.';
-	if (!superOwned(owner)) return 'Inactive: a private chat works only on a token a superadmin owns, so this entry reads nothing.';
-	return 'Inactive: this private chat reads nothing.';
-}
+// Why an inactive entry reads nothing, as the server says it
+// (McpScopeInactiveReason).
+const WHY: Record<NonNullable<ScopeEntry['inactive_reason']>, string> = {
+	not_exposed: 'Inactive: the group is not exposed to MCP, so this entry reads nothing until it is.',
+	outside_owner_grants: 'Inactive: it is outside the groups the token\'s owner is granted, so this entry reads nothing.',
+	federation_deleted: 'Inactive: the federation was deleted, so this entry reads nothing.',
+	private_not_superadmin: 'Inactive: a private chat works only on a token a superadmin owns, so this entry reads nothing.',
+	user_unknown: 'Inactive: the archive knows no such user, so this private chat reads nothing.',
+};
+const whyInactive = (e: ScopeEntry) => (e.inactive_reason ? WHY[e.inactive_reason] : 'Inactive: this entry reads nothing.');
 
 // A scope with entries none of which is active reads nothing: it never
 // falls back to every exposed group.
@@ -44,7 +47,7 @@ export function NothingWarning() {
 export function ScopeChip({ e, owner }: { e: ScopeEntry; owner: Person }) {
 	const k = KINDS[e.kind];
 	return (
-		<span className={`a-pill a-tokscope-e${e.active ? '' : ' off'}`} title={e.active ? `${k.label}: ${nameOf(e)}` : whyInactive(e, owner)}>
+		<span className={`a-pill a-tokscope-e${e.active ? '' : ' off'}`} title={e.active ? `${k.label}: ${nameOf(e)}` : whyInactive(e)}>
 			<k.icon size={11} aria-label={k.label} />{nameOf(e)}{!e.active && <span className="a-tokscope-flag">inactive</span>}
 		</span>
 	);
@@ -93,14 +96,14 @@ export function ScopeEditor({ value, onChange, options, owner }: { value: ScopeE
 	const has = (kind: ScopeKind, id: number) => value.some((e) => same(e, { kind, id }));
 	const add = (e: ScopeEntry) => { if (!has(e.kind, e.id)) onChange(sorted([...value, e])); };
 	const remove = (e: ScopeEntry) => onChange(value.filter((x) => !same(x, e)));
-	const pick = (kind: 'federation' | 'group') => (v: PickItem[]) => { const p = v[v.length - 1]; if (p) add({ kind, id: p.id, name: p.title, active: true }); };
+	const pick = (kind: 'federation' | 'group') => (v: PickItem[]) => { const p = v[v.length - 1]; if (p) add({ kind, id: p.id, name: p.title, active: true, inactive_reason: null }); };
 	const feds = options.federations.filter((f) => !has('federation', f.id)).map((f) => asPick(f, 'group'));
 	const groups = options.groups.filter((g) => !has('group', g.id)).map((g) => asPick(g, 'group'));
 	const blocked = blockedPrivate(value, options, owner);
 	// A private chat is the other person's user id.
 	const id = /^\d{1,19}$/.test(uid.trim()) ? Number(uid.trim()) : 0;
 	const uidErr = !uid.trim() ? '' : !id ? 'A user id is a positive number.' : has('private', id) ? 'Already in the scope.' : '';
-	const addPrivate = () => { if (id && !uidErr) { add({ kind: 'private', id, name: '', active: true }); setUid(''); } };
+	const addPrivate = () => { if (id && !uidErr) { add({ kind: 'private', id, name: '', active: true, inactive_reason: null }); setUid(''); } };
 	return (
 		<div className="a-tokscope-edit">
 			<div className="a-field" role="group" aria-label="Scope">
