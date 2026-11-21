@@ -94,7 +94,7 @@ func (e *adminEnv) tokenScope(role string, id int) string {
 			Scope []struct {
 				Kind   string  `json:"kind"`
 				ID     int64   `json:"id"`
-				Active bool    `json:"active"`
+				Active *bool   `json:"active"`
 				Reason *string `json:"inactive_reason"`
 			} `json:"scope"`
 		} `json:"tokens"`
@@ -107,11 +107,14 @@ func (e *adminEnv) tokenScope(role string, id int) string {
 		if tk.ID == id {
 			var out []string
 			for _, x := range tk.Scope {
-				r := "null"
+				act, r := "null", "null"
+				if x.Active != nil {
+					act = fmt.Sprint(*x.Active)
+				}
 				if x.Reason != nil {
 					r = *x.Reason
 				}
-				out = append(out, fmt.Sprintf("%s %d %v %s", x.Kind, x.ID, x.Active, r))
+				out = append(out, fmt.Sprintf("%s %d %s %s", x.Kind, x.ID, act, r))
 			}
 			return strings.Join(out, ", ")
 		}
@@ -164,10 +167,18 @@ func TestMcpTokenListAdminHiddenGroups(t *testing.T) {
 		"federation 51 false outside_owner_grants, federation 52 true null, " +
 		"group -1001000000010 false outside_owner_grants, group -1001000000003 true null, " +
 		"group -1001000000001 false outside_owner_grants"
-	for _, role := range []string{"superadmin", "admin"} {
-		if got := e.tokenScope(role, 90); got != want {
-			t.Errorf("admin's token as %s: %s\nwant %s", role, got, want)
-		}
+	if got := e.tokenScope("superadmin", 90); got != want {
+		t.Errorf("admin's token as superadmin: %s\nwant %s", got, want)
+	}
+	// To the admin itself the hidden groups, and CTF only, whose one
+	// group is hidden, tell nothing; Default holds groups the admin
+	// sees, so it shows its real state.
+	want = "federation 0 false outside_owner_grants, federation 50 true null, " +
+		"federation 51 null hidden_from_viewer, federation 52 true null, " +
+		"group -1001000000010 null hidden_from_viewer, group -1001000000003 true null, " +
+		"group -1001000000001 null hidden_from_viewer"
+	if got := e.tokenScope("admin", 90); got != want {
+		t.Errorf("admin's token as admin: %s\nwant %s", got, want)
 	}
 	// Shown again: the entries count at once.
 	exec("DELETE FROM web_admin_hidden_groups WHERE web_user_id = 3")
@@ -239,11 +250,11 @@ func TestMcpTokenHiddenEntryFromViewer(t *testing.T) {
 	if n := names("admin"); n[gnuweeb] != "" || n[ctf] != "CTF Practice" {
 		t.Errorf("admin's names: %v", n)
 	}
-	// Withdrawn from MCP, the hidden group still says only that it is
-	// outside its owner's view to the admin; a superadmin sees why.
+	// Withdrawn from MCP, the hidden group still tells the admin
+	// nothing; a superadmin sees why.
 	e.want(204, "superadmin", "DELETE", fmt.Sprintf("/api/mcp/groups/%d", gnuweeb), nil)
 	if got := e.tokenScope("admin", 90); got != "group -1001000000010 true null, "+
-		"group -1001000000001 false outside_owner_grants" {
+		"group -1001000000001 null hidden_from_viewer" {
 		t.Errorf("admin's view of an unexposed hidden group: %s", got)
 	}
 	if got := e.tokenScope("superadmin", 90); got != "group -1001000000010 true null, "+

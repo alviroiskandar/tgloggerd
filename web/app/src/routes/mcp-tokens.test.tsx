@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { callsTo, fakeApi, fixture, json, renderPage, setup } from '../test/page.tsx';
 import type { McpIndexProps, McpTokensProps } from './mcp.tsx';
-import { ScopeChip, type ScopeEntry } from './mcp-scope.tsx';
+import { ScopeChip, readsNothing, type ScopeEntry } from './mcp-scope.tsx';
 import type { AccountsProps } from './accounts.tsx';
 import { adminApi } from '../../standin/fixtures.ts';
+import { accounts, federations, fedGroups } from '../../../mockup/src/data/accounts.js';
 
 beforeEach(setup);
 // The table row of a token, by its name.
@@ -419,7 +420,8 @@ describe('the mcp token scope form', () => {
 	it('tells an admin a private chat blocks the save, and offers to remove it', async () => {
 		const t = tokenOf('', 'admin');
 		const calls = openScope('', 'admin', { 'PATCH /api/mcp/tokens/:id': () => undefined });
-		expect(within(scopeList()).getByRole('note').textContent).toMatch(/reads nothing/);
+		// Its group is hidden from this admin: the note claims no more.
+		expect(within(scopeList()).getByRole('note').textContent).toBe('None of the entries you can see is active; the others are hidden from you');
 		expect(within(dialog()).getByText(/Only a superadmin can give a token a private chat/)).toBeTruthy();
 		const go = within(dialog()).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
 		expect(go.disabled).toBe(true);
@@ -529,17 +531,91 @@ describe('mcp token scope: a group hidden from the viewer', () => {
 		expect(document.body.textContent).not.toContain(superView.name);
 	});
 
-	it('says outside the owner\'s view before not exposed, only to a viewer who cannot see it', () => {
+	it('tells a viewer who cannot see it nothing, whatever its state', () => {
 		const id = mine().scope.find((e) => e.kind === 'group')!.id;
-		const reasonFor = (who: 'admin' | 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', who).props.tokens.find((t) => t.owner.id === 3)!.scope.find((e) => e.kind === 'group')!.inactive_reason;
+		const entry = (who: 'admin' | 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', who).props.tokens.find((t) => t.owner.id === 3)!.scope.find((e) => e.id === id)! as ScopeEntry;
+		const blind = { name: '', active: null, inactive_reason: 'hidden_from_viewer' };
+		expect(entry('admin')).toMatchObject(blind);
+		expect(entry('superadmin')).toMatchObject({ active: false, inactive_reason: 'outside_owner_grants' });
 		expect(adminApi('DELETE', `mcp/groups/${id}`, {}, 'superadmin')[0]).toBe(204);
 		try {
-			expect(reasonFor('admin')).toBe('outside_owner_grants');
-			expect(reasonFor('superadmin')).toBe('not_exposed');
+			expect(entry('admin')).toMatchObject(blind);
+			expect(entry('superadmin')).toMatchObject({ active: false, inactive_reason: 'not_exposed' });
 		} finally {
 			expect(adminApi('POST', 'mcp/groups', { group_id: id }, 'superadmin')[0]).toBe(201);
 		}
-		expect(reasonFor('superadmin')).toBe('outside_owner_grants');
+	});
+
+	it('is drawn neither active nor inactive', () => {
+		render(<ScopeChip e={{ kind: 'group', id: -9, name: '', active: null, inactive_reason: 'hidden_from_viewer' }} owner={{ id: 3, name: 'GNU/Weeb admins', role: 'admin', active: true }} />);
+		const chip = document.querySelector('.a-tokscope-e')!;
+		expect(chip.textContent).toBe('A group hidden from you');
+		expect(chip.classList.contains('off')).toBe(false);
+		expect(chip.querySelector('.a-tokscope-flag')).toBeNull();
+		expect(chip.getAttribute('title')).toMatch(/cannot say whether/);
+	});
+
+	it('hides a federation whose groups the viewer sees none of, exposed or not', () => {
+		// Security holds the group hidden from this admin and one it sees;
+		// hide that one too for the test, so the admin sees none of it,
+		// and have a superadmin put it on the member's token.
+		const sec = federations.find((f) => f.id === 3)!;
+		const restrict = accounts.find((a) => a.id === 3)!.restrict!;
+		const before = [...restrict.hide_groups];
+		restrict.hide_groups = [...new Set([...before, ...sec.groupIds])];
+		const tok = fixture<McpTokensProps>('/mcp-admin/tokens').props.tokens.find((t) => t.name === 'research-agent')!;
+		const refs = tok.scope.map(({ kind, id }) => ({ kind, id }));
+		expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: [...refs, { kind: 'federation', id: 3 }] }, 'superadmin')[0]).toBe(204);
+		const fed = (who: 'admin' | 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', who).props.tokens.find((t) => t.id === tok.id)!.scope.find((e) => e.kind === 'federation' && e.id === 3)!;
+		const blind = { name: '', active: null, inactive_reason: 'hidden_from_viewer' };
+		const hidden = mine().scope.find((e) => e.kind === 'group')!.id;
+		try {
+			expect(fed('admin')).toMatchObject(blind);
+			expect(fed('superadmin').name).toBe('Security');
+			// Withdrawing one of its groups tells the admin nothing new.
+			expect(adminApi('DELETE', `mcp/groups/${hidden}`, {}, 'superadmin')[0]).toBe(204);
+			expect(fed('admin')).toMatchObject(blind);
+			expect(adminApi('POST', 'mcp/groups', { group_id: hidden }, 'superadmin')[0]).toBe(201);
+		} finally {
+			restrict.hide_groups = before;
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: refs }, 'superadmin')[0]).toBe(204);
+		}
+	});
+
+	it('counts as Default\'s groups those in no other federation', () => {
+		const tok = fixture<McpTokensProps>('/mcp-admin/tokens').props.tokens.find((t) => t.name === 'research-agent')!;
+		const refs = tok.scope.map(({ kind, id }) => ({ kind, id }));
+		expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: [{ kind: 'federation', id: 0 }, ...refs] }, 'superadmin')[0]).toBe(204);
+		const dflt = () => fixture<McpTokensProps>('/mcp-admin/tokens', 'admin').props.tokens.find((t) => t.id === tok.id)!.scope.find((e) => e.kind === 'federation' && e.id === 0)!;
+		const restrict = accounts.find((a) => a.id === 3)!.restrict!;
+		const before = [...restrict.hide_groups];
+		try {
+			// The admin sees some of the groups in no other federation.
+			expect(dflt().inactive_reason).not.toBe('hidden_from_viewer');
+			expect(dflt().name).toBe('Default');
+			// Hidden all of those, Default tells it nothing; the groups of
+			// the other federations do not count for it.
+			const own = fedGroups({ id: 0 }).map((g: { id: number }) => g.id);
+			restrict.hide_groups = [...new Set([...before, ...own])];
+			expect(dflt()).toMatchObject({ name: '', active: null, inactive_reason: 'hidden_from_viewer' });
+		} finally {
+			restrict.hide_groups = before;
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: refs }, 'superadmin')[0]).toBe(204);
+		}
+	});
+
+	it('names a hidden federation as such, not as deleted', () => {
+		render(<ScopeChip e={{ kind: 'federation', id: 3, name: '', active: null, inactive_reason: 'hidden_from_viewer' }} owner={{ id: 3, name: 'GNU/Weeb admins', role: 'admin', active: true }} />);
+		expect(document.querySelector('.a-tokscope-e')!.textContent).toBe('A federation hidden from you');
+	});
+
+	it('warns that a token reads nothing only when the page can know it', () => {
+		const e = (active: boolean | null): ScopeEntry => ({ kind: 'group', id: -1, name: 'g', active, inactive_reason: active === null ? 'hidden_from_viewer' : active ? null : 'not_exposed' });
+		expect(readsNothing([])).toBeNull();
+		expect(readsNothing([e(false), e(false)])).toBe('nothing');
+		expect(readsNothing([e(false), e(null)])).toBe('unknown');
+		expect(readsNothing([e(null)])).toBe('unknown');
+		expect(readsNothing([e(null), e(true)])).toBeNull();
 	});
 
 	it('is kept by the stand-in when the token already holds it, and refused when new', () => {
