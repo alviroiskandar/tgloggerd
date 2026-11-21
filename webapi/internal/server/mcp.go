@@ -180,10 +180,10 @@ func (s *Server) postMCP(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("mcp token last use", "token", owner.TokenID, "err", err)
 	}
 	// The token's scope, read on every request, so a change to it, to
-	// a federation in it or to the token's owner counts at once. A
-	// scope that cannot be read fails the request rather than read
-	// unnarrowed.
-	reach, err := mcp.ResolveScope(r.Context(), s.app, owner.TokenID, owner.PrivateOK)
+	// a federation in it, to the token's owner or to a member owner's
+	// grants counts at once. A scope that cannot be read fails the
+	// request rather than read unnarrowed.
+	reach, err := mcp.ResolveScope(r.Context(), s.app, owner)
 	if err != nil {
 		s.log.Error("mcp token scope", "token", owner.TokenID, "err", err)
 		writeMCPError(w, http.StatusInternalServerError, mcp.InternalError,

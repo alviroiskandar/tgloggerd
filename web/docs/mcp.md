@@ -65,11 +65,18 @@ narrows it, except for private chats.
 - Entries: the exposed groups named by a `group` entry or in a `federation` entry
   (Default, id 0, is the groups in no other federation), plus the `private` chats. A
   group that is not exposed is never reached, whatever names it.
+- A token a **member** owns reads only the exposed groups within the member's own
+  grants, the groups the member sees on the web
+  ([decision](../../docs/design/decisions/2026-11-21-mcp-token-owner-grants.md)): its
+  entries narrow within the grants, never beyond them, and no entries is every exposed
+  group within them. Tokens of superadmins and admins, and tokens without an owner
+  record, are not bounded so (an admin's hidden groups do not apply to its tokens).
 - Read on every request: a group added to or taken out of a federation, a group
-  withdrawn from MCP or exposed again, and a token changing owner count from the next
-  request on.
+  withdrawn from MCP or exposed again, a token changing owner and a grant given to or
+  withdrawn from a member owner count from the next request on.
 - An entry that reaches nothing stays (a deleted federation, a withdrawn group, a
-  private chat on a token now owned by an admin or a member). A token whose every entry
+  private chat on a token now owned by an admin or a member, an entry outside a member
+  owner's grants). A token whose every entry
   is inactive reads **nothing**; it never falls back to every exposed group.
 - The one place in the code: `telegram.readable` (`webapi/internal/mcp/gate.go`). The
   transport resolves the token's entries into a `Reach` (`scope.go`) per request and puts
@@ -671,10 +678,17 @@ The Go service serves the administration as JSON operations
   owner record; otherwise 403 `forbidden`, with the reason in
   `message`. So an admin editing a token that still carries an
   inactive private entry from an earlier owner drops it to save. The
-  tokens list gives each token's `scope` as `{kind, id, name, active}`
-  (federations, then groups, then private chats; `active` false for a
-  deleted federation, a group not exposed, a private chat on a token
-  whose owner is not a superadmin), and `scope_options`: the
+  tokens list gives each token's `scope` as `{kind, id, name, active,
+  inactive_reason}` (federations, then groups, then private chats).
+  `active` is false, and `inactive_reason` says why (null while
+  active), the first that applies: `not_exposed` for a group not
+  exposed, `federation_deleted` for a deleted federation,
+  `private_not_superadmin` for a private chat on a token whose owner is
+  not a superadmin, `user_unknown` for a private chat with a user the
+  archive does not know, and `outside_owner_grants` for an entry of a
+  member's token that reaches no group the member is granted (a group
+  not granted, a federation holding no granted group). Then
+  `scope_options`: the
   federations, the exposed groups the viewer sees, and `private`, true
   for a superadmin.
 - Only groups the viewer may see are exposed, listed, counted or
@@ -709,8 +723,9 @@ The Go service serves the administration as JSON operations
   "Shared", id 0, without an owner record) and minter, with `owners`,
   who the viewer may mint for or transfer to, and `can_transfer`.
   What a token reads is the exposure list narrowed by its scope;
-  ownership changes it only for private chat entries, which work while
-  a superadmin owns the token.
+  ownership changes it for private chat entries, which work while a
+  superadmin owns the token, and for a member owner, whose grants bound
+  the token.
 
 ## Configuration
 
