@@ -50,7 +50,15 @@ in the admin UI as a hint and is never acted on; see `migrations/000022` for why
 
 `telegram_get_users` is deliberately *not* gated: it describes accounts, not
 conversations, and returns the same profile data the web UI already shows — including
-phone numbers where the archive has them.
+phone numbers where the archive has them. On a token a member or an admin owns, the
+user tools (`telegram_get_users`, `telegram_get_user`, `telegram_get_user_history`)
+describe only the users that owner sees on the web
+([decision](../../docs/design/decisions/2026-11-22-mcp-token-owner-view.md)), by the
+web's own rule (`scope.UserFilter`): an admin sees every user, a member the senders and
+admins of its granted groups, exposed or not. Any other id answers exactly as an id the
+archive does not hold: `telegram_get_user` the same error, `telegram_get_user_history`
+every category empty, `telegram_get_users` leaves it out. Tokens of superadmins, and
+tokens without an owner record, are unchanged.
 
 ### Token scopes (Go service)
 
@@ -659,10 +667,9 @@ The Go service serves the administration as JSON operations
   token is 404 like an unknown one, and the list, the index's count
   and its last use cover only the viewer's tokens. A member given
   `mcp_tokens` has the MCP menu entry with the index and the tokens,
-  not the groups. Members do not get tokens without the ability
-  because `telegram_get_users` is not limited to the exposed groups:
-  it answers any user's profile, which is more than a member's grants
-  show it.
+  not the groups. Members do not get tokens without the ability; a
+  member's token describes only the users of the member's granted
+  groups (see the user tools above).
 - Minting: `owner_id` (the viewer when left out) must be an active
   account that may hold tokens (a superadmin, an admin, or a member
   with `mcp_tokens`) whose tokens the viewer manages, so an admin mints

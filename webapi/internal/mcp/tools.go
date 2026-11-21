@@ -8,6 +8,7 @@ package mcp
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1788,6 +1789,7 @@ func (t *telegram) getUser(ctx context.Context, args map[string]any) (any, error
 		return nil, err
 	}
 	bind := strconv.FormatInt(uid, 10)
+	cond, cargs := reachOf(ctx).userCond("u.id")
 	rows, err := execTool(ctx, t.db,
 		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "+
 			"u.id, u.first_name, u.last_name, u.type, "+
@@ -1808,11 +1810,12 @@ func (t *telegram) getUser(ctx context.Context, args map[string]any) (any, error
 			"  ON e.user_id = u.id "+
 			"LEFT JOIN telegram_files pf "+
 			"  ON pf.id = u.profile_photo_file_id "+
-			"WHERE u.id = ?",
-		[]any{bind}, queryFailed)
+			"WHERE u.id = ?"+cond,
+		append([]any{bind}, cargs...), queryFailed)
 	if err != nil {
 		return nil, err
 	}
+	// A user the token's owner does not see answers as an unknown one.
 	if len(rows) == 0 {
 		return nil, toolErr("no user with id " + bind + " in the archive")
 	}
@@ -1937,6 +1940,19 @@ func (t *telegram) getUserHistory(ctx context.Context, args map[string]any) (any
 		return nil, err
 	}
 	out := map[string]any{"user_id": uid}
+	// A user the token's owner does not see answers as an unknown one:
+	// every category empty.
+	if seen, err := t.seesUser(ctx, uid); err != nil || !seen {
+		if err != nil {
+			return nil, err
+		}
+		for i, k := range []string{"names", "usernames", "bios", "phone_numbers", "photos"} {
+			if want[i] {
+				out[k] = []any{}
+			}
+		}
+		return out, nil
+	}
 	if want[0] {
 		if err := t.histList(ctx, out, "names",
 			"SELECT first_name, last_name, created_at FROM "+
@@ -2003,6 +2019,19 @@ func (t *telegram) getUserHistory(ctx context.Context, args map[string]any) (any
 	return out, nil
 }
 
+// seesUser is whether the token's owner sees user uid on the web
+// (Reach.userCond), true when it sees every user. An id the archive
+// does not hold is not seen.
+func (t *telegram) seesUser(ctx context.Context, uid int64) (bool, error) {
+	cond, args := reachOf(ctx).userCond("u.id")
+	if cond == "" {
+		return true, nil
+	}
+	rows, err := execTool(ctx, t.db, "SELECT u.id FROM telegram_users u WHERE u.id = ?"+cond,
+		append([]any{uid}, args...), queryFailed)
+	return len(rows) > 0, err
+}
+
 func (t *telegram) getUserHistoryTool() Tool {
 	return Tool{
 		Name:  "telegram_get_user_history",
@@ -2059,6 +2088,12 @@ func (t *telegram) getUsers(ctx context.Context, args map[string]any) (any, erro
 	if err != nil {
 		return nil, err
 	}
+	// Only the users the token's owner sees on the web.
+	where, binds := c.sql, c.binds
+	if cond, args := reachOf(ctx).userCond("u.id"); cond != "" {
+		where = "(" + c.sql + ")" + cond
+		binds = append(slices.Clip(c.binds), args...)
+	}
 	stmt := "SELECT /*+ MAX_EXECUTION_TIME(5000) */ " +
 		"u.id, u.first_name, u.last_name, u.type, " +
 		"u.msg_count, u.is_verified, u.is_premium, " +
@@ -2073,11 +2108,11 @@ func (t *telegram) getUsers(ctx context.Context, args map[string]any) (any, erro
 		"LEFT JOIN telegram_user_usernames un " +
 		"  ON un.user_id = u.id AND un.kind = 'active' " +
 		"  AND un.position = 0 " +
-		"WHERE " + c.sql +
+		"WHERE " + where +
 		" ORDER BY u.msg_count DESC LIMIT " +
 		strconv.Itoa(clampLimit(args)) + " OFFSET " +
 		strconv.Itoa(offset)
-	rows, err := execTool(ctx, t.db, stmt, c.binds, queryFailed)
+	rows, err := execTool(ctx, t.db, stmt, binds, queryFailed)
 	if err != nil {
 		return nil, err
 	}

@@ -39,10 +39,11 @@ import (
 //     2026-11-22-mcp-token-owner-view.md): the groups within a member's
 //     grants, every group but those hidden from an admin. The entries
 //     narrow within that, and no entries is every exposed group within
-//     it. The owner's account is read on every request too, so a
-//     withdrawn grant or a newly hidden group counts at once. Tokens
-//     of superadmins, and tokens without an owner record, are not
-//     bounded so.
+//     it. The user tools describe only the users the owner sees on
+//     the web (Reach.userCond). The owner's account is read on every
+//     request too, so a withdrawn grant or a newly hidden group counts
+//     at once. Tokens of superadmins, and tokens without an owner
+//     record, are not bounded so.
 
 // Reach is what one request's token may read, before the exposure list
 // is applied.
@@ -71,6 +72,20 @@ func (r Reach) allowsGroup(g int64) bool {
 		return true
 	}
 	return r.defaultFed && !r.federated[g]
+}
+
+// userCond is the condition, " AND ..." with its arguments, that a
+// user tool's statement adds over its user id column col, so it
+// describes only the users the token's owner sees on the web
+// (scope.UserFilter, as logdb.VisibleUsers applies it); "" when the
+// owner sees every user or the token is not bounded. col is a
+// constant of the caller's, never input.
+func (r Reach) userCond(col string) (string, []any) {
+	if !r.bounded || r.owner.SeesAllUsers() {
+		return "", nil
+	}
+	cond, args := r.owner.UserFilter(col)
+	return " AND " + cond, args
 }
 
 // OwnerScope is the web request scope of account a, as its own
