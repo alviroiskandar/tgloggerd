@@ -1675,8 +1675,10 @@ export function adminApi(method: string, p: string, body, persona: Persona): [nu
 		// name, the scope or both change; the scope is replaced whole.
 		if (!m[2]) {
 			if (body.name === undefined && body.scope === undefined) return [400, { error: 'bad_request', message: 'A name or a scope is required.', field: 'name' }];
+			// A name is checked only when one is sent: a scope alone may
+			// be written to a token that has none.
 			const name = body.name === undefined ? t.name : String(body.name).trim().slice(0, 64);
-			if (!name) return [400, { error: 'bad_request', message: 'A name is required.', field: 'name' }];
+			if (body.name !== undefined && !name) return [400, { error: 'bad_request', message: 'A name is required.', field: 'name' }];
 			let scope: McpScopeRef[] | undefined;
 			if (body.scope !== undefined) {
 				const [st, out] = checkMcpScope(s, body.scope, t.owner);

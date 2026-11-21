@@ -499,3 +499,14 @@ describe('mcp token scope: why an entry is inactive', () => {
 		expect(reasons).toEqual(expect.arrayContaining(['not_exposed', 'federation_deleted', 'private_not_superadmin']));
 	});
 });
+
+describe('mcp token scope in the stand-in', () => {
+	it('writes a scope alone to a token that has no name', () => {
+		const t = fixture<McpTokensProps>('/mcp-admin/tokens').props.tokens.find((x) => x.name === '')!;
+		// Its writable entries: not the deleted federation, nor the private
+		// chat an admin's token may not hold.
+		const refs = t.scope.filter((e) => e.kind === 'group').map(({ kind, id }) => ({ kind, id }));
+		expect(adminApi('PATCH', `mcp/tokens/${t.id}`, { scope: refs }, 'superadmin')).toEqual([204, null]);
+		expect(adminApi('PATCH', `mcp/tokens/${t.id}`, { name: ' ' }, 'superadmin')[0]).toBe(400);
+	});
+});
