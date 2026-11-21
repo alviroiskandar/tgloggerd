@@ -11173,19 +11173,28 @@ components:
         One entry of a token's scope, federations first, then groups,
         then private chats, each by id. name is the federation's name,
         the group's title or the user's name ("" when it no longer
-        exists, and for a group the viewer cannot see). active is
-        whether the entry reaches anything now: a federation that
-        exists, a group exposed to MCP, a private chat of a known user
-        on a token whose owner is a superadmin (or that has no owner
-        record); on a token a member or an admin owns, also only
-        within what its owner sees on the web: for a member a group
-        granted to it, a federation holding a granted group; for an
-        admin a group not hidden from it, a federation with an exposed
-        group not hidden from it
+        exists). active is whether the entry reaches anything now: a
+        federation that exists, a group exposed to MCP, a private chat
+        of a known user on a token whose owner is a superadmin (or that
+        has no owner record); on a token a member or an admin owns,
+        also only within what its owner sees on the web: for a member a
+        group granted to it, a federation holding a granted group; for
+        an admin a group not hidden from it, a federation with an
+        exposed group not hidden from it
         (decisions/2026-11-21-mcp-token-owner-grants.md,
-        2026-11-22-mcp-token-owner-view.md). An inactive
-        entry is kept and reaches nothing; a token whose entries are
-        all inactive reads nothing, never every exposed group.
+        2026-11-22-mcp-token-owner-view.md). An inactive entry is kept
+        and reaches nothing; a token whose entries are all inactive
+        reads nothing, never every exposed group. An entry for a group
+        the viewer cannot see, or for a federation that has at least
+        one group, exposed or not, and none the viewer can see (for
+        Default, the groups in no other federation), tells the viewer
+        nothing: name "", active null and inactive_reason
+        hidden_from_viewer, whatever it reaches and whatever the
+        groups' exposure (decisions/2026-11-22-mcp-scope-hidden-entries.md).
+        A federation with no group at all, or a deleted one, shows its
+        real state.
+        Such an entry may or may not reach something, so a token counts
+        as reading nothing only when every entry's active is false.
         inactive_reason says why an entry is inactive, null when it is
         active.
       required: [kind, id, name, active, inactive_reason]
@@ -11198,24 +11207,27 @@ components:
         name:
           type: string
         active:
-          type: boolean
+          type: [boolean, 'null']
         inactive_reason:
           $ref: '#/components/schemas/McpScopeInactiveReason'
     McpScopeInactiveReason:
       type: [string, 'null']
       description: >-
-        Why a scope entry reaches nothing, the first that applies:
-        not_exposed, a group not exposed to MCP; federation_deleted, a
-        federation that no longer exists; private_not_superadmin, a
-        private chat on a token whose owner is not a superadmin;
-        user_unknown, a private chat with a user the archive no longer
-        knows; outside_owner_grants, an entry of a member's or an
-        admin's token that reaches no group its owner sees on the web
-        (outside a member's grants, or hidden from an admin); for a
-        group the viewer cannot see it comes before not_exposed, so the
-        list tells the viewer nothing about such a group. null for an
-        active entry.
+        Why a scope entry reaches nothing, or why the viewer is not
+        told, the first that applies: hidden_from_viewer, a group the
+        viewer cannot see, or a federation that has at least one group,
+        exposed or not, and none the viewer can see (active is null: the
+        viewer is not told whether it reaches anything); not_exposed, a
+        group not exposed to MCP; federation_deleted, a federation that
+        no longer exists;
+        private_not_superadmin, a private chat on a token whose owner
+        is not a superadmin; user_unknown, a private chat with a user
+        the archive no longer knows; outside_owner_grants, an entry of
+        a member's or an admin's token that reaches no group its owner
+        sees on the web (outside a member's grants, or hidden from an
+        admin). null for an active entry.
       enum:
+        - hidden_from_viewer
         - not_exposed
         - federation_deleted
         - private_not_superadmin
