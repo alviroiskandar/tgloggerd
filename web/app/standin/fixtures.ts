@@ -1237,11 +1237,12 @@ const superOwned = (owner: number) => owner === 0 || accounts.some((a) => a.id =
 const MCP_KINDS = ['federation', 'group', 'private'];
 // Why an entry is inactive (McpScopeInactiveReason), the first that
 // applies, as Go decides it: a group not exposed, then outside what a
-// member or admin owner sees (its grants; not hidden from it), which
-// comes first for a group the viewer cannot see; a federation deleted,
-// then reaching no group the owner sees; a private chat on a token no
-// superadmin owns, then of a user the archive does not know. null when
-// active.
+// member or admin owner sees (its grants; not hidden from it); a
+// federation deleted, then reaching no group the owner sees; a private
+// chat on a token no superadmin owns, then of a user the archive does
+// not know. null when active. A group the viewer cannot see, or a
+// federation with groups it can see none of, is sent as
+// hidden_from_viewer with active null, whatever its real state.
 const mcpScopeOf = (t, s) => {
 	const o = accounts.find((a) => a.id === t.owner);
 	const grants = o && o.role === 'member' ? o.grants : null;
@@ -1252,6 +1253,11 @@ const mcpScopeOf = (t, s) => {
 		let name = '', why: string | null = null;
 		if (e.kind === 'federation') {
 			const f = fedById(e.id);
+			// A federation with groups the viewer can see none of tells it
+			// nothing either, exposed or not, so withdrawing one changes
+			// nothing the viewer sees.
+			const its = f ? fedGroups(f) : [];
+			if (its.length && !its.some((g) => s.group(g))) return { ...e, name: '', active: null, inactive_reason: 'hidden_from_viewer' };
 			name = f?.name ?? '';
 			// A member's token: a federation holding a granted group; an
 			// admin's: one with an exposed group not hidden from it.
@@ -1260,13 +1266,14 @@ const mcpScopeOf = (t, s) => {
 			why = !f ? 'federation_deleted' : outside ? 'outside_owner_grants' : null;
 		} else if (e.kind === 'group') {
 			const g = getGroup(e.id);
-			// A group hidden from the viewer goes out without its title.
-			name = g && s.group(g) ? g.title : '';
+			// A group hidden from the viewer tells it nothing: no title,
+			// active null, whatever its real state
+			// (decisions/2026-11-22-mcp-scope-hidden-entries.md).
+			if (g && !s.group(g)) return { ...e, name: '', active: null, inactive_reason: 'hidden_from_viewer' };
+			name = g?.title ?? '';
 			const notExposed = !g || !mcpExposed.some((x) => x.group.id === e.id);
 			const outside = (grants && !grants.some((x) => x.groupIds.includes(e.id))) || hidden.includes(e.id);
-			// For a group the viewer cannot see, outside the owner's view
-			// comes first, so the list says nothing of its exposure.
-			why = outside && !(g && s.group(g)) ? 'outside_owner_grants' : notExposed ? 'not_exposed' : outside ? 'outside_owner_grants' : null;
+			why = notExposed ? 'not_exposed' : outside ? 'outside_owner_grants' : null;
 		} else {
 			const u = getUser(e.id);
 			name = u?.name ?? '';

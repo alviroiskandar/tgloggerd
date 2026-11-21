@@ -23,10 +23,12 @@ const KINDS: Record<ScopeKind, { icon: typeof Lock; label: string }> = {
 };
 
 // The entry's name, or what it was when it no longer exists.
-// A group hidden from the viewer comes without its title; one no
-// longer in the archive comes without it too, and is not exposed.
-const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation'
-	: e.kind === 'group' ? (e.inactive_reason === 'not_exposed' ? `Group ${e.id}` : 'A group hidden from you') : `User ${e.id}`);
+// A group the viewer cannot see, or a federation all of whose exposed
+// groups it cannot see, comes without its name and says nothing else of
+// itself; a group or federation that no longer exists has none either.
+const hiddenFromViewer = (e: ScopeEntry) => e.inactive_reason === 'hidden_from_viewer';
+const nameOf = (e: ScopeEntry) => e.name || (hiddenFromViewer(e) ? (e.kind === 'federation' ? 'A federation hidden from you' : 'A group hidden from you')
+	: e.kind === 'federation' ? 'Deleted federation' : e.kind === 'group' ? `Group ${e.id}` : `User ${e.id}`);
 
 // Production's /mcp is still served by the old web service, which
 // ignores token scopes; only the Go service applies them, once it
@@ -47,19 +49,37 @@ const WHY: Record<NonNullable<ScopeEntry['inactive_reason']>, string> = {
 	federation_deleted: 'Inactive: the federation was deleted, so this entry reads nothing.',
 	private_not_superadmin: 'Inactive: a private chat works only on a token a superadmin owns, so this entry reads nothing.',
 	user_unknown: 'Inactive: the archive knows no such user, so this private chat reads nothing.',
+	hidden_from_viewer: 'Hidden from you: this page cannot say whether this entry reaches anything.',
 };
 const whyInactive = (e: ScopeEntry) => (e.inactive_reason ? WHY[e.inactive_reason] : 'Inactive: this entry reads nothing.');
 
 // A scope with entries none of which is active reads nothing: it never
-// falls back to every exposed group.
-export const readsNothing = (scope: ScopeEntry[]) => scope.length > 0 && scope.every((e) => !e.active);
-
-export function NothingWarning() {
-	return <span className="a-tokscope-none" role="note"><TriangleAlert size={12} />This token reads nothing: none of its scope is active</span>;
+// falls back to every exposed group. An entry hidden from the viewer
+// (active null) may reach something the viewer cannot know of, so the
+// page claims only what it sees: 'nothing' when every entry is known
+// inactive, 'unknown' when none it sees is active but some are hidden.
+export function readsNothing(scope: ScopeEntry[]): 'nothing' | 'unknown' | null {
+	if (!scope.length || scope.some((e) => e.active === true)) return null;
+	return scope.some((e) => e.active === null) ? 'unknown' : 'nothing';
 }
+
+export function NothingWarning({ state }: { state: 'nothing' | 'unknown' }) {
+	return state === 'nothing'
+		? <span className="a-tokscope-none" role="note"><TriangleAlert size={12} />This token reads nothing: none of its scope is active</span>
+		: <span className="a-tokscope-none unknown" role="note"><TriangleAlert size={12} />None of the entries you can see is active; the others are hidden from you</span>;
+}
+
+const nothingState = (scope: ScopeEntry[]) => {
+	const state = readsNothing(scope);
+	return state && <NothingWarning state={state} />;
+};
 
 export function ScopeChip({ e, owner }: { e: ScopeEntry; owner: Person }) {
 	const k = KINDS[e.kind];
+	// Hidden from the viewer: neither active nor inactive to this page.
+	if (e.active === null) {
+		return <span className="a-pill a-tokscope-e hidden" title={WHY.hidden_from_viewer}><k.icon size={11} aria-label={k.label} />{nameOf(e)}</span>;
+	}
 	return (
 		<span className={`a-pill a-tokscope-e${e.active ? '' : ' off'}`} title={e.active ? `${k.label}: ${nameOf(e)}` : whyInactive(e)}>
 			<k.icon size={11} aria-label={k.label} />{nameOf(e)}{!e.active && <span className="a-tokscope-flag">inactive</span>}
@@ -81,7 +101,7 @@ export function ScopeSummary({ scope, owner }: { scope: ScopeEntry[]; owner: Per
 		<span className="a-tokscope">
 			{shown.map((e) => <ScopeChip key={e.kind + e.id} e={e} owner={owner} />)}
 			{long && <button type="button" className="a-tokscope-more" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? 'Show less' : `+${scope.length - shown.length} more`}</button>}
-			{readsNothing(scope) && <NothingWarning />}
+			{nothingState(scope)}
 		</span>
 	);
 }
@@ -128,7 +148,7 @@ export function ScopeEditor({ value, onChange, options, owner }: { value: ScopeE
 						<li key={e.kind + e.id}><ScopeChip e={e} owner={owner} /><button type="button" className="a-icon-btn sm" aria-label={`Remove ${nameOf(e)}`} title="Remove" onClick={() => remove(e)}><X size={12} /></button></li>
 					))}</ul>
 					: <p className="a-muted sm">All exposed groups. Add federations or groups to narrow it.</p>}
-				{readsNothing(value) && <NothingWarning />}
+				{nothingState(value)}
 			</div>
 			{blocked.length > 0 && (
 				<div className="a-banner warn"><TriangleAlert size={15} /><span>
