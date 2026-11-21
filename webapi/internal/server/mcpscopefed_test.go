@@ -126,3 +126,87 @@ func TestMcpScopeFederationOptions(t *testing.T) {
 	exec("DELETE FROM web_admin_hidden_groups WHERE web_user_id = 3")
 	check("shown", "admin", "0 60 61 62 63")
 }
+
+// A new federation entry the viewer may not be told about is refused
+// like a new entry for a hidden group, and a held one is kept
+// (decisions/2026-11-22-mcp-scope-federation-options.md); a superadmin
+// may write any federation.
+func TestMcpScopeFederationWrite(t *testing.T) {
+	t.Parallel()
+	e := newAdminEnv(t)
+	exec := e.fedSample()
+	const gnuweeb = int64(-1001000000001)
+	fed := func(id int64) map[string]any { return map[string]any{"kind": "federation", "id": id} }
+	stored := func() string {
+		t.Helper()
+		return e.appOne("SELECT GROUP_CONCAT(CONCAT(kind, ' ', target_id) ORDER BY kind, target_id " +
+			"SEPARATOR ', ') FROM web_mcp_token_scopes WHERE token_id = 90")
+	}
+	refused := func(what, role, method, path string, body map[string]any) {
+		t.Helper()
+		st, bd, _ := e.call(role, method, path, body)
+		if st != 400 || bd["error"] != "bad_request" ||
+			!strings.Contains(fmt.Sprint(bd["message"]), "scope entry federation") {
+			t.Errorf("%s: %d %v", what, st, bd)
+		}
+	}
+	tokens := e.appOne("SELECT COUNT(*) FROM web_mcp_tokens")
+
+	// Minting: the admin may not name GNU only or LKI only, whose one
+	// group is hidden from it, exposed or not; it may name Empty,
+	// Mixed and Default. The member may not name LKI only, nor
+	// Default, which holds no group it is granted.
+	for _, c := range []struct {
+		role string
+		fed  int64
+	}{{"admin", 60}, {"admin", 61}, {"member", 61}, {"member", 0}} {
+		refused(fmt.Sprintf("%s minting federation %d", c.role, c.fed), c.role, "POST",
+			"/api/mcp/tokens", map[string]any{"name": "x", "scope": []any{fed(c.fed)}})
+	}
+	if got := e.appOne("SELECT COUNT(*) FROM web_mcp_tokens"); got != tokens {
+		t.Errorf("tokens minted by refused requests: %s, was %s", got, tokens)
+	}
+	e.want(201, "admin", "POST", "/api/mcp/tokens", map[string]any{"name": "x",
+		"scope": []any{fed(0), fed(62), fed(63)}})
+	e.want(201, "member", "POST", "/api/mcp/tokens", map[string]any{"name": "x",
+		"scope": []any{fed(60), fed(62), fed(63)}})
+
+	// The member's token 90 holds GNU only and GNU/Weeb.
+	exec("INSERT INTO web_mcp_tokens (id, web_user_id, name, token_sha256) VALUES " +
+		"(90, 5, 't90', UNHEX(SHA2('tok90', 256)))")
+	exec("INSERT INTO web_resource_relations (resource_type, resource_id, relation, user_id) " +
+		"VALUES ('mcp_token', 90, 'owner', 5)")
+	exec("INSERT INTO web_mcp_token_scopes (token_id, kind, target_id) VALUES "+
+		"(90, 'federation', 60), (90, 'group', ?)", gnuweeb)
+	const both = "federation 60, group -1001000000001"
+	held := []any{fed(60), map[string]any{"kind": "group", "id": gnuweeb}}
+	audits := len(e.audits())
+	// The admin's form sends it back with a new name: it saves, the
+	// held entries stay, and only the rename is audited.
+	e.want(204, "admin", "PATCH", "/api/mcp/tokens/90", map[string]any{"name": "renamed", "scope": held})
+	if got := stored(); got != both {
+		t.Errorf("after the round trip: %q", got)
+	}
+	if a := e.audits()[audits:]; len(a) != 1 || !strings.Contains(a[0], "mcp_token_rename") {
+		t.Errorf("round trip audits %v, want only the rename", a)
+	}
+	// Adding LKI only is refused, and changes nothing.
+	refused("admin adding LKI only", "admin", "PATCH", "/api/mcp/tokens/90",
+		map[string]any{"scope": append(slices.Clip(held), fed(61))})
+	if got := stored(); got != both {
+		t.Errorf("after the refusal: %q", got)
+	}
+	// Dropped, GNU only cannot come back from the admin.
+	e.want(204, "admin", "PATCH", "/api/mcp/tokens/90", map[string]any{"scope": held[1:]})
+	refused("admin adding GNU only back", "admin", "PATCH", "/api/mcp/tokens/90",
+		map[string]any{"scope": held})
+	if got := stored(); got != "group -1001000000001" {
+		t.Errorf("after dropping GNU only: %q", got)
+	}
+	// A superadmin may write every federation.
+	e.want(204, "superadmin", "PATCH", "/api/mcp/tokens/90",
+		map[string]any{"scope": []any{fed(0), fed(60), fed(61), fed(62), fed(63)}})
+	if got := stored(); got != "federation 0, federation 60, federation 61, federation 62, federation 63" {
+		t.Errorf("superadmin's write: %q", got)
+	}
+}

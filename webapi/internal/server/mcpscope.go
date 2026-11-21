@@ -86,8 +86,9 @@ func (s *Server) privateOwner(ctx context.Context, owner uint64) (bool, error) {
 // token's entries as stored (nil when minting): a group entry it
 // already holds is kept even when the viewer cannot see the group, so
 // a form that sends the whole scope back saves; it stays as it is,
-// inactive where it reaches nothing. A new entry for such a group is
-// 400 like an unknown group.
+// inactive where it reaches nothing. A new entry for such a group, or
+// for a federation the viewer may not be told about (fedSight.sees),
+// is 400 like an unknown one.
 func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Scope, v scope.Viewer,
 	owner uint64, held []webdb.MCPScopeEntry, in []mcpScopeIn) ([]webdb.MCPScopeEntry, bool) {
 	ctx := r.Context()
@@ -107,6 +108,9 @@ func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Sco
 		return bad("mcp.scope_too_long", "max", strconv.Itoa(webdb.MaxMCPScopeEntries))
 	}
 	var users []int64
+	// newFeds are the federation entries the token does not hold yet,
+	// in order, checked against what the viewer sees after the loop.
+	var newFeds []int64
 	for _, e := range out {
 		id := strconv.FormatInt(e.ID, 10)
 		switch e.Kind {
@@ -121,6 +125,9 @@ func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Sco
 			if err != nil {
 				s.internalError(w, "scope federation", err)
 				return nil, false
+			}
+			if !slices.Contains(held, e) {
+				newFeds = append(newFeds, e.ID)
 			}
 		case webdb.ScopeGroup:
 			if e.ID >= 0 {
@@ -144,6 +151,23 @@ func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Sco
 			users = append(users, e.ID)
 		default:
 			return bad("mcp.scope_bad_entry", "kind", string(e.Kind), "id", id)
+		}
+	}
+	if len(newFeds) > 0 && !sc.SeesAllGroups() {
+		named := map[int64]bool{}
+		for _, f := range newFeds {
+			named[f] = true
+		}
+		fs, err := s.newFedSight(ctx, sc, named)
+		if err != nil {
+			s.internalError(w, "scope federation groups", err)
+			return nil, false
+		}
+		for _, f := range newFeds {
+			if !fs.sees(f) {
+				return bad("mcp.scope_bad_entry", "kind", string(webdb.ScopeFederation),
+					"id", strconv.FormatInt(f, 10))
+			}
 		}
 	}
 	if len(users) == 0 {

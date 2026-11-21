@@ -690,11 +690,13 @@ The Go service serves the administration as JSON operations
   of `{"kind": "federation" | "group" | "private", "id": n}`, written
   when minting or by PATCH, which replaces it as a whole (`[]` is every
   exposed group again). Each entry once, at most 200. A federation
-  must exist, a group must be one the viewer can see (it need not be
-  exposed: the entry is inactive until it is) unless the token already
-  holds that entry, which PATCH keeps as it is even when the group is
-  hidden from the viewer, so a form sending the whole scope back saves
-  (a new entry for such a group is 400), a private chat must be
+  must exist and be one the viewer may be told about (as in
+  `scope_options` below), a group must be one the viewer can see (it
+  need not be exposed: the entry is inactive until it is), unless the
+  token already holds that entry, which PATCH keeps as it is even when
+  the group or federation is hidden from the viewer, so a form sending
+  the whole scope back saves (a new entry for such a group or
+  federation is 400), a private chat must be
   a user the archive knows, by its positive id; anything else is 400
   `bad_request` and nothing is written. A `private` entry is written
   only by a superadmin, on a token a superadmin owns or that has no
