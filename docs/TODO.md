@@ -124,3 +124,5 @@ Accounts, roles and federations:
 
 ## Operations
 
+- [`spdx-tags`](todo/spdx-tags.md): Give every first-party file an SPDX licence tag (deferred by the owner).
+
