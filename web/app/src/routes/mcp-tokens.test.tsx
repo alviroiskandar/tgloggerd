@@ -242,8 +242,9 @@ describe('mcp token scopes in the stand-in', () => {
 		// One of its groups is not exposed.
 		expect(s.filter((e) => e.kind === 'group').map((e) => e.active).sort()).toEqual([false, true]);
 		expect(tok('laptop').scope.map((e) => [e.kind, e.active])).toEqual([['private', true]]);
-		// A deleted federation, and a private chat on an admin's token.
-		expect(tok('').scope.map((e) => [e.kind, e.name === '', e.active])).toEqual([['federation', true, false], ['private', false, false]]);
+		// A deleted federation, a group hidden from its admin owner, and a
+		// private chat on an admin's token.
+		expect(tok('').scope.map((e) => [e.kind, e.name === '', e.active])).toEqual([['federation', true, false], ['group', false, false], ['private', false, false]]);
 	});
 
 	it('offers the exposed groups the viewer sees, and private chats to a superadmin only', () => {
@@ -309,9 +310,10 @@ describe('mcp token scopes in the list', () => {
 		renderPage('/mcp-admin/tokens');
 		const cell = unnamed();
 		expect(within(cell).getByRole('note').textContent).toBe('This token reads nothing: none of its scope is active');
-		const [fed, chat] = [...cell.querySelectorAll('.a-tokscope-e')];
+		const [fed, group, chat] = [...cell.querySelectorAll('.a-tokscope-e')];
 		expect(fed!.textContent).toMatch(/^Deleted federation/);
 		expect(fed!.getAttribute('title')).toMatch(/deleted/);
+		expect(group!.getAttribute('title')).toMatch(/outside what the token's owner can see/);
 		expect(chat!.getAttribute('title')).toMatch(/superadmin owns/);
 	});
 
@@ -426,7 +428,8 @@ describe('the mcp token scope form', () => {
 		expect(within(dialog()).queryByText(/Only a superadmin/)).toBeNull();
 		save();
 		await waitFor(() => expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)).toHaveLength(1));
-		expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)[0]!.body).toEqual({ scope: [{ kind: 'federation', id: 9 }] });
+		const hidden = t.scope.find((e) => e.kind === 'group')!;
+		expect(callsTo(calls, 'PATCH', `/api/mcp/tokens/${t.id}`)[0]!.body).toEqual({ scope: [{ kind: 'federation', id: 9 }, { kind: 'group', id: hidden.id }] });
 	});
 
 	it('shows the server\'s 403 reason in the dialog', async () => {
@@ -462,9 +465,9 @@ describe('mcp token scope: why an entry is inactive', () => {
 
 	it.each([
 		[off('group', -1, 'not_exposed'), /not exposed to MCP/],
-		[off('group', -2, 'outside_owner_grants'), /outside the groups the token's owner is granted/],
+		[off('group', -2, 'outside_owner_grants'), /outside what the token's owner can see/],
 		[off('federation', 9, 'federation_deleted'), /federation was deleted/],
-		[off('federation', 1, 'outside_owner_grants'), /outside the groups the token's owner is granted/],
+		[off('federation', 1, 'outside_owner_grants'), /outside what the token's owner can see/],
 		[off('private', 7, 'private_not_superadmin'), /superadmin owns/],
 		[off('private', 8, 'user_unknown'), /knows no such user/],
 	])('says %#', (e, text) => {
@@ -476,6 +479,17 @@ describe('mcp token scope: why an entry is inactive', () => {
 		// An exposed group (so not "not exposed") the owner is not granted.
 		render(<ScopeChip e={off('group', -3, 'outside_owner_grants')} owner={{ id: 5, name: 'Research team', role: 'member', active: true }} />);
 		expect(document.querySelector('.a-tokscope-e.off')!.getAttribute('title')).not.toMatch(/not exposed/);
+	});
+
+	it('marks a group hidden from an admin owner as outside what the owner can see', () => {
+		const p = fixture<McpTokensProps>('/mcp-admin/tokens').props;
+		const t = p.tokens.find((x) => x.owner.id === 3)!;
+		const g = t.scope.find((e) => e.kind === 'group')!;
+		expect(g.active).toBe(false);
+		// Exposed or not decides which reason comes first; never active.
+		expect(['not_exposed', 'outside_owner_grants']).toContain(g.inactive_reason);
+		render(<ScopeChip e={{ ...g, inactive_reason: 'outside_owner_grants' }} owner={{ id: 3, name: 'GNU/Weeb admins', role: 'admin', active: true }} />);
+		expect(document.querySelector('.a-tokscope-e.off')!.getAttribute('title')).toMatch(/outside what the token's owner can see/);
 	});
 
 	it('is computed by the stand-in in the server\'s order', () => {

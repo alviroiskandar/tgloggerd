@@ -1229,7 +1229,7 @@ type McpScopeRef = { kind: 'federation' | 'group' | 'private'; id: number };
 const MCP_SCOPES: Record<number, McpScopeRef[]> = {
 	1: [{ kind: 'private', id: users[0].id }],
 	2: [{ kind: 'federation', id: 1 }, { kind: 'group', id: groups[0].id }, { kind: 'group', id: groups[1].id }],
-	4: [{ kind: 'federation', id: 9 }, { kind: 'private', id: users[1].id }],
+	4: [{ kind: 'federation', id: 9 }, { kind: 'group', id: groups[9].id }, { kind: 'private', id: users[1].id }],
 };
 // A private chat works only on a token a superadmin owns, or one with
 // no owner record (the superadmins').
@@ -1237,12 +1237,16 @@ const superOwned = (owner: number) => owner === 0 || accounts.some((a) => a.id =
 const MCP_KINDS = ['federation', 'group', 'private'];
 // Why an entry is inactive (McpScopeInactiveReason), the first that
 // applies, as Go decides it: a group not exposed, then outside a member
-// owner's grants; a federation deleted, then holding none of a member
-// owner's granted groups; a private chat on a token no superadmin owns,
-// then of a user the archive does not know. null when active.
+// owner's grants or hidden from an admin owner; a federation deleted,
+// then holding none of a member owner's granted groups; a private chat
+// on a token no superadmin owns, then of a user the archive does not
+// know. null when active.
 const mcpScopeOf = (t) => {
 	const o = accounts.find((a) => a.id === t.owner);
 	const grants = o && o.role === 'member' ? o.grants : null;
+	// An admin owner's token reaches no group hidden from that admin
+	// (decisions/2026-11-22-mcp-token-owner-view.md).
+	const hidden: number[] = o && o.role === 'admin' ? o.restrict?.hide_groups ?? [] : [];
 	return [...(MCP_SCOPES[t.id] ?? [])].sort((x, y) => MCP_KINDS.indexOf(x.kind) - MCP_KINDS.indexOf(y.kind) || x.id - y.id).map((e) => {
 		let name = '', why: string | null = null;
 		if (e.kind === 'federation') {
@@ -1252,7 +1256,7 @@ const mcpScopeOf = (t) => {
 		} else if (e.kind === 'group') {
 			const g = getGroup(e.id);
 			name = g?.title ?? '';
-			why = !g || !mcpExposed.some((x) => x.group.id === e.id) ? 'not_exposed' : grants && !grants.some((x) => x.groupIds.includes(e.id)) ? 'outside_owner_grants' : null;
+			why = !g || !mcpExposed.some((x) => x.group.id === e.id) ? 'not_exposed' : (grants && !grants.some((x) => x.groupIds.includes(e.id))) || hidden.includes(e.id) ? 'outside_owner_grants' : null;
 		} else {
 			const u = getUser(e.id);
 			name = u?.name ?? '';

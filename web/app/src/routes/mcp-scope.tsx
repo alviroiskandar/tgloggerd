@@ -40,7 +40,7 @@ export function ScopeNotice() {
 // (McpScopeInactiveReason).
 const WHY: Record<NonNullable<ScopeEntry['inactive_reason']>, string> = {
 	not_exposed: 'Inactive: the group is not exposed to MCP, so this entry reads nothing until it is.',
-	outside_owner_grants: 'Inactive: it is outside the groups the token\'s owner is granted, so this entry reads nothing.',
+	outside_owner_grants: 'Inactive: it is outside what the token\'s owner can see, so this entry reads nothing.',
 	federation_deleted: 'Inactive: the federation was deleted, so this entry reads nothing.',
 	private_not_superadmin: 'Inactive: a private chat works only on a token a superadmin owns, so this entry reads nothing.',
 	user_unknown: 'Inactive: the archive knows no such user, so this private chat reads nothing.',
