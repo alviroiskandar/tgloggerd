@@ -11094,10 +11094,10 @@ components:
 
         A token's scope is what it reads (McpScopeEntry), empty for
         every exposed group. scope_options is what the token form may
-        offer: the federations, the exposed groups the viewer can see,
-        and private, true for a superadmin (who may give a private
-        chat to a token a superadmin owns, or one without an owner
-        record).
+        offer: the federations the viewer can see, the exposed groups
+        the viewer can see, and private, true for a superadmin (who may
+        give a private chat to a token a superadmin owns, or one
+        without an owner record).
       required: [tokens, owners, can_transfer, scope_options]
       properties:
         tokens:
@@ -11137,6 +11137,15 @@ components:
           properties:
             federations:
               type: array
+              description: >-
+                The federations the viewer can see, by the rule of
+                hidden_from_viewer scope entries: a federation that
+                has at least one group, exposed or not, and none the
+                viewer sees is left out (for Default, the groups in no
+                other federation); one with no group stays. A new
+                entry for a federation left out is refused with 400
+                bad_request, one a token already holds is kept
+                (decisions/2026-11-22-mcp-scope-federation-options.md).
               items:
                 $ref: '#/components/schemas/FedRef'
             groups:

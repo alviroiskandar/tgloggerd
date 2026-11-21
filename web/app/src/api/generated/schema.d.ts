@@ -4307,7 +4307,7 @@ export interface components {
          *
          *     A token's owner is the owning account, with its role and whether it is active; a token without an owner record counts as the superadmins' and is answered as shared (owner id 0, named "Shared", active). minted_by is the account that minted it, which its requests are attributed to: when that account is disabled the token stops working, whoever owns it.
          *
-         *     A token's scope is what it reads (McpScopeEntry), empty for every exposed group. scope_options is what the token form may offer: the federations, the exposed groups the viewer can see, and private, true for a superadmin (who may give a private chat to a token a superadmin owns, or one without an owner record).
+         *     A token's scope is what it reads (McpScopeEntry), empty for every exposed group. scope_options is what the token form may offer: the federations the viewer can see, the exposed groups the viewer can see, and private, true for a superadmin (who may give a private chat to a token a superadmin owns, or one without an owner record).
          */
         McpTokensProps: {
             tokens: {
@@ -4324,6 +4324,7 @@ export interface components {
             owners: components["schemas"]["FwdPerson"][];
             can_transfer: boolean;
             scope_options: {
+                /** @description The federations the viewer can see, by the rule of hidden_from_viewer scope entries: a federation that has at least one group, exposed or not, and none the viewer sees is left out (for Default, the groups in no other federation); one with no group stays. A new entry for a federation left out is refused with 400 bad_request, one a token already holds is kept (decisions/2026-11-22-mcp-scope-federation-options.md). */
                 federations: components["schemas"]["FedRef"][];
                 /** @description The exposed groups the viewer can see, by title. */
                 groups: components["schemas"]["FedRef"][];

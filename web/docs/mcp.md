@@ -690,11 +690,13 @@ The Go service serves the administration as JSON operations
   of `{"kind": "federation" | "group" | "private", "id": n}`, written
   when minting or by PATCH, which replaces it as a whole (`[]` is every
   exposed group again). Each entry once, at most 200. A federation
-  must exist, a group must be one the viewer can see (it need not be
-  exposed: the entry is inactive until it is) unless the token already
-  holds that entry, which PATCH keeps as it is even when the group is
-  hidden from the viewer, so a form sending the whole scope back saves
-  (a new entry for such a group is 400), a private chat must be
+  must exist and be one the viewer may be told about (as in
+  `scope_options` below), a group must be one the viewer can see (it
+  need not be exposed: the entry is inactive until it is), unless the
+  token already holds that entry, which PATCH keeps as it is even when
+  the group or federation is hidden from the viewer, so a form sending
+  the whole scope back saves (a new entry for such a group or
+  federation is 400), a private chat must be
   a user the archive knows, by its positive id; anything else is 400
   `bad_request` and nothing is written. A `private` entry is written
   only by a superadmin, on a token a superadmin owns or that has no
@@ -729,8 +731,13 @@ The Go service serves the administration as JSON operations
   The reach of `/mcp` does not change with the viewer: it follows the
   owner. Then
   `scope_options`: the
-  federations, the exposed groups the viewer sees, and `private`, true
-  for a superadmin.
+  federations the viewer may be told about, by the same rule as a
+  federation entry hidden from it (one that has at least one group,
+  exposed or not, and none the viewer sees is left out; for Default,
+  the groups in no other federation; one with no group stays offered;
+  [decision](../../docs/design/decisions/2026-11-22-mcp-scope-federation-options.md)),
+  the exposed groups the viewer sees, and `private`, true for a
+  superadmin.
 - Only groups the viewer may see are exposed, listed, counted or
   withdrawn; a hidden group is 404 like an unknown one
   (web-accounts.md section 4). Exposing a group twice is 409

@@ -630,3 +630,42 @@ describe('mcp token scope: a group hidden from the viewer', () => {
 		expect(body).toMatchObject({ error: 'bad_request' });
 	});
 });
+
+// A federation hidden from the viewer (it sees none of its groups) is
+// not offered, cannot be added, and is kept when a token holds it.
+describe('mcp token scope: a federation hidden from the viewer', () => {
+	beforeEach(() => setup());
+	const sec = () => federations.find((f) => f.id === 3)!;
+	const hideSecurity = () => {
+		const restrict = accounts.find((a) => a.id === 3)!.restrict!;
+		const before = [...restrict.hide_groups];
+		restrict.hide_groups = [...new Set([...before, ...sec().groupIds])];
+		return () => { restrict.hide_groups = before; };
+	};
+	const offered = (who: 'admin' | 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', who).props.scope_options.federations.map((f) => f.id);
+
+	it('is not offered to that viewer, and is to one who sees it', () => {
+		expect(offered('admin')).toContain(3);
+		const undo = hideSecurity();
+		try {
+			expect(offered('admin')).not.toContain(3);
+			expect(offered('superadmin')).toContain(3);
+		} finally { undo(); }
+	});
+
+	it('cannot be added by that viewer, and is kept when the token holds it', () => {
+		const tok = fixture<McpTokensProps>('/mcp-admin/tokens').props.tokens.find((t) => t.name === 'research-agent')!;
+		const refs = tok.scope.map(({ kind, id }) => ({ kind, id }));
+		const undo = hideSecurity();
+		try {
+			const add = [...refs, { kind: 'federation', id: 3 }];
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: add }, 'admin')).toEqual([400, expect.objectContaining({ error: 'bad_request' })]);
+			// Put there by a superadmin, it goes back with an admin's save.
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: add }, 'superadmin')[0]).toBe(204);
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: add }, 'admin')[0]).toBe(204);
+		} finally {
+			undo();
+			expect(adminApi('PATCH', `mcp/tokens/${tok.id}`, { scope: refs }, 'superadmin')[0]).toBe(204);
+		}
+	});
+});
