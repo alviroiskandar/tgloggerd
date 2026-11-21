@@ -224,7 +224,9 @@ func (rc *rechecker) run(k recheckKey) {
 	}
 }
 
-// wait waits for the asks in flight, for tests.
+// wait waits for the asks in flight, for tests. Call it only while no
+// ask can start: sync.WaitGroup forbids an Add from zero that overlaps
+// a Wait, and the race detector reports one.
 func (rc *rechecker) wait() {
 	rc.wg.Wait()
 }

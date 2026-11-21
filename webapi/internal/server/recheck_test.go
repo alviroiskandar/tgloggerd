@@ -382,9 +382,11 @@ func TestRecheckPublicBucket(t *testing.T) {
 					passed++
 					mu.Unlock()
 				}
-				rc.wait()
 			}()
 		}
+		// Only once every ask is made: a Wait on the rechecker's
+		// WaitGroup must not overlap an ask that starts it from
+		// zero, so no goroutine of the burst waits itself.
 		wg.Wait()
 		rc.wait()
 		return passed
