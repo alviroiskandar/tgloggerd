@@ -46,7 +46,7 @@ The toolchain image is `ubuntu:26.04`, which ships OpenSSL 3.5.5. Its CMake
 Connector/C++'s bundled protobuf declares 3.1, so the `Dockerfile` sets
 `CMAKE_POLICY_VERSION_MINIMUM=3.5`. **[verified]**
 
-## 2. MariaDB PARSEC plugin is GPL-2.0-only with no exception — latent, one flag away
+## 2. MariaDB PARSEC plugin is GPL-2.0-only with no exception — closed: reason recorded
 
 `submodules/mariadb-connector-c/plugins/auth/parsec.c:4-6` reads "under the terms
 of the GNU General Public License ... **version 2 of the License**" — no "or
@@ -61,8 +61,10 @@ subproject build". Anyone re-enabling it to get MariaDB auth working would have
 no way to know what they were stepping on. `CLIENT_PLUGIN_CLIENT_ED25519` at
 `:55` is in the same position, and PARSEC depends on it.
 
-Closing it: amend the comment at `web/CMakeLists.txt:53-56` to record the licence
-reason, which is the part that must not be lost.
+Closed: the comment above `CLIENT_PLUGIN_PARSEC OFF` in `web/CMakeLists.txt`
+now records the licence reason beside the build one. `CLIENT_ED25519` is
+LGPL-2.0-or-later itself (`plugins/auth/ed25519.c`); it stays off only because
+PARSEC needs it and the build does not use it.
 
 ## 3. `ma_dtoa.c` is LGPL-2.0-only and statically linked — latent, low severity
 

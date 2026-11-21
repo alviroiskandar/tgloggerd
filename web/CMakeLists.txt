@@ -52,6 +52,10 @@ set(CLIENT_PLUGIN_MYSQL_CLEAR_PASSWORD  STATIC CACHE STRING "" FORCE)
 set(CLIENT_PLUGIN_DIALOG                OFF    CACHE STRING "" FORCE)
 # Turn off the remaining dynamic plugins (MariaDB-only auth and zstd
 # compression); unused here and their install rules break the subproject build.
+# Keep PARSEC off for its licence as well: plugins/auth/parsec.c is
+# GPL-2.0-only with no exception, which cannot be combined with this
+# GPL-2.0-or-later program under version 3 (docs/licensing-open-issues.md
+# section 2). It needs CLIENT_ED25519, which is LGPL-2.0-or-later itself.
 set(CLIENT_PLUGIN_CLIENT_ED25519        OFF    CACHE STRING "" FORCE)
 set(CLIENT_PLUGIN_PARSEC                OFF    CACHE STRING "" FORCE)
 set(CLIENT_PLUGIN_ZSTD                  OFF    CACHE STRING "" FORCE)
