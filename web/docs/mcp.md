@@ -691,7 +691,10 @@ The Go service serves the administration as JSON operations
   when minting or by PATCH, which replaces it as a whole (`[]` is every
   exposed group again). Each entry once, at most 200. A federation
   must exist, a group must be one the viewer can see (it need not be
-  exposed: the entry is inactive until it is), a private chat must be
+  exposed: the entry is inactive until it is) unless the token already
+  holds that entry, which PATCH keeps as it is even when the group is
+  hidden from the viewer, so a form sending the whole scope back saves
+  (a new entry for such a group is 400), a private chat must be
   a user the archive knows, by its positive id; anything else is 400
   `bad_request` and nothing is written. A `private` entry is written
   only by a superadmin, on a token a superadmin owns or that has no
@@ -710,7 +713,11 @@ The Go service serves the administration as JSON operations
   a member, a group not granted or a federation holding no granted
   group; for an admin, a group hidden from it or a federation whose
   exposed groups are all hidden from it (a federation with no exposed
-  group is not out of reach because of the hiding). Then
+  group is not out of reach because of the hiding). An entry for a group
+  hidden from the viewer goes out with an empty `name`, and when the
+  owner is why it is inactive, as `outside_owner_grants` even if the
+  group is not exposed, so the list says nothing about such a group
+  beyond the id the token holds. Then
   `scope_options`: the
   federations, the exposed groups the viewer sees, and `private`, true
   for a superadmin.

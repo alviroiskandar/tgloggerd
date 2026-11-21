@@ -181,3 +181,100 @@ func TestMcpTokenListAdminHiddenGroups(t *testing.T) {
 		t.Errorf("unexposed hidden group: %s", got)
 	}
 }
+
+// An entry a token holds for a group hidden from the viewer goes out
+// without its name and without whether the group is exposed, and a
+// PATCH that sends it back saves; a new entry for such a group is
+// still 400. adminEnv's sample: GNU/Weeb (-1001000000001) and CTF
+// Practice (-1001000000010) are exposed, Linux Kernel Indonesia
+// (-1001000000002) is not; the admin is account 3.
+func TestMcpTokenHiddenEntryFromViewer(t *testing.T) {
+	t.Parallel()
+	e := newAdminEnv(t)
+	const gnuweeb, lki, ctf = int64(-1001000000001), int64(-1001000000002), int64(-1001000000010)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := e.app.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("INSERT INTO web_mcp_tokens (id, web_user_id, name, token_sha256) VALUES " +
+		"(90, 3, 't90', UNHEX(SHA2('tok90', 256)))")
+	exec("INSERT INTO web_resource_relations (resource_type, resource_id, relation, user_id) " +
+		"VALUES ('mcp_token', 90, 'owner', 3)")
+	exec("INSERT INTO web_mcp_token_scopes (token_id, kind, target_id) VALUES "+
+		"(90, 'group', ?), (90, 'group', ?)", gnuweeb, ctf)
+	exec("INSERT INTO web_admin_hidden_groups (web_user_id, group_id) VALUES (3, ?), (3, ?)",
+		gnuweeb, lki)
+
+	names := func(role string) map[int64]string {
+		t.Helper()
+		_, pg := e.page(role, "/mcp-admin/tokens")
+		var p struct {
+			Tokens []struct {
+				ID    int `json:"id"`
+				Scope []struct {
+					ID   int64  `json:"id"`
+					Name string `json:"name"`
+				} `json:"scope"`
+			} `json:"tokens"`
+		}
+		raw, _ := json.Marshal(pg["props"])
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatal(err)
+		}
+		out := map[int64]string{}
+		for _, tk := range p.Tokens {
+			if tk.ID == 90 {
+				for _, x := range tk.Scope {
+					out[x.ID] = x.Name
+				}
+			}
+		}
+		return out
+	}
+	if n := names("superadmin"); n[gnuweeb] != "GNU/Weeb" || n[ctf] != "CTF Practice" {
+		t.Errorf("superadmin's names: %v", n)
+	}
+	if n := names("admin"); n[gnuweeb] != "" || n[ctf] != "CTF Practice" {
+		t.Errorf("admin's names: %v", n)
+	}
+	// Withdrawn from MCP, the hidden group still says only that it is
+	// outside its owner's view to the admin; a superadmin sees why.
+	e.want(204, "superadmin", "DELETE", fmt.Sprintf("/api/mcp/groups/%d", gnuweeb), nil)
+	if got := e.tokenScope("admin", 90); got != "group -1001000000010 true null, "+
+		"group -1001000000001 false outside_owner_grants" {
+		t.Errorf("admin's view of an unexposed hidden group: %s", got)
+	}
+	if got := e.tokenScope("superadmin", 90); got != "group -1001000000010 true null, "+
+		"group -1001000000001 false not_exposed" {
+		t.Errorf("superadmin's view of it: %s", got)
+	}
+	audits := len(e.audits())
+
+	// The form sends the whole scope back, with a new name: it saves,
+	// and the held hidden entry stays.
+	held := []map[string]any{{"kind": "group", "id": gnuweeb}, {"kind": "group", "id": ctf}}
+	e.want(204, "admin", "PATCH", "/api/mcp/tokens/90", map[string]any{"name": "renamed", "scope": held})
+	if got := e.tokenScope("superadmin", 90); got != "group -1001000000010 true null, "+
+		"group -1001000000001 false not_exposed" {
+		t.Errorf("after the round trip: %s", got)
+	}
+	if a := e.audits()[audits:]; len(a) != 1 || !strings.Contains(a[0], "mcp_token_rename") {
+		t.Errorf("round trip audits %v, want only the rename", a)
+	}
+	// Dropping it works too; it cannot come back from the admin.
+	e.want(204, "admin", "PATCH", "/api/mcp/tokens/90", map[string]any{"scope": held[1:]})
+	if got := e.tokenScope("superadmin", 90); got != "group -1001000000010 true null" {
+		t.Errorf("after dropping the hidden entry: %s", got)
+	}
+	for _, g := range []int64{gnuweeb, lki} {
+		e.want(400, "admin", "PATCH", "/api/mcp/tokens/90", map[string]any{"scope": append(slices.Clip(held[1:]),
+			map[string]any{"kind": "group", "id": g})})
+		e.want(400, "admin", "POST", "/api/mcp/tokens", map[string]any{"name": "new",
+			"scope": []map[string]any{{"kind": "group", "id": g}}})
+	}
+	if got := e.tokenScope("superadmin", 90); got != "group -1001000000010 true null" {
+		t.Errorf("after the refusals: %s", got)
+	}
+}

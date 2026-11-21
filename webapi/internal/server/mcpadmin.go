@@ -356,7 +356,7 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOwner(w, r, sc, v, owner) {
 		return
 	}
-	tscope, ok := s.tokenScope(w, r, sc, v, owner, in.Scope)
+	tscope, ok := s.tokenScope(w, r, sc, v, owner, nil, in.Scope)
 	if !ok {
 		return
 	}
@@ -407,7 +407,12 @@ func (s *Server) renameMcpToken(w http.ResponseWriter, r *http.Request) {
 	}
 	var tscope []webdb.MCPScopeEntry
 	if in.Scope != nil {
-		if tscope, ok = s.tokenScope(w, r, sc, v, t.OwnerID, *in.Scope); !ok {
+		held, err := webdb.MCPTokenScope(r.Context(), s.app, t.ID)
+		if err != nil {
+			s.internalError(w, "token scope", err)
+			return
+		}
+		if tscope, ok = s.tokenScope(w, r, sc, v, t.OwnerID, held, *in.Scope); !ok {
 			return
 		}
 	}

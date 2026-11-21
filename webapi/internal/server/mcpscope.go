@@ -77,9 +77,14 @@ func (s *Server) privateOwner(ctx context.Context, owner uint64) (bool, error) {
 
 // tokenScope checks a written scope for a token owned by owner (0 for
 // none) and returns it sorted, or answers 400 (a bad entry) or 403 (a
-// private chat the viewer may not give this token) itself.
+// private chat the viewer may not give this token) itself. held is the
+// token's entries as stored (nil when minting): a group entry it
+// already holds is kept even when the viewer cannot see the group, so
+// a form that sends the whole scope back saves; it stays as it is,
+// inactive where it reaches nothing. A new entry for such a group is
+// 400 like an unknown group.
 func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Scope, v scope.Viewer,
-	owner uint64, in []mcpScopeIn) ([]webdb.MCPScopeEntry, bool) {
+	owner uint64, held []webdb.MCPScopeEntry, in []mcpScopeIn) ([]webdb.MCPScopeEntry, bool) {
 	ctx := r.Context()
 	bad := func(key string, kv ...string) ([]webdb.MCPScopeEntry, bool) {
 		s.refuse(w, r, v, http.StatusBadRequest, "bad_request", key, kv...)
@@ -115,6 +120,9 @@ func (s *Server) tokenScope(w http.ResponseWriter, r *http.Request, sc scope.Sco
 		case webdb.ScopeGroup:
 			if e.ID >= 0 {
 				return bad("mcp.scope_bad_entry", "kind", string(e.Kind), "id", id)
+			}
+			if slices.Contains(held, e) {
+				continue
 			}
 			visible, err := logdb.GroupVisible(ctx, s.ro, sc, e.ID)
 			if err != nil {
@@ -177,11 +185,16 @@ type scopeView struct {
 	// owner sees (fedSeen).
 	fedGroups map[int64][]int64
 	federated map[int64]bool
+	// viewer is the scope of the request that lists the tokens: a
+	// group entry it does not see goes out without its name, and
+	// without whether the group is exposed when the owner is the
+	// reason it reaches nothing.
+	viewer scope.Scope
 }
 
 func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 	scopes map[uint64][]webdb.MCPScopeEntry) (scopeView, error) {
-	var sv scopeView
+	sv := scopeView{viewer: sc}
 	var groups, users []int64
 	named := map[int64]bool{}
 	for _, es := range scopes {
@@ -261,11 +274,18 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *sco
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopeGroup:
+			// titles holds only the groups the viewer sees: any other
+			// goes out with an empty name.
 			j.Name = sv.titles[e.ID]
+			outside := owner != nil && !owner.SeesGroup(e.ID)
 			switch {
+			case outside && !sv.viewer.SeesGroup(e.ID):
+				// Said before not_exposed, so a group hidden from
+				// the viewer tells it nothing about its exposure.
+				why = reasonOutsideGrants
 			case !sv.exposed[e.ID]:
 				why = reasonNotExposed
-			case owner != nil && !owner.SeesGroup(e.ID):
+			case outside:
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopePrivate:
