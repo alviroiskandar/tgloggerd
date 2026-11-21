@@ -231,6 +231,12 @@ var rowFields = []string{
 	"link_preview",
 }
 
+// outgoingField is a private message's "sent by the logging account"
+// (private.go). "fields" may name it, but it is left out of rowFields
+// and of what the tools describe, so every answer of a token without
+// private chats, an error naming the fields included, stays as it was.
+const outgoingField = "is_outgoing"
+
 // rowOpts is how much of a row to emit; each control defaults to the
 // full row.
 type rowOpts struct {
@@ -265,7 +271,7 @@ func parseRowOpts(args map[string]any) (rowOpts, error) {
 			if !ok {
 				return o, toolErr(`"fields" must contain strings`)
 			}
-			known := false
+			known := k == outgoingField
 			for _, f := range rowFields {
 				if f == k {
 					known = true
@@ -461,6 +467,11 @@ func (t *telegram) messageRow(r row, o *rowOpts) map[string]any {
 	}
 	if o.wants("is_channel_post") && (!o.compact || ch) {
 		j["is_channel_post"] = ch
+	}
+	if _, private := r["is_outgoing"]; private && o.wants(outgoingField) {
+		if out := r.i64("is_outgoing") != 0; !o.compact || out {
+			j[outgoingField] = out
+		}
 	}
 	if o.wants("reply_to_message_id") && !r.null("reply_to_msg_id") {
 		j["reply_to_message_id"] = r.i64("reply_to_msg_id")

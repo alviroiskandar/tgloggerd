@@ -118,7 +118,7 @@ func (t *telegram) chatGate(ctx context.Context, want int64, named bool) (gate, 
 	groups := rd.groups
 	if named {
 		if rd.hasPrivate(want) {
-			return gate{sql: " AND m.chat_id IN (?)", binds: []any{want}, src: privateSource}, nil
+			return gate{sql: " AND m.chat_id IN (?)", binds: []any{want}, src: t.privateSource()}, nil
 		}
 		groups = nil
 		if rd.hasGroup(want) {

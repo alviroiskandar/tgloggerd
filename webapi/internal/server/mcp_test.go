@@ -71,7 +71,7 @@ type mcpEnv struct {
 	web *testdb.DB
 }
 
-func newMCPEnv(t *testing.T, cfg MCPConfig) *mcpEnv {
+func newMCPEnv(t *testing.T, cfg MCPConfig, opts ...func(*Deps)) *mcpEnv {
 	t.Helper()
 	lg := testdb.New(t, testdb.Logger, "mcp")
 	web := testdb.New(t, testdb.Web, "accounts", "mcp_tokens")
@@ -79,7 +79,7 @@ func newMCPEnv(t *testing.T, cfg MCPConfig) *mcpEnv {
 	if cfg.PublicURL == "" {
 		cfg.PublicURL = mcpPublic
 	}
-	h := New(Deps{
+	d := Deps{
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RO:      interpolating(t, lg),
 		App:     interpolating(t, web),
@@ -88,7 +88,11 @@ func newMCPEnv(t *testing.T, cfg MCPConfig) *mcpEnv {
 		Limiter: auth.NewRateLimiter(5, time.Hour),
 		Tokens:  auth.NewFileTokens(testKey),
 		MCP:     cfg,
-	})
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	h := New(d)
 	return &mcpEnv{t: t, h: h, lg: lg, web: web}
 }
 

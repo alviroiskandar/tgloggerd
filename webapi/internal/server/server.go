@@ -248,7 +248,7 @@ func New(d Deps) http.Handler {
 	}
 	s.mcpCfg = d.MCP
 	s.mcpSlots = make(chan struct{}, max(d.MCP.Threads, 1))
-	s.mcp = mcp.NewTelegramServer(d.RO, s.mcpFileURL)
+	s.mcp = mcp.NewTelegramServer(d.RO, s.mcpFileURL, func() int64 { return s.logger.id() })
 	if d.state != nil {
 		s.verifier.State = d.state
 	}

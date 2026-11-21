@@ -21,7 +21,11 @@ type msgSource struct {
 	channel   string // m.is_channel_post, or what stands in for it
 	chatJoin  string // the join that gives the chat's title, as g.title
 	chatTitle string
-	schema    schema // the fields a filter may name
+	// outgoing is m's "sent by the logging account" column, "" for a
+	// table without one (the groups'): only a private chat's rows
+	// carry is_outgoing, so the group answers keep their shape.
+	outgoing string
+	schema   schema // the fields a filter may name
 	// selectCols decorates an already-chosen set of messages. The
 	// statement timeout is here, on the outermost SELECT: MySQL
 	// ignores the hint inside a derived table, so it has to be on the
@@ -53,13 +57,23 @@ func newSource(s msgSource) *msgSource {
 		"LEFT(lp.description, 1000) AS lp_description, lp.author AS lp_author, " +
 		"lp.type AS lp_type, lp.instant_view_version AS lp_iv, " +
 		"lp.photo_file_id AS lp_photo_id, lpf.file_type AS lp_photo_type, " +
-		"lpf.file_size AS lp_photo_size, lpf.on_disk AS lp_photo_on_disk "
+		"lpf.file_size AS lp_photo_size, lpf.on_disk AS lp_photo_on_disk " +
+		s.outgoingCol()
 	s.joins = s.chatJoin +
 		"LEFT JOIN telegram_users su ON su.id = " + s.sender + " " +
 		"LEFT JOIN telegram_files f ON f.id = m.file_id " +
 		"LEFT JOIN telegram_link_previews lp ON lp." + s.editKey + " = m.id " +
 		"LEFT JOIN telegram_files lpf ON lpf.id = lp.photo_file_id "
 	return &s
+}
+
+// outgoingCol is the select list's is_outgoing column, after a
+// column and ending with a space; "" for a source without one.
+func (s *msgSource) outgoingCol() string {
+	if s.outgoing == "" {
+		return ""
+	}
+	return ", " + s.outgoing + " AS is_outgoing "
 }
 
 // respell is a filter schema with the group table's column names

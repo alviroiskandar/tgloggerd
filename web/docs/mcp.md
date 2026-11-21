@@ -88,8 +88,17 @@ A private chat is read by **naming it**: pass its chat id (the peer user's id, p
 as `group_id` to `telegram_search_messages`, `telegram_list_recent_messages`,
 `telegram_get_messages`, `telegram_get_message_history`, `telegram_popular_words`,
 `telegram_list_group_senders` or `telegram_count_user_messages`. The answers have the
-groups' shape: `group_id` is the chat id, `group_title` the peer's name, a message the
-logged-in account sent has `sender_user_id` 0, and there are no channel posts. Searching
+groups' shape: `group_id` is the chat id, `group_title` the peer's name, and there are
+no channel posts. A private message also carries `is_outgoing`, true for one the
+logging account sent (with `compact`, only when true; `fields` may name it, though it
+is not in the tools' field lists, so group answers are unchanged). Such a message has
+the logging account as its sender (`sender_user_id`, `sender_name`,
+`sender_username`), as the web's chat shows it, once the daemon has reported the
+account (`GET /v1/status`); until then its sender is 0 with an empty name. The same
+holds for `telegram_get_message_history` (`sender_user_id`, `is_outgoing`), for
+`telegram_list_group_senders`, which lists the logging account among the chat's
+senders, and for `telegram_count_user_messages` and a `sender_user_id` filter, which
+count its messages under its id. Searching
 or listing recent messages without a `group_id` covers groups only, and the group tools
 (`telegram_get_group`, `telegram_get_group_history`, `telegram_list_group_admins`)
 answer a private chat's id as any unreadable id. `telegram_list_groups` adds
