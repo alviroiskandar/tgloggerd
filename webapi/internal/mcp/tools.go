@@ -22,6 +22,10 @@ type telegram struct {
 	db      *sql.DB
 	fileURL func(id int64) string
 	now     func() time.Time
+	// self is the logging account's Telegram user id, 0 while unknown
+	// (private.go).
+	self    func() int64
+	private privateSources
 }
 
 // Instructions is what initialize tells the client about the server.
@@ -34,9 +38,11 @@ const Instructions = "Read-only access to a Telegram message archive. Only " +
 // NewTelegramServer is the MCP server of the Telegram archive, reading
 // the logger's schema through db. fileURL makes the absolute
 // /files/<token> link of a stored file, "" when no public base URL is
-// configured (the link is then left out).
-func NewTelegramServer(db *sql.DB, fileURL func(id uint64) string) *Server {
-	t := &telegram{db: db, now: time.Now}
+// configured (the link is then left out). self is the logging
+// account's Telegram user id, 0 while unknown, given as the sender of
+// the private messages it sent; nil knows none.
+func NewTelegramServer(db *sql.DB, fileURL func(id uint64) string, self func() int64) *Server {
+	t := &telegram{db: db, now: time.Now, self: self}
 	t.fileURL = func(id int64) string {
 		if id == 0 || fileURL == nil {
 			return ""
@@ -845,9 +851,10 @@ func (t *telegram) listGroupSenders(ctx context.Context, args map[string]any) (a
 	// Aggregate first, decorate second: the inner statement is covered
 	// by (chat_id, sender_user_id), or (chat_id, date, sender_user_id)
 	// with a date range; the joins run over at most limit rows. A NULL
-	// sender is the chat itself (a channel post, an anonymous admin),
-	// or in a private chat the logged-in account. No hint inside:
-	// MySQL ignores it in a derived table.
+	// sender is the chat itself (a channel post, an anonymous admin);
+	// in a private chat the logging account's messages count as its
+	// own once its id is known (private.go), before that as NULL. No
+	// hint inside: MySQL ignores it in a derived table.
 	g, err := t.chatGate(ctx, gid, true)
 	if err != nil {
 		return nil, err
@@ -1581,7 +1588,7 @@ func (t *telegram) getMessageHistory(ctx context.Context, args map[string]any) (
 		"SELECT /*+ MAX_EXECUTION_TIME(5000) */ "+
 			"m.id, m.content_type, m.text, m.date, "+
 			"m.edit_date, m.deleted_at, "+g.src.sender+" AS sender_user_id, "+
-			"FROM_UNIXTIME(m.date) AS sent_at, "+
+			"FROM_UNIXTIME(m.date) AS sent_at"+g.src.outgoingCol()+", "+
 			"f.id AS file_id, f.file_type, f.file_size, f.on_disk "+
 			"FROM "+g.src.table+" m "+
 			"LEFT JOIN telegram_files f ON f.id = m.file_id "+
@@ -1613,6 +1620,9 @@ func (t *telegram) getMessageHistory(ctx context.Context, args map[string]any) (
 		"is_edited":      edited,
 		"is_deleted":     deleted,
 		"current":        cur,
+	}
+	if _, ok := r["is_outgoing"]; ok {
+		out["is_outgoing"] = r.i64("is_outgoing") != 0
 	}
 	if edited {
 		out["last_edit_date"] = r.i64("edit_date")

@@ -9,6 +9,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // PRIVATE CHATS. This is the only file of the package that names the
@@ -19,20 +20,62 @@ import (
 // reads the groups alone.
 //
 // The private table has no channel posts and calls its sender
-// sender_id (NULL for the logged-in account itself); the chat's title
-// is the peer's name.
-var privateSource = newSource(msgSource{
-	table:     "telegram_private_messages",
-	edits:     "telegram_private_message_edits",
-	editKey:   "private_message_id",
-	sender:    "m.sender_id",
-	channel:   "0",
-	chatJoin:  "LEFT JOIN telegram_users g ON g.id = m.chat_id ",
-	chatTitle: "TRIM(CONCAT(COALESCE(g.first_name,''), ' ', COALESCE(g.last_name,'')))",
-	schema: respell(msgSchema, strings.NewReplacer(
-		"m.sender_user_id", "m.sender_id",
-		"m.is_channel_post", "0")),
-})
+// sender_id, NULL for the logging account itself; the chat's title is
+// the peer's name. A message the logging account sent is given that
+// account as its sender, as the web's chat shows it, once the daemon
+// has said which account it is (self); until then its sender is 0. Its
+// rows also say is_outgoing, which the groups' rows never carry.
+
+// privateSender is the sender column of a private message: sender_id,
+// else the logging account for an outgoing one. self is an id the
+// daemon reported, never input, so it is written into the statement.
+func privateSender(self int64) string {
+	if self <= 0 {
+		return "m.sender_id"
+	}
+	return "COALESCE(m.sender_id, IF(m.is_outgoing <> 0, " + strconv.FormatInt(self, 10) + ", NULL))"
+}
+
+func newPrivateSource(self int64) *msgSource {
+	sender := privateSender(self)
+	return newSource(msgSource{
+		table:     "telegram_private_messages",
+		edits:     "telegram_private_message_edits",
+		editKey:   "private_message_id",
+		sender:    sender,
+		channel:   "0",
+		chatJoin:  "LEFT JOIN telegram_users g ON g.id = m.chat_id ",
+		chatTitle: "TRIM(CONCAT(COALESCE(g.first_name,''), ' ', COALESCE(g.last_name,'')))",
+		outgoing:  "m.is_outgoing",
+		schema: respell(msgSchema, strings.NewReplacer(
+			"m.sender_user_id", sender,
+			"m.is_channel_post", "0")),
+	})
+}
+
+// privateSources keeps the private source built for the logging
+// account's id, which changes at most once (unknown, then known).
+type privateSources struct {
+	mu   sync.Mutex
+	self int64
+	src  *msgSource
+}
+
+// privateSource is the private messages' source for the logging
+// account as now known.
+func (t *telegram) privateSource() *msgSource {
+	var self int64
+	if t.self != nil {
+		self = t.self()
+	}
+	p := &t.private
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.src == nil || p.self != self {
+		p.self, p.src = self, newPrivateSource(self)
+	}
+	return p.src
+}
 
 // privateChats lists the private chats a token reaches, with the
 // peer's name, for telegram_list_groups; a chat whose peer the archive

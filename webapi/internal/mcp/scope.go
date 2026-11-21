@@ -32,6 +32,13 @@ import (
 //   - A federation is read as it is now, on every request: groups
 //     added to it or taken out of it count from the next request. A
 //     federation that no longer exists reaches nothing.
+//   - A token a member owns reads only groups the member's own grants
+//     let it see on the web, whatever its entries say
+//     (decisions/2026-11-21-mcp-token-owner-grants.md): the entries
+//     narrow within the grants, and no entries is every exposed group
+//     within them. The grants are read on every request too, so a
+//     withdrawn grant counts at once. Tokens of superadmins and admins,
+//     and tokens without an owner record, are not bounded so.
 
 // Reach is what one request's token may read, before the exposure list
 // is applied.
@@ -43,11 +50,18 @@ type Reach struct {
 	defaultFed bool
 	federated  map[int64]bool
 	private    []int64 // ascending; only on a superadmin's token
+	// bounded: a member's token, which reads only the groups in
+	// granted, whatever narrowed says.
+	bounded bool
+	granted map[int64]bool
 }
 
 // allowsGroup is whether the scope lets the token read group g, if it
 // is exposed.
 func (r Reach) allowsGroup(g int64) bool {
+	if r.bounded && !r.granted[g] {
+		return false
+	}
 	if !r.narrowed || r.groups[g] {
 		return true
 	}
@@ -66,22 +80,36 @@ func reachOf(ctx context.Context) Reach {
 	return r
 }
 
-// ResolveScope reads token's scope from the web's schema into a Reach.
-// privateOK is whether the token's private chat entries work: its owner
-// is a superadmin (TokenOwner.PrivateOK); otherwise they stay stored and
-// reach nothing.
-func ResolveScope(ctx context.Context, app *sql.DB, token uint64, privateOK bool) (Reach, error) {
-	es, err := webdb.MCPTokenScope(ctx, app, token)
-	if err != nil || len(es) == 0 {
+// ResolveScope reads the scope of o's token from the web's schema into
+// a Reach. Its private chat entries work only when o.PrivateOK (its
+// owner is a superadmin); otherwise they stay stored and reach nothing.
+// A member's token is bounded by the member's grants.
+func ResolveScope(ctx context.Context, app *sql.DB, o TokenOwner) (Reach, error) {
+	var r Reach
+	if o.Member {
+		gs, err := webdb.MemberGrantedGroups(ctx, app, o.OwnerID)
+		if err != nil {
+			return Reach{}, err
+		}
+		r.bounded, r.granted = true, map[int64]bool{}
+		for _, g := range gs {
+			r.granted[g] = true
+		}
+	}
+	es, err := webdb.MCPTokenScope(ctx, app, o.TokenID)
+	if err != nil {
 		return Reach{}, err
 	}
-	r := Reach{narrowed: true, groups: map[int64]bool{}}
+	if len(es) == 0 {
+		return r, nil
+	}
+	r.narrowed, r.groups = true, map[int64]bool{}
 	for _, e := range es {
 		switch e.Kind {
 		case webdb.ScopeGroup:
 			r.groups[e.ID] = true
 		case webdb.ScopePrivate:
-			if privateOK {
+			if o.PrivateOK {
 				r.private = append(r.private, e.ID)
 			}
 		case webdb.ScopeFederation:

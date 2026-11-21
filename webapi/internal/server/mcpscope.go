@@ -35,7 +35,19 @@ type mcpScopeJSON struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Active bool   `json:"active"`
+	// InactiveReason says why an entry reaches nothing
+	// (McpScopeInactiveReason), nil when it is active.
+	InactiveReason *string `json:"inactive_reason"`
 }
+
+// Why a scope entry is inactive, the first that applies.
+const (
+	reasonNotExposed     = "not_exposed"
+	reasonFederationGone = "federation_deleted"
+	reasonPrivateOwner   = "private_not_superadmin"
+	reasonUserUnknown    = "user_unknown"
+	reasonOutsideGrants  = "outside_owner_grants"
+)
 
 // mcpScopeOptions is what the token form may offer.
 type mcpScopeOptions struct {
@@ -158,12 +170,19 @@ type scopeView struct {
 	titles  map[int64]string
 	exposed map[int64]bool
 	users   map[int64]string
+	// fedGroups are the groups of each federation an entry names, and
+	// federated the groups in any federation (for Default), for
+	// telling whether a member's federation entry reaches a granted
+	// group.
+	fedGroups map[int64][]int64
+	federated map[int64]bool
 }
 
 func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 	scopes map[uint64][]webdb.MCPScopeEntry) (scopeView, error) {
 	var sv scopeView
 	var groups, users []int64
+	named := map[int64]bool{}
 	for _, es := range scopes {
 		for _, e := range es {
 			switch e.Kind {
@@ -171,6 +190,8 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 				groups = append(groups, e.ID)
 			case webdb.ScopePrivate:
 				users = append(users, e.ID)
+			case webdb.ScopeFederation:
+				named[e.ID] = true
 			}
 		}
 	}
@@ -179,8 +200,27 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 		return sv, err
 	}
 	sv.feds = map[int64]string{}
+	sv.fedGroups = map[int64][]int64{}
 	for _, f := range fs {
 		sv.feds[int64(f.ID)] = f.Name
+		if !named[int64(f.ID)] || f.ID == webdb.DefaultFederation {
+			continue
+		}
+		gs, err := webdb.FederationGroups(ctx, s.app, f.ID)
+		if err != nil && !errors.Is(err, webdb.ErrNoFederation) {
+			return sv, err
+		}
+		sv.fedGroups[int64(f.ID)] = gs
+	}
+	if named[int64(webdb.DefaultFederation)] {
+		fg, err := webdb.FederatedGroups(ctx, s.app)
+		if err != nil {
+			return sv, err
+		}
+		sv.federated = map[int64]bool{}
+		for _, g := range fg {
+			sv.federated[g] = true
+		}
 	}
 	if sv.exposed, err = logdb.ExposedGroupIDs(ctx, s.ro); err != nil {
 		return sv, err
@@ -200,22 +240,81 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 }
 
 // entries is one token's scope; privateOK is whether its owner may
-// hold private chats.
-func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool) []mcpScopeJSON {
+// hold private chats, and granted, when not nil, the groups a member
+// owner's grants let it see, outside which an entry reaches nothing
+// (decisions/2026-11-21-mcp-token-owner-grants.md).
+func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, granted map[int64]bool) []mcpScopeJSON {
 	out := []mcpScopeJSON{}
 	for _, e := range es {
 		j := mcpScopeJSON{Kind: string(e.Kind), ID: e.ID}
+		var why string
 		switch e.Kind {
 		case webdb.ScopeFederation:
-			j.Name, j.Active = sv.feds[e.ID]
+			var exists bool
+			j.Name, exists = sv.feds[e.ID]
+			switch {
+			case !exists:
+				why = reasonFederationGone
+			case granted != nil && !sv.fedGrants(e.ID, granted):
+				why = reasonOutsideGrants
+			}
 		case webdb.ScopeGroup:
-			j.Name, j.Active = sv.titles[e.ID], sv.exposed[e.ID]
+			j.Name = sv.titles[e.ID]
+			switch {
+			case !sv.exposed[e.ID]:
+				why = reasonNotExposed
+			case granted != nil && !granted[e.ID]:
+				why = reasonOutsideGrants
+			}
 		case webdb.ScopePrivate:
 			var known bool
 			j.Name, known = sv.users[e.ID]
-			j.Active = known && privateOK
+			switch {
+			case !privateOK:
+				why = reasonPrivateOwner
+			case !known:
+				why = reasonUserUnknown
+			}
+		}
+		j.Active = why == ""
+		if why != "" {
+			j.InactiveReason = &why
 		}
 		out = append(out, j)
+	}
+	return out
+}
+
+// fedGrants is whether federation fed holds a group in granted: for
+// Default, a granted group in no other federation.
+func (sv scopeView) fedGrants(fed int64, granted map[int64]bool) bool {
+	if uint64(fed) == webdb.DefaultFederation {
+		for g := range granted {
+			if !sv.federated[g] {
+				return true
+			}
+		}
+		return false
+	}
+	for _, g := range sv.fedGroups[fed] {
+		if granted[g] {
+			return true
+		}
+	}
+	return false
+}
+
+// grantedOf is the groups a member's grants let it see, the union over
+// its federations; nil for every other role.
+func grantedOf(a webdb.Account) map[int64]bool {
+	if a.Role != string(scope.Member) {
+		return nil
+	}
+	out := map[int64]bool{}
+	for _, gs := range a.Grants {
+		for _, g := range gs {
+			out[g] = true
+		}
 	}
 	return out
 }

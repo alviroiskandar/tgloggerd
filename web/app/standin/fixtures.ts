@@ -1235,11 +1235,32 @@ const MCP_SCOPES: Record<number, McpScopeRef[]> = {
 // no owner record (the superadmins').
 const superOwned = (owner: number) => owner === 0 || accounts.some((a) => a.id === owner && a.role === 'superadmin' && a.active);
 const MCP_KINDS = ['federation', 'group', 'private'];
-const mcpScopeOf = (t) => [...(MCP_SCOPES[t.id] ?? [])].sort((x, y) => MCP_KINDS.indexOf(x.kind) - MCP_KINDS.indexOf(y.kind) || x.id - y.id).map((e) => {
-	if (e.kind === 'federation') { const f = fedById(e.id); return { ...e, name: f?.name ?? '', active: !!f }; }
-	if (e.kind === 'group') { const g = getGroup(e.id); return { ...e, name: g?.title ?? '', active: !!g && mcpExposed.some((x) => x.group.id === e.id) }; }
-	const u = getUser(e.id); return { ...e, name: u?.name ?? '', active: !!u && superOwned(t.owner) };
-});
+// Why an entry is inactive (McpScopeInactiveReason), the first that
+// applies, as Go decides it: a group not exposed, then outside a member
+// owner's grants; a federation deleted, then holding none of a member
+// owner's granted groups; a private chat on a token no superadmin owns,
+// then of a user the archive does not know. null when active.
+const mcpScopeOf = (t) => {
+	const o = accounts.find((a) => a.id === t.owner);
+	const grants = o && o.role === 'member' ? o.grants : null;
+	return [...(MCP_SCOPES[t.id] ?? [])].sort((x, y) => MCP_KINDS.indexOf(x.kind) - MCP_KINDS.indexOf(y.kind) || x.id - y.id).map((e) => {
+		let name = '', why: string | null = null;
+		if (e.kind === 'federation') {
+			const f = fedById(e.id);
+			name = f?.name ?? '';
+			why = !f ? 'federation_deleted' : grants && !grants.some((g) => g.fed === e.id && g.groupIds.length) ? 'outside_owner_grants' : null;
+		} else if (e.kind === 'group') {
+			const g = getGroup(e.id);
+			name = g?.title ?? '';
+			why = !g || !mcpExposed.some((x) => x.group.id === e.id) ? 'not_exposed' : grants && !grants.some((x) => x.groupIds.includes(e.id)) ? 'outside_owner_grants' : null;
+		} else {
+			const u = getUser(e.id);
+			name = u?.name ?? '';
+			why = !superOwned(t.owner) ? 'private_not_superadmin' : !u ? 'user_unknown' : null;
+		}
+		return { ...e, name, active: why === null, inactive_reason: why };
+	});
+};
 // What the token form may offer: every federation, the exposed groups
 // the viewer sees, and private chats to a superadmin.
 const mcpScopeOptions = (s) => ({

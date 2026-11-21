@@ -4341,14 +4341,20 @@ export interface components {
             /** Format: int64 */
             id: number;
         }[];
-        /** @description One entry of a token's scope, federations first, then groups, then private chats, each by id. name is the federation's name, the group's title or the user's name ("" when it no longer exists). active is whether the entry reaches anything now: a federation that exists, a group exposed to MCP, a private chat on a token whose owner is a superadmin (or that has no owner record). An inactive entry is kept and reaches nothing; a token whose entries are all inactive reads nothing, never every exposed group. */
+        /** @description One entry of a token's scope, federations first, then groups, then private chats, each by id. name is the federation's name, the group's title or the user's name ("" when it no longer exists). active is whether the entry reaches anything now: a federation that exists, a group exposed to MCP, a private chat of a known user on a token whose owner is a superadmin (or that has no owner record); on a token a member owns, also only within the member's grants: a group granted to it, a federation holding a granted group (decisions/2026-11-21-mcp-token-owner-grants.md). An inactive entry is kept and reaches nothing; a token whose entries are all inactive reads nothing, never every exposed group. inactive_reason says why an entry is inactive, null when it is active. */
         McpScopeEntry: {
             kind: components["schemas"]["McpScopeKind"];
             /** Format: int64 */
             id: number;
             name: string;
             active: boolean;
+            inactive_reason: components["schemas"]["McpScopeInactiveReason"];
         };
+        /**
+         * @description Why a scope entry reaches nothing, the first that applies: not_exposed, a group not exposed to MCP; federation_deleted, a federation that no longer exists; private_not_superadmin, a private chat on a token whose owner is not a superadmin; user_unknown, a private chat with a user the archive no longer knows; outside_owner_grants, an entry of a member's token that reaches no group the member's grants let it see. null for an active entry.
+         * @enum {string|null}
+         */
+        McpScopeInactiveReason: "not_exposed" | "federation_deleted" | "private_not_superadmin" | "user_unknown" | "outside_owner_grants" | null;
         /** @description A JSON-RPC 2.0 request (with an id) or notification (without). The methods answered are initialize, ping, tools/list and tools/call ({name, arguments}); tools/list describes each tool's arguments. */
         McpMessage: {
             /** @enum {string} */
