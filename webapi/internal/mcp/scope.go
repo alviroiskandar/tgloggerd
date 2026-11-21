@@ -11,6 +11,7 @@ import (
 	"errors"
 	"slices"
 
+	"tgloggerd/webapi/internal/scope"
 	"tgloggerd/webapi/internal/webdb"
 )
 
@@ -32,13 +33,16 @@ import (
 //   - A federation is read as it is now, on every request: groups
 //     added to it or taken out of it count from the next request. A
 //     federation that no longer exists reaches nothing.
-//   - A token a member owns reads only groups the member's own grants
-//     let it see on the web, whatever its entries say
-//     (decisions/2026-11-21-mcp-token-owner-grants.md): the entries
-//     narrow within the grants, and no entries is every exposed group
-//     within them. The grants are read on every request too, so a
-//     withdrawn grant counts at once. Tokens of superadmins and admins,
-//     and tokens without an owner record, are not bounded so.
+//   - A token a member or an admin owns reads only what its owner sees
+//     on the web, whatever its entries say
+//     (decisions/2026-11-21-mcp-token-owner-grants.md,
+//     2026-11-22-mcp-token-owner-view.md): the groups within a member's
+//     grants, every group but those hidden from an admin. The entries
+//     narrow within that, and no entries is every exposed group within
+//     it. The owner's account is read on every request too, so a
+//     withdrawn grant or a newly hidden group counts at once. Tokens
+//     of superadmins, and tokens without an owner record, are not
+//     bounded so.
 
 // Reach is what one request's token may read, before the exposure list
 // is applied.
@@ -50,22 +54,56 @@ type Reach struct {
 	defaultFed bool
 	federated  map[int64]bool
 	private    []int64 // ascending; only on a superadmin's token
-	// bounded: a member's token, which reads only the groups in
-	// granted, whatever narrowed says.
+	// bounded: a member's or an admin's token, which reads only what
+	// owner, its owner's web scope (OwnerScope), sees, whatever
+	// narrowed says.
 	bounded bool
-	granted map[int64]bool
+	owner   scope.Scope
 }
 
 // allowsGroup is whether the scope lets the token read group g, if it
 // is exposed.
 func (r Reach) allowsGroup(g int64) bool {
-	if r.bounded && !r.granted[g] {
+	if r.bounded && !r.owner.SeesGroup(g) {
 		return false
 	}
 	if !r.narrowed || r.groups[g] {
 		return true
 	}
 	return r.defaultFed && !r.federated[g]
+}
+
+// OwnerScope is the web request scope of account a, as its own
+// requests on the web get it (Server.requestScope), and whether it
+// bounds a token a owns: a member's and an admin's do, a superadmin's
+// does not. It is the one place that turns an owner's account into
+// what its tokens may read, for the requests at /mcp (ResolveScope)
+// and for the token list's inactive entries alike.
+func OwnerScope(a webdb.Account) (sc scope.Scope, bounded bool) {
+	role, ok := scope.ParseRole(a.Role)
+	if !ok {
+		return scope.Anonymous(), true
+	}
+	var granted []int64
+	for _, gs := range a.Grants {
+		granted = append(granted, gs...)
+	}
+	abilities := make([]scope.Ability, 0, len(a.Abilities))
+	for _, x := range a.Abilities {
+		abilities = append(abilities, scope.Ability(x))
+	}
+	sc = scope.For(scope.Viewer{
+		ID:                 a.ID,
+		Role:               role,
+		MustChangePassword: a.MustChangePassword,
+		AdminOf:            a.AdminOf,
+		HidePrivate:        a.HidePrivate,
+		JoinChat:           a.JoinChat,
+		HideGroups:         a.HideGroups,
+		GrantedGroups:      granted,
+		Abilities:          abilities,
+	})
+	return sc, role != scope.Superadmin
 }
 
 type reachKey struct{}
@@ -83,17 +121,20 @@ func reachOf(ctx context.Context) Reach {
 // ResolveScope reads the scope of o's token from the web's schema into
 // a Reach. Its private chat entries work only when o.PrivateOK (its
 // owner is a superadmin); otherwise they stay stored and reach nothing.
-// A member's token is bounded by the member's grants.
+// A member's or an admin's token is bounded by what its owner sees on
+// the web (OwnerScope).
 func ResolveScope(ctx context.Context, app *sql.DB, o TokenOwner) (Reach, error) {
 	var r Reach
-	if o.Member {
-		gs, err := webdb.MemberGrantedGroups(ctx, app, o.OwnerID)
-		if err != nil {
+	if o.OwnerID != 0 && o.OwnerRole != string(scope.Superadmin) {
+		a, err := webdb.GetAccount(ctx, app, o.OwnerID)
+		switch {
+		case errors.Is(err, webdb.ErrNoUser):
+			// Gone since ResolveToken found it: it sees nothing.
+			r.bounded, r.owner = true, scope.Anonymous()
+		case err != nil:
 			return Reach{}, err
-		}
-		r.bounded, r.granted = true, map[int64]bool{}
-		for _, g := range gs {
-			r.granted[g] = true
+		default:
+			r.owner, r.bounded = OwnerScope(a)
 		}
 	}
 	es, err := webdb.MCPTokenScope(ctx, app, o.TokenID)

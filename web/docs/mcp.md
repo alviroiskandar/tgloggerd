@@ -65,18 +65,22 @@ narrows it, except for private chats.
 - Entries: the exposed groups named by a `group` entry or in a `federation` entry
   (Default, id 0, is the groups in no other federation), plus the `private` chats. A
   group that is not exposed is never reached, whatever names it.
-- A token a **member** owns reads only the exposed groups within the member's own
-  grants, the groups the member sees on the web
-  ([decision](../../docs/design/decisions/2026-11-21-mcp-token-owner-grants.md)): its
-  entries narrow within the grants, never beyond them, and no entries is every exposed
-  group within them. Tokens of superadmins and admins, and tokens without an owner
-  record, are not bounded so (an admin's hidden groups do not apply to its tokens).
+- A token a **member** or an **admin** owns reads only the exposed groups its owner
+  sees on the web: for a member those within its own grants
+  ([decision](../../docs/design/decisions/2026-11-21-mcp-token-owner-grants.md)), for
+  an admin every group but those a superadmin hid from it
+  ([decision](../../docs/design/decisions/2026-11-22-mcp-token-owner-view.md)). Its
+  entries narrow within that, never beyond it, and no entries is every exposed group
+  within it. Tokens of superadmins, and tokens without an owner record, are not bounded
+  so. One function builds the owner's web scope from its account (`mcp.OwnerScope`),
+  for `/mcp` and for the token list alike.
 - Read on every request: a group added to or taken out of a federation, a group
-  withdrawn from MCP or exposed again, a token changing owner and a grant given to or
-  withdrawn from a member owner count from the next request on.
+  withdrawn from MCP or exposed again, a token changing owner, a grant given to or
+  withdrawn from a member owner and a group hidden from or shown to an admin owner
+  count from the next request on.
 - An entry that reaches nothing stays (a deleted federation, a withdrawn group, a
-  private chat on a token now owned by an admin or a member, an entry outside a member
-  owner's grants). A token whose every entry
+  private chat on a token now owned by an admin or a member, an entry outside what a
+  member or admin owner sees). A token whose every entry
   is inactive reads **nothing**; it never falls back to every exposed group.
 - The one place in the code: `telegram.readable` (`webapi/internal/mcp/gate.go`). The
   transport resolves the token's entries into a `Reach` (`scope.go`) per request and puts
@@ -695,8 +699,11 @@ The Go service serves the administration as JSON operations
   `private_not_superadmin` for a private chat on a token whose owner is
   not a superadmin, `user_unknown` for a private chat with a user the
   archive does not know, and `outside_owner_grants` for an entry of a
-  member's token that reaches no group the member is granted (a group
-  not granted, a federation holding no granted group). Then
+  member's or an admin's token that reaches no group its owner sees: for
+  a member, a group not granted or a federation holding no granted
+  group; for an admin, a group hidden from it or a federation whose
+  exposed groups are all hidden from it (a federation with no exposed
+  group is not out of reach because of the hiding). Then
   `scope_options`: the
   federations, the exposed groups the viewer sees, and `private`, true
   for a superadmin.
@@ -733,8 +740,8 @@ The Go service serves the administration as JSON operations
   who the viewer may mint for or transfer to, and `can_transfer`.
   What a token reads is the exposure list narrowed by its scope;
   ownership changes it for private chat entries, which work while a
-  superadmin owns the token, and for a member owner, whose grants bound
-  the token.
+  superadmin owns the token, and for a member or admin owner, whose web
+  view bounds the token.
 
 ## Configuration
 

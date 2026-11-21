@@ -87,10 +87,11 @@ type TokenOwner struct {
 	// counts as the superadmins').
 	PrivateOK bool
 	// OwnerID is the token's current owner (web_resource_relations),
-	// 0 for none; Member is whether that owner is a member, whose
-	// grants bound what the token reads (ResolveScope).
-	OwnerID uint64
-	Member  bool
+	// 0 for none, and OwnerRole its role ("" for none): a member's or
+	// an admin's token reads only what its owner sees on the web
+	// (ResolveScope).
+	OwnerID   uint64
+	OwnerRole string
 }
 
 // ErrNoToken is an unknown digest, a revoked token, or a token whose
@@ -110,7 +111,7 @@ func ResolveToken(ctx context.Context, app *sql.DB, digest [32]byte) (TokenOwner
 	err := app.QueryRowContext(ctx,
 		"SELECT t.id, t.web_user_id, m.username, m.role, "+
 			"(r.user_id IS NULL OR u.role = 'superadmin'), "+
-			"COALESCE(r.user_id, 0), COALESCE(u.role = 'member', 0) "+
+			"COALESCE(r.user_id, 0), COALESCE(u.role, '') "+
 			"FROM web_mcp_tokens t "+
 			"JOIN web_users m ON m.id = t.web_user_id "+
 			"LEFT JOIN web_resource_relations r ON r.resource_type = ? "+
@@ -123,7 +124,7 @@ func ResolveToken(ctx context.Context, app *sql.DB, digest [32]byte) (TokenOwner
 			"    FROM web_member_abilities ab WHERE ab.web_user_id = u.id "+
 			"    AND ab.ability = ?)))) LIMIT 1",
 		string(webdb.ResMCPToken), string(webdb.Owner), digest[:], webdb.AbilityMCPTokens).
-		Scan(&o.TokenID, &o.WebUserID, &o.Username, &o.Role, &o.PrivateOK, &o.OwnerID, &o.Member)
+		Scan(&o.TokenID, &o.WebUserID, &o.Username, &o.Role, &o.PrivateOK, &o.OwnerID, &o.OwnerRole)
 	if errors.Is(err, sql.ErrNoRows) {
 		return o, ErrNoToken
 	}

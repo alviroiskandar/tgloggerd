@@ -693,15 +693,15 @@ func loadMcpTokens(ctx context.Context, pr *pageRequest) (any, error) {
 	for _, t := range ts {
 		// The superadmins' when it has no owner record.
 		privateOK := t.OwnerID == 0
-		var granted map[int64]bool
+		var owner *scope.Scope
 		if a, ok := accts[t.OwnerID]; ok {
 			privateOK = a.Role == string(scope.Superadmin)
-			granted = grantedOf(a)
+			owner = ownerBound(a)
 		}
 		p.Tokens = append(p.Tokens, mcpTokenJSON{ID: t.ID, Name: t.Name, Owner: person(t.OwnerID),
 			MintedBy: person(t.MinterID), Created: t.Created.Format(time.RFC3339),
 			LastUsed: timePtr(t.LastUsed), Revoked: timePtr(t.Revoked),
-			Scope: sv.entries(scopes[t.ID], privateOK, granted)})
+			Scope: sv.entries(scopes[t.ID], privateOK, owner)})
 	}
 	for _, a := range tokenOwners(pr.scope, accts) {
 		p.Owners = append(p.Owners, personOf(a))

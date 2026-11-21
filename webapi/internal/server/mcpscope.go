@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"tgloggerd/webapi/internal/logdb"
+	"tgloggerd/webapi/internal/mcp"
 	"tgloggerd/webapi/internal/scope"
 	"tgloggerd/webapi/internal/webdb"
 )
@@ -172,8 +173,8 @@ type scopeView struct {
 	users   map[int64]string
 	// fedGroups are the groups of each federation an entry names, and
 	// federated the groups in any federation (for Default), for
-	// telling whether a member's federation entry reaches a granted
-	// group.
+	// telling whether a federation entry is within what its token's
+	// owner sees (fedSeen).
 	fedGroups map[int64][]int64
 	federated map[int64]bool
 }
@@ -240,10 +241,11 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 }
 
 // entries is one token's scope; privateOK is whether its owner may
-// hold private chats, and granted, when not nil, the groups a member
-// owner's grants let it see, outside which an entry reaches nothing
-// (decisions/2026-11-21-mcp-token-owner-grants.md).
-func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, granted map[int64]bool) []mcpScopeJSON {
+// hold private chats, and owner, when not nil, the web scope of a
+// member or admin owner (ownerBound), outside which an entry reaches
+// nothing (decisions/2026-11-21-mcp-token-owner-grants.md,
+// 2026-11-22-mcp-token-owner-view.md).
+func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *scope.Scope) []mcpScopeJSON {
 	out := []mcpScopeJSON{}
 	for _, e := range es {
 		j := mcpScopeJSON{Kind: string(e.Kind), ID: e.ID}
@@ -255,7 +257,7 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, granted ma
 			switch {
 			case !exists:
 				why = reasonFederationGone
-			case granted != nil && !sv.fedGrants(e.ID, granted):
+			case owner != nil && !sv.fedSeen(e.ID, *owner):
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopeGroup:
@@ -263,7 +265,7 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, granted ma
 			switch {
 			case !sv.exposed[e.ID]:
 				why = reasonNotExposed
-			case granted != nil && !granted[e.ID]:
+			case owner != nil && !owner.SeesGroup(e.ID):
 				why = reasonOutsideGrants
 			}
 		case webdb.ScopePrivate:
@@ -285,38 +287,64 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, granted ma
 	return out
 }
 
-// fedGrants is whether federation fed holds a group in granted: for
-// Default, a granted group in no other federation.
-func (sv scopeView) fedGrants(fed int64, granted map[int64]bool) bool {
-	if uint64(fed) == webdb.DefaultFederation {
-		for g := range granted {
-			if !sv.federated[g] {
+// fedSeen is whether federation fed's entry is within what owner sees
+// on the web. For a member, whether the federation holds a granted
+// group (for Default, a granted group in no other federation). For an
+// admin, unless every exposed group the entry would reach is hidden
+// from the admin: an entry reaching no exposed group at all is not out
+// of reach because of the admin's hidden groups.
+func (sv scopeView) fedSeen(fed int64, owner scope.Scope) bool {
+	isDefault := uint64(fed) == webdb.DefaultFederation
+	if owner.Role() == scope.Member {
+		if isDefault {
+			for _, g := range owner.GrantedGroups() {
+				if !sv.federated[g] {
+					return true
+				}
+			}
+			return false
+		}
+		for _, g := range sv.fedGroups[fed] {
+			if owner.SeesGroup(g) {
 				return true
 			}
 		}
 		return false
 	}
-	for _, g := range sv.fedGroups[fed] {
-		if granted[g] {
+	var reached []int64
+	if isDefault {
+		for g := range sv.exposed {
+			if !sv.federated[g] {
+				reached = append(reached, g)
+			}
+		}
+	} else {
+		for _, g := range sv.fedGroups[fed] {
+			if sv.exposed[g] {
+				reached = append(reached, g)
+			}
+		}
+	}
+	if len(reached) == 0 {
+		return true
+	}
+	for _, g := range reached {
+		if owner.SeesGroup(g) {
 			return true
 		}
 	}
 	return false
 }
 
-// grantedOf is the groups a member's grants let it see, the union over
-// its federations; nil for every other role.
-func grantedOf(a webdb.Account) map[int64]bool {
-	if a.Role != string(scope.Member) {
+// ownerBound is the web scope that bounds the tokens a owns
+// (mcp.OwnerScope, the rule /mcp applies): a member's or an admin's;
+// nil for a superadmin's.
+func ownerBound(a webdb.Account) *scope.Scope {
+	sc, bounded := mcp.OwnerScope(a)
+	if !bounded {
 		return nil
 	}
-	out := map[int64]bool{}
-	for _, gs := range a.Grants {
-		for _, g := range gs {
-			out[g] = true
-		}
-	}
-	return out
+	return &sc
 }
 
 // scopeOptions is what the viewer's token form may offer: every
