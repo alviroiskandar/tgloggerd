@@ -184,24 +184,74 @@ type scopeView struct {
 	titles  map[int64]string
 	exposed map[int64]bool
 	users   map[int64]string
-	// fedGroups are the groups of each federation an entry names, and
-	// federated the groups in any federation (for Default), for
-	// telling whether a federation entry is within what its token's
-	// owner sees (fedSeen).
+	// fedSight is over the federations the entries name; its
+	// fedGroups and federated also tell whether a federation entry is
+	// within what its token's owner sees (fedSeen).
+	fedSight
+}
+
+// fedSight tells which federations a viewer may be told about, by one
+// rule for the token form's options, the entries of the token list and
+// the writing of new entries
+// (decisions/2026-11-22-mcp-scope-hidden-entries.md,
+// 2026-11-22-mcp-scope-federation-options.md).
+type fedSight struct {
+	// viewer is the scope of the request: an entry for a group it does
+	// not see, or for a federation that has groups and none it sees,
+	// tells it nothing (sees).
+	viewer scope.Scope
+	// fedGroups are the groups of each federation named, and
+	// federated the groups in any federation (for Default, loaded only
+	// when Default is named).
 	fedGroups map[int64][]int64
 	federated map[int64]bool
-	// viewer is the scope of the request that lists the tokens: an
-	// entry for a group it does not see, or for a federation that has
-	// groups and none it sees, tells it nothing (viewerSeesFed).
-	viewer scope.Scope
 	// defaultHidden is whether Default has groups and the viewer sees
-	// none of them, worked out only when an entry names Default.
+	// none of them, worked out only when Default is named and the
+	// viewer does not see every group.
 	defaultHidden bool
+}
+
+// newFedSight loads what fedSight.sees needs for the federations
+// named, existing or not.
+func (s *Server) newFedSight(ctx context.Context, sc scope.Scope, named map[int64]bool) (fedSight, error) {
+	fs := fedSight{viewer: sc, fedGroups: map[int64][]int64{}}
+	for id := range named {
+		if uint64(id) == webdb.DefaultFederation {
+			continue
+		}
+		gs, err := webdb.FederationGroups(ctx, s.app, uint64(id))
+		if err != nil && !errors.Is(err, webdb.ErrNoFederation) {
+			return fs, err
+		}
+		fs.fedGroups[id] = gs
+	}
+	if !named[int64(webdb.DefaultFederation)] {
+		return fs, nil
+	}
+	fg, err := webdb.FederatedGroups(ctx, s.app)
+	if err != nil {
+		return fs, err
+	}
+	fs.federated = map[int64]bool{}
+	for _, g := range fg {
+		fs.federated[g] = true
+	}
+	if sc.SeesAllGroups() {
+		return fs, nil
+	}
+	set := logdb.GroupSet{IDs: fg, Not: true}
+	seen, err := logdb.CountGroups(ctx, s.ro, sc, set)
+	if err != nil || seen > 0 {
+		return fs, err
+	}
+	has, err := logdb.CountGroups(ctx, s.ro, scope.Everything(), set)
+	fs.defaultHidden = has > 0
+	return fs, err
 }
 
 func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 	scopes map[uint64][]webdb.MCPScopeEntry) (scopeView, error) {
-	sv := scopeView{viewer: sc}
+	var sv scopeView
 	var groups, users []int64
 	named := map[int64]bool{}
 	for _, es := range scopes {
@@ -221,41 +271,11 @@ func (s *Server) newScopeView(ctx context.Context, sc scope.Scope,
 		return sv, err
 	}
 	sv.feds = map[int64]string{}
-	sv.fedGroups = map[int64][]int64{}
 	for _, f := range fs {
 		sv.feds[int64(f.ID)] = f.Name
-		if !named[int64(f.ID)] || f.ID == webdb.DefaultFederation {
-			continue
-		}
-		gs, err := webdb.FederationGroups(ctx, s.app, f.ID)
-		if err != nil && !errors.Is(err, webdb.ErrNoFederation) {
-			return sv, err
-		}
-		sv.fedGroups[int64(f.ID)] = gs
 	}
-	if named[int64(webdb.DefaultFederation)] {
-		fg, err := webdb.FederatedGroups(ctx, s.app)
-		if err != nil {
-			return sv, err
-		}
-		sv.federated = map[int64]bool{}
-		for _, g := range fg {
-			sv.federated[g] = true
-		}
-		if !sc.SeesAllGroups() {
-			set := logdb.GroupSet{IDs: fg, Not: true}
-			seen, err := logdb.CountGroups(ctx, s.ro, sc, set)
-			if err != nil {
-				return sv, err
-			}
-			if seen == 0 {
-				has, err := logdb.CountGroups(ctx, s.ro, scope.Everything(), set)
-				if err != nil {
-					return sv, err
-				}
-				sv.defaultHidden = has > 0
-			}
-		}
+	if sv.fedSight, err = s.newFedSight(ctx, sc, named); err != nil {
+		return sv, err
 	}
 	if sv.exposed, err = logdb.ExposedGroupIDs(ctx, s.ro); err != nil {
 		return sv, err
@@ -293,7 +313,7 @@ func (sv scopeView) entries(es []webdb.MCPScopeEntry, privateOK bool, owner *sco
 			switch {
 			case !exists:
 				why = reasonFederationGone
-			case !sv.viewerSeesFed(e.ID):
+			case !sv.sees(e.ID):
 				why = reasonHiddenViewer
 			case owner != nil && !sv.fedSeen(e.ID, *owner):
 				why = reasonOutsideGrants
@@ -360,22 +380,22 @@ func (sv scopeView) fedSeen(fed int64, owner scope.Scope) bool {
 	return sv.fedVisible(fed, owner)
 }
 
-// viewerSeesFed is whether federation fed's entry may tell the viewer
-// what it reaches: unless the federation has groups, exposed or not,
-// and the viewer sees none of them (for Default, every group in no
-// other federation). It does not depend on exposure, so the entry does
-// not change for the viewer when a hidden group is exposed or
-// withdrawn.
-func (sv scopeView) viewerSeesFed(fed int64) bool {
+// sees is whether the viewer may be told about federation fed: offered
+// it, told what its entry reaches, and let write a new entry for it.
+// It may unless the federation has groups, exposed or not, and the
+// viewer sees none of them (for Default, every group in no other
+// federation). It does not depend on exposure, so nothing changes for
+// the viewer when a hidden group is exposed or withdrawn.
+func (fs fedSight) sees(fed int64) bool {
 	if uint64(fed) == webdb.DefaultFederation {
-		return !sv.defaultHidden
+		return !fs.defaultHidden
 	}
-	gs := sv.fedGroups[fed]
+	gs := fs.fedGroups[fed]
 	if len(gs) == 0 {
 		return true
 	}
 	for _, g := range gs {
-		if sv.viewer.SeesGroup(g) {
+		if fs.viewer.SeesGroup(g) {
 			return true
 		}
 	}
