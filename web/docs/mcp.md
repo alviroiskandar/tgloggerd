@@ -50,7 +50,15 @@ in the admin UI as a hint and is never acted on; see `migrations/000022` for why
 
 `telegram_get_users` is deliberately *not* gated: it describes accounts, not
 conversations, and returns the same profile data the web UI already shows — including
-phone numbers where the archive has them.
+phone numbers where the archive has them. On a token a member or an admin owns, the
+user tools (`telegram_get_users`, `telegram_get_user`, `telegram_get_user_history`)
+describe only the users that owner sees on the web
+([decision](../../docs/design/decisions/2026-11-22-mcp-token-owner-view.md)), by the
+web's own rule (`scope.UserFilter`): an admin sees every user, a member the senders and
+admins of its granted groups, exposed or not. Any other id answers exactly as an id the
+archive does not hold: `telegram_get_user` the same error, `telegram_get_user_history`
+every category empty, `telegram_get_users` leaves it out. Tokens of superadmins, and
+tokens without an owner record, are unchanged.
 
 ### Token scopes (Go service)
 
@@ -65,18 +73,22 @@ narrows it, except for private chats.
 - Entries: the exposed groups named by a `group` entry or in a `federation` entry
   (Default, id 0, is the groups in no other federation), plus the `private` chats. A
   group that is not exposed is never reached, whatever names it.
-- A token a **member** owns reads only the exposed groups within the member's own
-  grants, the groups the member sees on the web
-  ([decision](../../docs/design/decisions/2026-11-21-mcp-token-owner-grants.md)): its
-  entries narrow within the grants, never beyond them, and no entries is every exposed
-  group within them. Tokens of superadmins and admins, and tokens without an owner
-  record, are not bounded so (an admin's hidden groups do not apply to its tokens).
+- A token a **member** or an **admin** owns reads only the exposed groups its owner
+  sees on the web: for a member those within its own grants
+  ([decision](../../docs/design/decisions/2026-11-21-mcp-token-owner-grants.md)), for
+  an admin every group but those a superadmin hid from it
+  ([decision](../../docs/design/decisions/2026-11-22-mcp-token-owner-view.md)). Its
+  entries narrow within that, never beyond it, and no entries is every exposed group
+  within it. Tokens of superadmins, and tokens without an owner record, are not bounded
+  so. One function builds the owner's web scope from its account (`mcp.OwnerScope`),
+  for `/mcp` and for the token list alike.
 - Read on every request: a group added to or taken out of a federation, a group
-  withdrawn from MCP or exposed again, a token changing owner and a grant given to or
-  withdrawn from a member owner count from the next request on.
+  withdrawn from MCP or exposed again, a token changing owner, a grant given to or
+  withdrawn from a member owner and a group hidden from or shown to an admin owner
+  count from the next request on.
 - An entry that reaches nothing stays (a deleted federation, a withdrawn group, a
-  private chat on a token now owned by an admin or a member, an entry outside a member
-  owner's grants). A token whose every entry
+  private chat on a token now owned by an admin or a member, an entry outside what a
+  member or admin owner sees). A token whose every entry
   is inactive reads **nothing**; it never falls back to every exposed group.
 - The one place in the code: `telegram.readable` (`webapi/internal/mcp/gate.go`). The
   transport resolves the token's entries into a `Reach` (`scope.go`) per request and puts
@@ -655,10 +667,9 @@ The Go service serves the administration as JSON operations
   token is 404 like an unknown one, and the list, the index's count
   and its last use cover only the viewer's tokens. A member given
   `mcp_tokens` has the MCP menu entry with the index and the tokens,
-  not the groups. Members do not get tokens without the ability
-  because `telegram_get_users` is not limited to the exposed groups:
-  it answers any user's profile, which is more than a member's grants
-  show it.
+  not the groups. Members do not get tokens without the ability; a
+  member's token describes only the users of the member's granted
+  groups (see the user tools above).
 - Minting: `owner_id` (the viewer when left out) must be an active
   account that may hold tokens (a superadmin, an admin, or a member
   with `mcp_tokens`) whose tokens the viewer manages, so an admin mints
@@ -680,7 +691,10 @@ The Go service serves the administration as JSON operations
   when minting or by PATCH, which replaces it as a whole (`[]` is every
   exposed group again). Each entry once, at most 200. A federation
   must exist, a group must be one the viewer can see (it need not be
-  exposed: the entry is inactive until it is), a private chat must be
+  exposed: the entry is inactive until it is) unless the token already
+  holds that entry, which PATCH keeps as it is even when the group is
+  hidden from the viewer, so a form sending the whole scope back saves
+  (a new entry for such a group is 400), a private chat must be
   a user the archive knows, by its positive id; anything else is 400
   `bad_request` and nothing is written. A `private` entry is written
   only by a superadmin, on a token a superadmin owns or that has no
@@ -695,8 +709,15 @@ The Go service serves the administration as JSON operations
   `private_not_superadmin` for a private chat on a token whose owner is
   not a superadmin, `user_unknown` for a private chat with a user the
   archive does not know, and `outside_owner_grants` for an entry of a
-  member's token that reaches no group the member is granted (a group
-  not granted, a federation holding no granted group). Then
+  member's or an admin's token that reaches no group its owner sees: for
+  a member, a group not granted or a federation holding no granted
+  group; for an admin, a group hidden from it or a federation whose
+  exposed groups are all hidden from it (a federation with no exposed
+  group is not out of reach because of the hiding). An entry for a group
+  hidden from the viewer goes out with an empty `name`, and when the
+  owner is why it is inactive, as `outside_owner_grants` even if the
+  group is not exposed, so the list says nothing about such a group
+  beyond the id the token holds. Then
   `scope_options`: the
   federations, the exposed groups the viewer sees, and `private`, true
   for a superadmin.
@@ -733,8 +754,8 @@ The Go service serves the administration as JSON operations
   who the viewer may mint for or transfer to, and `can_transfer`.
   What a token reads is the exposure list narrowed by its scope;
   ownership changes it for private chat entries, which work while a
-  superadmin owns the token, and for a member owner, whose grants bound
-  the token.
+  superadmin owns the token, and for a member or admin owner, whose web
+  view bounds the token.
 
 ## Configuration
 

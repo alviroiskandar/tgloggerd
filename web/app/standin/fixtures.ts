@@ -855,7 +855,7 @@ export function load(url: string, persona: Persona): Loaded {
 		if (path === '/mcp-admin/tokens') {
 			const tokens = mcpMine(s).sort((a, b) => b.id - a.id);
 			return { route: 'mcp_tokens', status: 200, props: {
-				tokens: tokens.map((t) => ({ id: t.id, name: t.name, owner: mcpPerson(t.owner), minted_by: mcpPerson(t.minted_by), created: iso(t.created), last_used: t.last_used ? iso(t.last_used) : null, revoked: t.revoked ? iso(t.revoked) : null, scope: mcpScopeOf(t) })),
+				tokens: tokens.map((t) => ({ id: t.id, name: t.name, owner: mcpPerson(t.owner), minted_by: mcpPerson(t.minted_by), created: iso(t.created), last_used: t.last_used ? iso(t.last_used) : null, revoked: t.revoked ? iso(t.revoked) : null, scope: mcpScopeOf(t, s) })),
 				owners: mcpOwners(s).map((a) => mcpPerson(a.id)),
 				scope_options: mcpScopeOptions(s),
 				can_transfer: s.role === 'superadmin',
@@ -1229,30 +1229,44 @@ type McpScopeRef = { kind: 'federation' | 'group' | 'private'; id: number };
 const MCP_SCOPES: Record<number, McpScopeRef[]> = {
 	1: [{ kind: 'private', id: users[0].id }],
 	2: [{ kind: 'federation', id: 1 }, { kind: 'group', id: groups[0].id }, { kind: 'group', id: groups[1].id }],
-	4: [{ kind: 'federation', id: 9 }, { kind: 'private', id: users[1].id }],
+	4: [{ kind: 'federation', id: 9 }, { kind: 'group', id: groups[9].id }, { kind: 'private', id: users[1].id }],
 };
 // A private chat works only on a token a superadmin owns, or one with
 // no owner record (the superadmins').
 const superOwned = (owner: number) => owner === 0 || accounts.some((a) => a.id === owner && a.role === 'superadmin' && a.active);
 const MCP_KINDS = ['federation', 'group', 'private'];
 // Why an entry is inactive (McpScopeInactiveReason), the first that
-// applies, as Go decides it: a group not exposed, then outside a member
-// owner's grants; a federation deleted, then holding none of a member
-// owner's granted groups; a private chat on a token no superadmin owns,
-// then of a user the archive does not know. null when active.
-const mcpScopeOf = (t) => {
+// applies, as Go decides it: a group not exposed, then outside what a
+// member or admin owner sees (its grants; not hidden from it), which
+// comes first for a group the viewer cannot see; a federation deleted,
+// then reaching no group the owner sees; a private chat on a token no
+// superadmin owns, then of a user the archive does not know. null when
+// active.
+const mcpScopeOf = (t, s) => {
 	const o = accounts.find((a) => a.id === t.owner);
 	const grants = o && o.role === 'member' ? o.grants : null;
+	// An admin owner's token reaches no group hidden from that admin
+	// (decisions/2026-11-22-mcp-token-owner-view.md).
+	const hidden: number[] = o && o.role === 'admin' ? o.restrict?.hide_groups ?? [] : [];
 	return [...(MCP_SCOPES[t.id] ?? [])].sort((x, y) => MCP_KINDS.indexOf(x.kind) - MCP_KINDS.indexOf(y.kind) || x.id - y.id).map((e) => {
 		let name = '', why: string | null = null;
 		if (e.kind === 'federation') {
 			const f = fedById(e.id);
 			name = f?.name ?? '';
-			why = !f ? 'federation_deleted' : grants && !grants.some((g) => g.fed === e.id && g.groupIds.length) ? 'outside_owner_grants' : null;
+			// A member's token: a federation holding a granted group; an
+			// admin's: one with an exposed group not hidden from it.
+			const outside = f && ((grants && !grants.some((g) => g.fed === e.id && g.groupIds.length))
+				|| (o?.role === 'admin' && !fedGroups(f).some((g) => mcpExposed.some((x) => x.group.id === g.id) && !hidden.includes(g.id))));
+			why = !f ? 'federation_deleted' : outside ? 'outside_owner_grants' : null;
 		} else if (e.kind === 'group') {
 			const g = getGroup(e.id);
-			name = g?.title ?? '';
-			why = !g || !mcpExposed.some((x) => x.group.id === e.id) ? 'not_exposed' : grants && !grants.some((x) => x.groupIds.includes(e.id)) ? 'outside_owner_grants' : null;
+			// A group hidden from the viewer goes out without its title.
+			name = g && s.group(g) ? g.title : '';
+			const notExposed = !g || !mcpExposed.some((x) => x.group.id === e.id);
+			const outside = (grants && !grants.some((x) => x.groupIds.includes(e.id))) || hidden.includes(e.id);
+			// For a group the viewer cannot see, outside the owner's view
+			// comes first, so the list says nothing of its exposure.
+			why = outside && !(g && s.group(g)) ? 'outside_owner_grants' : notExposed ? 'not_exposed' : outside ? 'outside_owner_grants' : null;
 		} else {
 			const u = getUser(e.id);
 			name = u?.name ?? '';
@@ -1269,10 +1283,12 @@ const mcpScopeOptions = (s) => ({
 	private: s.role === 'superadmin',
 });
 // A scope as written for a token of `owner`: [200, refs], else the
-// refusal. A private chat is a superadmin's alone, and only on a token a
-// superadmin owns (403 with the reason); a bad entry or more than 200 is
-// 400. Duplicates are kept once.
-function checkMcpScope(s, raw, owner: number): [number, McpScopeRef[] | { error: string; message: string }] {
+// refusal. A private chat is a superadmin's alone, and only on a token
+// a superadmin owns (403 with the reason); a bad entry or more than 200
+// is 400. A group the token already holds (`held`) is kept even when
+// the viewer cannot see it, so an edit round-trips it; a new one is
+// not. Duplicates are kept once.
+function checkMcpScope(s, raw, owner: number, held: McpScopeRef[] = []): [number, McpScopeRef[] | { error: string; message: string }] {
 	const bad = (message: string): [number, { error: string; message: string }] => [400, { error: 'bad_request', message }];
 	if (!Array.isArray(raw)) return bad('A scope is a list of federations, groups and private chats.');
 	if (raw.length > 200) return bad('A scope holds at most 200 entries.');
@@ -1280,7 +1296,7 @@ function checkMcpScope(s, raw, owner: number): [number, McpScopeRef[] | { error:
 	for (const e of raw) {
 		if (!e || !MCP_KINDS.includes(e.kind) || !Number.isInteger(e.id)) return bad('A scope entry is a federation, a group or a private chat.');
 		if (e.kind === 'federation' && !fedById(e.id)) return bad('No such federation.');
-		if (e.kind === 'group') { const g = e.id < 0 && getGroup(e.id); if (!g || !s.group(g)) return bad('No such group.'); }
+		if (e.kind === 'group' && !held.some((h) => h.kind === 'group' && h.id === e.id)) { const g = e.id < 0 && getGroup(e.id); if (!g || !s.group(g)) return bad('No such group.'); }
 		if (e.kind === 'private') {
 			if (e.id <= 0 || !getUser(e.id)) return bad('No such private chat.');
 			if (s.role !== 'superadmin') return [403, { error: 'forbidden', message: 'Only a superadmin can give a token a private chat.' }];
@@ -1671,11 +1687,13 @@ export function adminApi(method: string, p: string, body, persona: Persona): [nu
 		// name, the scope or both change; the scope is replaced whole.
 		if (!m[2]) {
 			if (body.name === undefined && body.scope === undefined) return [400, { error: 'bad_request', message: 'A name or a scope is required.', field: 'name' }];
+			// A name is checked only when one is sent: a scope alone may
+			// be written to a token that has none.
 			const name = body.name === undefined ? t.name : String(body.name).trim().slice(0, 64);
-			if (!name) return [400, { error: 'bad_request', message: 'A name is required.', field: 'name' }];
+			if (body.name !== undefined && !name) return [400, { error: 'bad_request', message: 'A name is required.', field: 'name' }];
 			let scope: McpScopeRef[] | undefined;
 			if (body.scope !== undefined) {
-				const [st, out] = checkMcpScope(s, body.scope, t.owner);
+				const [st, out] = checkMcpScope(s, body.scope, t.owner, MCP_SCOPES[t.id] ?? []);
 				if (st !== 200) return [st, out];
 				scope = out as McpScopeRef[];
 			}

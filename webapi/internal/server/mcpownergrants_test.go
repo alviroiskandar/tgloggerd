@@ -114,19 +114,6 @@ func TestMCPMemberTokenWithinGrants(t *testing.T) {
 	only("without an owner record", mcpG1, mcpG2)
 }
 
-// An admin's token is not bounded by the groups hidden from the admin
-// (not decided yet): it reads every exposed group as before.
-func TestMCPAdminTokenUnbounded(t *testing.T) {
-	t.Parallel()
-	e := newMCPEnv(t, MCPConfig{})
-	e.webExec("UPDATE web_resource_relations SET user_id = 3 WHERE resource_type = 'mcp_token' " +
-		"AND resource_id = 1")
-	e.webExec("INSERT INTO web_admin_hidden_groups (web_user_id, group_id) VALUES (3, ?)", mcpG1)
-	if got := e.listedGroups(); fmt.Sprint(got) != fmt.Sprint([]int64{mcpG2, mcpG1}) {
-		t.Errorf("admin's token: %v", got)
-	}
-}
-
 // The token list marks a member's entries outside the member's grants
 // inactive, and follows the grants as they change; the same entries on
 // a superadmin's token stay active. adminEnv's sample exposes GNU/Weeb

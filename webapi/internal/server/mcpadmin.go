@@ -356,7 +356,7 @@ func (s *Server) createMcpToken(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenOwner(w, r, sc, v, owner) {
 		return
 	}
-	tscope, ok := s.tokenScope(w, r, sc, v, owner, in.Scope)
+	tscope, ok := s.tokenScope(w, r, sc, v, owner, nil, in.Scope)
 	if !ok {
 		return
 	}
@@ -407,7 +407,12 @@ func (s *Server) renameMcpToken(w http.ResponseWriter, r *http.Request) {
 	}
 	var tscope []webdb.MCPScopeEntry
 	if in.Scope != nil {
-		if tscope, ok = s.tokenScope(w, r, sc, v, t.OwnerID, *in.Scope); !ok {
+		held, err := webdb.MCPTokenScope(r.Context(), s.app, t.ID)
+		if err != nil {
+			s.internalError(w, "token scope", err)
+			return
+		}
+		if tscope, ok = s.tokenScope(w, r, sc, v, t.OwnerID, held, *in.Scope); !ok {
 			return
 		}
 	}
@@ -693,15 +698,15 @@ func loadMcpTokens(ctx context.Context, pr *pageRequest) (any, error) {
 	for _, t := range ts {
 		// The superadmins' when it has no owner record.
 		privateOK := t.OwnerID == 0
-		var granted map[int64]bool
+		var owner *scope.Scope
 		if a, ok := accts[t.OwnerID]; ok {
 			privateOK = a.Role == string(scope.Superadmin)
-			granted = grantedOf(a)
+			owner = ownerBound(a)
 		}
 		p.Tokens = append(p.Tokens, mcpTokenJSON{ID: t.ID, Name: t.Name, Owner: person(t.OwnerID),
 			MintedBy: person(t.MinterID), Created: t.Created.Format(time.RFC3339),
 			LastUsed: timePtr(t.LastUsed), Revoked: timePtr(t.Revoked),
-			Scope: sv.entries(scopes[t.ID], privateOK, granted)})
+			Scope: sv.entries(scopes[t.ID], privateOK, owner)})
 	}
 	for _, a := range tokenOwners(pr.scope, accts) {
 		p.Owners = append(p.Owners, personOf(a))

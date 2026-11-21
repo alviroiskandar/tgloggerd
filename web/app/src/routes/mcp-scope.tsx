@@ -23,7 +23,10 @@ const KINDS: Record<ScopeKind, { icon: typeof Lock; label: string }> = {
 };
 
 // The entry's name, or what it was when it no longer exists.
-const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation' : e.kind === 'group' ? `Group ${e.id}` : `User ${e.id}`);
+// A group hidden from the viewer comes without its title; one no
+// longer in the archive comes without it too, and is not exposed.
+const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation'
+	: e.kind === 'group' ? (e.inactive_reason === 'not_exposed' ? `Group ${e.id}` : 'A group hidden from you') : `User ${e.id}`);
 
 // Production's /mcp is still served by the old web service, which
 // ignores token scopes; only the Go service applies them, once it
@@ -40,7 +43,7 @@ export function ScopeNotice() {
 // (McpScopeInactiveReason).
 const WHY: Record<NonNullable<ScopeEntry['inactive_reason']>, string> = {
 	not_exposed: 'Inactive: the group is not exposed to MCP, so this entry reads nothing until it is.',
-	outside_owner_grants: 'Inactive: it is outside the groups the token\'s owner is granted, so this entry reads nothing.',
+	outside_owner_grants: 'Inactive: it is outside what the token\'s owner can see, so this entry reads nothing.',
 	federation_deleted: 'Inactive: the federation was deleted, so this entry reads nothing.',
 	private_not_superadmin: 'Inactive: a private chat works only on a token a superadmin owns, so this entry reads nothing.',
 	user_unknown: 'Inactive: the archive knows no such user, so this private chat reads nothing.',

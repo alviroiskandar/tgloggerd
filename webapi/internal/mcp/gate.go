@@ -33,7 +33,9 @@ import (
 //     private chat in scope as well.
 //   - The user tools (get_users, get_user, get_user_history) are not
 //     gated: they describe accounts, not conversations, as in the
-//     Drogon web.
+//     Drogon web. A token a member or an admin owns describes only the
+//     users its owner sees on the web (Reach.userCond, scope.go): an
+//     admin sees every user, a member those of its granted groups.
 //
 // Direct messages are out of reach but through the scope: only
 // private.go names their table, which a grep for its name checks

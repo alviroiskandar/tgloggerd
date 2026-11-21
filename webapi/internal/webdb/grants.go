@@ -9,7 +9,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -244,23 +243,4 @@ func dropGrantsOfGroups(ctx context.Context, tx *sql.Tx, fed uint64, added, remo
 		}
 	}
 	return nil
-}
-
-// MemberGrantedGroups is the groups granted to account id as its
-// requests' scope reads them (LoadSessionState): the union over its
-// federations of those still in the federation, ascending; nil for
-// none, for an account that is not a member and for one that is gone.
-// The MCP tokens a member owns read through it
-// (decisions/2026-11-21-mcp-token-owner-grants.md).
-func MemberGrantedGroups(ctx context.Context, db Querier, id uint64) ([]int64, error) {
-	var s sql.NullString
-	err := db.QueryRowContext(ctx, "SELECT "+grantedGroupsColumn+"FROM web_users u WHERE u.id = ?", id).
-		Scan(&s)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return groupList(s)
 }
