@@ -1243,6 +1243,10 @@ const MCP_KINDS = ['federation', 'group', 'private'];
 // not know. null when active. A group the viewer cannot see, or a
 // federation with groups it can see none of, is sent as
 // hidden_from_viewer with active null, whatever its real state.
+// Whether a federation is hidden from the viewer: it has groups
+// (Default's are those in no other federation), exposed or not, and the
+// viewer sees none of them. An empty federation never is.
+const fedHiddenFrom = (s, f) => { const its = fedGroups(f); return its.length > 0 && !its.some((g) => s.group(g)); };
 const mcpScopeOf = (t, s) => {
 	const o = accounts.find((a) => a.id === t.owner);
 	const grants = o && o.role === 'member' ? o.grants : null;
@@ -1256,8 +1260,7 @@ const mcpScopeOf = (t, s) => {
 			// A federation with groups the viewer can see none of tells it
 			// nothing either, exposed or not, so withdrawing one changes
 			// nothing the viewer sees.
-			const its = f ? fedGroups(f) : [];
-			if (its.length && !its.some((g) => s.group(g))) return { ...e, name: '', active: null, inactive_reason: 'hidden_from_viewer' };
+			if (f && fedHiddenFrom(s, f)) return { ...e, name: '', active: null, inactive_reason: 'hidden_from_viewer' };
 			name = f?.name ?? '';
 			// A member's token: a federation holding a granted group; an
 			// admin's: one with an exposed group not hidden from it.
@@ -1282,19 +1285,20 @@ const mcpScopeOf = (t, s) => {
 		return { ...e, name, active: why === null, inactive_reason: why };
 	});
 };
-// What the token form may offer: every federation, the exposed groups
-// the viewer sees, and private chats to a superadmin.
+// What the token form may offer: the federations not hidden from the
+// viewer, the exposed groups it sees, and private chats to a superadmin.
 const mcpScopeOptions = (s) => ({
-	federations: allFeds().map((f) => ({ id: f.id, name: f.name })),
+	// A federation hidden from the viewer is not offered.
+	federations: allFeds().filter((f) => !fedHiddenFrom(s, f)).map((f) => ({ id: f.id, name: f.name })),
 	groups: mcpExposed.filter((e) => s.group(e.group)).map((e) => ({ id: e.group.id, name: e.group.title })),
 	private: s.role === 'superadmin',
 });
 // A scope as written for a token of `owner`: [200, refs], else the
 // refusal. A private chat is a superadmin's alone, and only on a token
 // a superadmin owns (403 with the reason); a bad entry or more than 200
-// is 400. A group the token already holds (`held`) is kept even when
-// the viewer cannot see it, so an edit round-trips it; a new one is
-// not. Duplicates are kept once.
+// is 400. A group or federation the token already holds (`held`) is
+// kept even when it is hidden from the viewer, so an edit round-trips
+// it; a new one is not. Duplicates are kept once.
 function checkMcpScope(s, raw, owner: number, held: McpScopeRef[] = []): [number, McpScopeRef[] | { error: string; message: string }] {
 	const bad = (message: string): [number, { error: string; message: string }] => [400, { error: 'bad_request', message }];
 	if (!Array.isArray(raw)) return bad('A scope is a list of federations, groups and private chats.');
@@ -1302,7 +1306,7 @@ function checkMcpScope(s, raw, owner: number, held: McpScopeRef[] = []): [number
 	const out: McpScopeRef[] = [];
 	for (const e of raw) {
 		if (!e || !MCP_KINDS.includes(e.kind) || !Number.isInteger(e.id)) return bad('A scope entry is a federation, a group or a private chat.');
-		if (e.kind === 'federation' && !fedById(e.id)) return bad('No such federation.');
+		if (e.kind === 'federation' && !held.some((h) => h.kind === 'federation' && h.id === e.id)) { const f = fedById(e.id); if (!f || fedHiddenFrom(s, f)) return bad('No such federation.'); }
 		if (e.kind === 'group' && !held.some((h) => h.kind === 'group' && h.id === e.id)) { const g = e.id < 0 && getGroup(e.id); if (!g || !s.group(g)) return bad('No such group.'); }
 		if (e.kind === 'private') {
 			if (e.id <= 0 || !getUser(e.id)) return bad('No such private chat.');
