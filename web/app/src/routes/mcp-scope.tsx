@@ -23,7 +23,10 @@ const KINDS: Record<ScopeKind, { icon: typeof Lock; label: string }> = {
 };
 
 // The entry's name, or what it was when it no longer exists.
-const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation' : e.kind === 'group' ? `Group ${e.id}` : `User ${e.id}`);
+// A group hidden from the viewer comes without its title; one no
+// longer in the archive comes without it too, and is not exposed.
+const nameOf = (e: ScopeEntry) => e.name || (e.kind === 'federation' ? 'Deleted federation'
+	: e.kind === 'group' ? (e.inactive_reason === 'not_exposed' ? `Group ${e.id}` : 'A group hidden from you') : `User ${e.id}`);
 
 // Production's /mcp is still served by the old web service, which
 // ignores token scopes; only the Go service applies them, once it

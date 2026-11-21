@@ -510,3 +510,47 @@ describe('mcp token scope in the stand-in', () => {
 		expect(adminApi('PATCH', `mcp/tokens/${t.id}`, { name: ' ' }, 'superadmin')[0]).toBe(400);
 	});
 });
+
+// A group hidden from an admin keeps its place in that admin's own
+// token: shown without its title, and kept when the scope is saved;
+// a hidden group cannot be added.
+describe('mcp token scope: a group hidden from the viewer', () => {
+	beforeEach(() => setup());
+	const mine = () => fixture<McpTokensProps>('/mcp-admin/tokens', 'admin').props.tokens.find((t) => t.owner.id === 3)!;
+
+	it('comes without its title, and reads "A group hidden from you"', () => {
+		const g = mine().scope.find((e) => e.kind === 'group')!;
+		expect(g.name).toBe('');
+		const superView = fixture<McpTokensProps>('/mcp-admin/tokens').props.tokens.find((t) => t.owner.id === 3)!.scope.find((e) => e.kind === 'group')!;
+		expect(superView.name).not.toBe('');
+		fakeApi('admin');
+		renderPage('/mcp-admin/tokens', 'admin');
+		expect(screen.getAllByText('A group hidden from you').length).toBeGreaterThan(0);
+		expect(document.body.textContent).not.toContain(superView.name);
+	});
+
+	it('says outside the owner\'s view before not exposed, only to a viewer who cannot see it', () => {
+		const id = mine().scope.find((e) => e.kind === 'group')!.id;
+		const reasonFor = (who: 'admin' | 'superadmin') => fixture<McpTokensProps>('/mcp-admin/tokens', who).props.tokens.find((t) => t.owner.id === 3)!.scope.find((e) => e.kind === 'group')!.inactive_reason;
+		expect(adminApi('DELETE', `mcp/groups/${id}`, {}, 'superadmin')[0]).toBe(204);
+		try {
+			expect(reasonFor('admin')).toBe('outside_owner_grants');
+			expect(reasonFor('superadmin')).toBe('not_exposed');
+		} finally {
+			expect(adminApi('POST', 'mcp/groups', { group_id: id }, 'superadmin')[0]).toBe(201);
+		}
+		expect(reasonFor('superadmin')).toBe('outside_owner_grants');
+	});
+
+	it('is kept by the stand-in when the token already holds it, and refused when new', () => {
+		const t = mine();
+		const hidden = t.scope.filter((e) => e.kind === 'group').map(({ kind, id }) => ({ kind, id }))[0]!;
+		// Last in this file: it rewrites the sample token's scope.
+		// The sample token has no name: a scope alone needs none.
+		expect(adminApi('PATCH', `mcp/tokens/${t.id}`, { scope: [hidden] }, 'admin')).toEqual([204, null]);
+		const other = fixture<McpTokensProps>('/mcp-admin/tokens', 'admin').props.tokens.find((x) => x.id !== t.id && !x.revoked)!;
+		const [st, body] = adminApi('PATCH', `mcp/tokens/${other.id}`, { scope: [...other.scope.map(({ kind, id }) => ({ kind, id })), hidden] }, 'admin');
+		expect(st).toBe(400);
+		expect(body).toMatchObject({ error: 'bad_request' });
+	});
+});
