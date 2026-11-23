@@ -1137,6 +1137,35 @@ There is no internal API route for communities: the rows are filled
 as the lines are logged. The web resolves a line's community from
 these tables (msg-communities).
 
+### 4.14 The size of `text` and `entities`
+
+Telegram caps a message's text, or a caption, at 8192 characters,
+counted in UTF-16 code units; the formatting (`entities`) does not
+count towards it. In UTF-8 a code unit takes at most three bytes (a
+character outside the Basic Multilingual Plane is two units in four
+bytes), so a capped text is at most 24 KiB and would fit `TEXT`. The
+`text` column of both message tables and both edit tables is
+nevertheless `MEDIUMTEXT`, on purpose:
+
+- Not every `text` is a capped message text. A rich message stores the
+  plain text of all its blocks there (section 4.2), which can run past
+  the cap, and service messages store a line the daemon writes itself.
+  A narrower column would cut those off.
+- The narrower type would save nothing. InnoDB keeps `TEXT` and
+  `MEDIUMTEXT` values alike: the same row header for the length, and
+  the same move off the row page once a row grows long (`DYNAMIC`,
+  MySQL's default row format, which the migrations do not change).
+- Changing it is expensive. Both message tables carry a `FULLTEXT`
+  index on `text`, so changing the column's type rebuilds the whole
+  table.
+
+`entities` is stored compact (`format_entities_json`): one
+`{offset, length, type}` object per entity, plus the URL, language,
+user id or custom emoji id where its type has one, not TDLib's own
+object form. A text without formatting stores SQL NULL. A text near
+the cap can still carry many entities, since they do not count
+towards it; nothing in the schema bounds their number.
+
 ## 5. Web impact (Go port)
 
 Done in the Go service (web/docs/message-kinds.md); the Drogon web
